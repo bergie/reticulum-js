@@ -19,10 +19,18 @@ export const DestinationType = {
 /**
  * Helper functions for encoding/decoding buffers.
  */
+/**
+ * @param {Uint8Array} buf
+ * @returns {string}
+ */
 function bufToHex(buf) {
     return Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+/**
+ * @param {string} hex
+ * @returns {Uint8Array}
+ */
 function hexToBuf(hex) {
     const buf = new Uint8Array(hex.length / 2);
     for (let i = 0; i < buf.length; i++) {
@@ -37,7 +45,7 @@ function hexToBuf(hex) {
 export class Destination extends EventTarget {
     /**
      * Storage for known destinations.
-     * @type {Map<string, Array>}
+     * @type {Map<string, any[]>}
      */
     static knownDestinations = new Map();
 
@@ -165,8 +173,8 @@ export class Destination extends EventTarget {
      */
     static async remember(packet_hash, destination_hash, public_key, app_data = null) {
         const key = bufToHex(destination_hash);
-        if (Destination.knownDestinations.has(key)) {
-            const entry = Destination.knownDestinations.get(key);
+        const entry = Destination.knownDestinations.get(key);
+        if (entry) {
             entry[0] = Date.now() / 1000; // time.time() in seconds
             entry[1] = packet_hash;
             entry[2] = public_key;
@@ -197,8 +205,8 @@ export class Destination extends EventTarget {
             return null;
         } else {
             const key = bufToHex(target_hash);
-            if (Destination.knownDestinations.has(key)) {
-                const entry = Destination.knownDestinations.get(key);
+            const entry = Destination.knownDestinations.get(key);
+            if (entry) {
                 const identity = await Identity.fromPublicKey(entry[2]);
                 identity.app_data = entry[3];
                 return identity;

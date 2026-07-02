@@ -5,8 +5,8 @@
 
 /**
  * Computes an HMAC-SHA256 signature.
- * @param {Uint8Array} key - The key for HMAC.
- * @param {Uint8Array} data - The data to sign.
+ * @param {any} key - The key for HMAC.
+ * @param {any} data - The data to sign.
  * @returns {Promise<Uint8Array>} The resulting HMAC signature.
  */
 export async function hmac(key, data) {

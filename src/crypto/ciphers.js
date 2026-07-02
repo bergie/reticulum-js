@@ -7,15 +7,15 @@ import { hmac } from './hmac.js';
 
 /**
  * Performs HKDF to derive bits.
- * @param {Uint8Array} masterKey
- * @param {Uint8Array} salt
- * @param {Uint8Array} info
+ * @param {any} masterKey
+ * @param {any} salt
+ * @param {any} info
  * @param {number} lengthInBytes
  * @returns {Promise<Uint8Array>}
  */
 export async function hkdf(masterKey, salt, info, lengthInBytes) {
     // HKDF-Extract
-    const prk = await hmac(salt.length === 0 ? new Uint8Array(32) : salt, masterKey);
+    const prk = await hmac(/** @type {any} */ (salt.length === 0 ? new Uint8Array(32) : salt), masterKey);
 
     // HKDF-Expand
     const okm = new Uint8Array(lengthInBytes);
@@ -29,9 +29,9 @@ export async function hkdf(masterKey, salt, info, lengthInBytes) {
         input.set(info, lastT.length);
         input[input.length - 1] = counter;
 
-        const t = await hmac(prk, input);
+        const t = /** @type {any} */ (await hmac(prk, input));
         const toCopy = Math.min(t.length, lengthInBytes - offset);
-        okm.set(t.slice(0, toCopy), offset);
+        okm.set(/** @type {any} */ (t.slice(0, toCopy)), offset);
         
         offset += toCopy;
         lastT = t;

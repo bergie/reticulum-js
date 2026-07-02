@@ -23,8 +23,8 @@ export class Identity extends EventTarget {
     static TRUNCATED_HASHLENGTH = 128;
 
     /**
-     * @param {CryptoKey} x25519Priv
-     * @param {CryptoKey} ed25519Priv
+     * @param {CryptoKey|null} x25519Priv
+     * @param {CryptoKey|null} ed25519Priv
      * @param {CryptoKey} x25519Pub
      * @param {CryptoKey} ed25519Pub
      * @param {Uint8Array} publicKey
@@ -38,6 +38,7 @@ export class Identity extends EventTarget {
         this.ed25519Pub = ed25519Pub;
         this.publicKey = publicKey;
         this.identityHash = identityHash;
+        this.app_data = null;
     }
 
     /**
@@ -46,7 +47,7 @@ export class Identity extends EventTarget {
      * @returns {Promise<Uint8Array>}
      */
     static async fullHash(data) {
-        const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (data));
         return new Uint8Array(hashBuffer);
     }
 
@@ -69,8 +70,8 @@ export class Identity extends EventTarget {
         const x25519PubBytes = publicKey.slice(0, 32);
         const ed25519PubBytes = publicKey.slice(32, 64);
         
-        const x25519Pub = await crypto.subtle.importKey("raw", x25519PubBytes, { name: "X25519" }, true, []);
-        const ed25519Pub = await crypto.subtle.importKey("raw", ed25519PubBytes, { name: "Ed25519" }, true, []);
+        const x25519Pub = await crypto.subtle.importKey("raw", /** @type {any} */ (x25519PubBytes), { name: "X25519" }, true, []);
+        const ed25519Pub = await crypto.subtle.importKey("raw", /** @type {any} */ (ed25519PubBytes), { name: "Ed25519" }, true, []);
 
         const identityHash = await Identity.truncatedHash(publicKey);
 
@@ -102,6 +103,7 @@ export class Identity extends EventTarget {
      * @returns {Promise<Uint8Array>}
      */
     async getPrivateKey() {
+        if (!this.x25519Priv || !this.ed25519Priv) throw new Error("Cannot get private key because identity does not hold a private key");
         const x25519PrivBytes = await exportRawPrivateKey(this.x25519Priv);
         const ed25519PrivBytes = await exportRawPrivateKey(this.ed25519Priv);
         const x25519PubBytes = await exportPublicKey(this.x25519Pub);
@@ -184,7 +186,7 @@ export class Identity extends EventTarget {
 
         let target_public_key;
         if (ratchet) {
-            target_public_key = await crypto.subtle.importKey("raw", ratchet, { name: "X25519" }, true, []);
+            target_public_key = await crypto.subtle.importKey("raw", /** @type {any} */ (ratchet), { name: "X25519" }, true, []);
         } else {
             target_public_key = this.x25519Pub;
         }
@@ -194,14 +196,14 @@ export class Identity extends EventTarget {
                 name: "X25519",
                 public: target_public_key
             },
-            ephemeral_key.privateKey,
+            /** @type {any} */ (ephemeral_key.privateKey),
             256
         );
         const shared_key = new Uint8Array(shared_key_buffer);
         const derived_key = await hkdf(shared_key, this.getSalt(), this.getContext() || new Uint8Array(0), 64);
 
         const token = new Token(derived_key);
-        const ciphertext = await token.encrypt(plaintext);
+        const ciphertext = await token.encrypt(/** @type {any} */ (plaintext));
 
         const result = new Uint8Array(ephemeral_pub_bytes.length + ciphertext.length);
         result.set(ephemeral_pub_bytes, 0);
@@ -222,7 +224,7 @@ export class Identity extends EventTarget {
         if (ciphertext_token.length > 32) {
             const peer_pub_bytes = ciphertext_token.slice(0, 32);
             const ciphertext = ciphertext_token.slice(32);
-            const peer_pub = await crypto.subtle.importKey("raw", peer_pub_bytes, { name: "X25519" }, true, []);
+            const peer_pub = await crypto.subtle.importKey("raw", /** @type {any} */ (peer_pub_bytes), { name: "X25519" }, true, []);
 
             let plaintext = null;
 
@@ -235,7 +237,7 @@ export class Identity extends EventTarget {
                                 name: "X25519",
                                 public: peer_pub
                             },
-                            ratchet_prv,
+                            /** @type {any} */ (ratchet_prv),
                             256
                         );
                         const shared_key = new Uint8Array(shared_key_buffer);
@@ -256,7 +258,7 @@ export class Identity extends EventTarget {
                             name: "X25519",
                             public: peer_pub
                         },
-                        this.x25519Priv,
+                        /** @type {any} */ (this.x25519Priv),
                         256
                     );
                     const shared_key = new Uint8Array(shared_key_buffer);
@@ -284,7 +286,7 @@ export class Identity extends EventTarget {
         const signature = await crypto.subtle.sign(
             "Ed25519",
             this.ed25519Priv,
-            message
+            /** @type {any} */ (message)
         );
         return new Uint8Array(signature);
     }
@@ -300,8 +302,8 @@ export class Identity extends EventTarget {
         return await crypto.subtle.verify(
             "Ed25519",
             this.ed25519Pub,
-            signature,
-            message
+            /** @type {any} */ (signature),
+            /** @type {any} */ (message)
         );
     }
 }
