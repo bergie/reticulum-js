@@ -27,7 +27,7 @@ We aim for modern standard JavaScript feel. This means consistent use of Promise
 
 At this stage there are no external users for this library, and so API changes are totally OK to do. It is important to keep the API simple and disambiguated. Backwards compatibility is not necessary, just make sure to adapt tests and type definitions.
 
-It is also important to use same terms and concepts as in the Python implementation to maintain familiarity. On high level we should expose roughly the same objects and methods as Python does (allowing for "JavaScriptization" of them).
+It is also important to use same terms and concepts as in the Python implementation to maintain familiarity. On high level we should expose roughly the same objects and methods as Python does (allowing for "JavaScriptization" of them). Naming should be changed from Python's `snake_case` to JavaScript's `camelCase` convention.
 
 ## Type definitions
 
@@ -36,6 +36,8 @@ Every API interface needs to have TypeScript definitions in JsDoc format. Run `n
 ## Tests
 
 We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should recide in corresponding file under `test` folder, so that for instance tests for Identity (implementation `src/core/identity.js` are in `test/core/identity.js`.
+
+All tests should be verified against the Python reference implementation to make sure we are testing Reticulum compatibility instead of just quirks of our local implementation.
 
 ## Dependencies
 
