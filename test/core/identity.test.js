@@ -4,14 +4,14 @@ import test from 'node:test';
 
 test('Identity generation and keys', async (t) => {
     const identity = await Identity.generate();
-    assert.ok(identity.identity_hash);
-    assert.strictEqual(identity.identity_hash.length, 16);
+    assert.ok(identity.identityHash);
+    assert.strictEqual(identity.identityHash.length, 16);
 
-    const priv_key = await identity.get_private_key();
-    assert.strictEqual(priv_key.length, 128);
+    const privKey = await identity.getPrivateKey();
+    assert.strictEqual(privKey.length, 128);
 
-    const pub_key = await identity.get_public_key();
-    assert.strictEqual(pub_key.length, 64);
+    const pubKey = await identity.getPublicKey();
+    assert.strictEqual(pubKey.length, 64);
 });
 
 test('Identity sign and validate', async (t) => {
@@ -40,13 +40,13 @@ test('Identity encryption and decryption', async (t) => {
 
 test('Identity from bytes', async (t) => {
     const identity = await Identity.generate();
-    const priv_key = await identity.get_private_key();
+    const privKey = await identity.getPrivateKey();
     
-    const new_identity = await Identity.from_bytes(priv_key);
-    assert.ok(new_identity);
-    assert.deepStrictEqual(new_identity.identity_hash, identity.identity_hash);
+    const newIdentity = await Identity.fromBytes(privKey);
+    assert.ok(newIdentity);
+    assert.deepStrictEqual(newIdentity.identityHash, identity.identityHash);
 
-    const decrypted = await new_identity.encrypt(new Uint8Array([1, 2, 3]));
+    const decrypted = await newIdentity.encrypt(new Uint8Array([1, 2, 3]));
     const plaintext = await identity.decrypt(decrypted);
     assert.deepStrictEqual(plaintext, new Uint8Array([1, 2, 3]));
 });

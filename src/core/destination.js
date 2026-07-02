@@ -39,7 +39,7 @@ export class Destination extends EventTarget {
      * Storage for known destinations.
      * @type {Map<string, Array>}
      */
-    static known_destinations = new Map();
+    static knownDestinations = new Map();
 
     /**
      * @param {string} name - The application name.
@@ -51,8 +51,8 @@ export class Destination extends EventTarget {
         this.name = name;
         this.type = type;
         this.identity = identity;
-        this.destination_hash = null;
-        this.name_hash = null;
+        this.destinationHash = null;
+        this.nameHash = null;
     }
 
     /**
@@ -64,44 +64,44 @@ export class Destination extends EventTarget {
      */
     static async create(name, type, identity = null) {
         const dest = new Destination(name, type, identity);
-        await dest._compute_hashes();
+        await dest._computeHashes();
         return dest;
     }
 
     /**
-     * Computes the name_hash and destination_hash.
+     * Computes the nameHash and destinationHash.
      * @private
      */
-    async _compute_hashes() {
+    async _computeHashes() {
         const encoder = new TextEncoder();
         const nameBytes = encoder.encode(this.name);
         
-        // name_hash = SHA256(full_app_name_string)[:10]
+        // nameHash = SHA256(full_app_name_string)[:10]
         const nameHashBuffer = await crypto.subtle.digest("SHA-256", nameBytes);
-        this.name_hash = new Uint8Array(nameHashBuffer.slice(0, 10));
+        this.nameHash = new Uint8Array(nameHashBuffer.slice(0, 10));
 
         if (this.type === DestinationType.SINGLE && this.identity) {
-            // dest_hash = SHA256(name_hash || identity_hash)[:16]
-            const combined = new Uint8Array(this.name_hash.length + this.identity.identity_hash.length);
-            combined.set(this.name_hash, 0);
-            combined.set(this.identity.identity_hash, this.name_hash.length);
+            // destHash = SHA256(nameHash || identityHash)[:16]
+            const combined = new Uint8Array(this.nameHash.length + this.identity.identityHash.length);
+            combined.set(this.nameHash, 0);
+            combined.set(this.identity.identityHash, this.nameHash.length);
 
             const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
-            this.destination_hash = new Uint8Array(destHashBuffer.slice(0, 16));
+            this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
         } else if (this.type === DestinationType.GROUP && this.identity) {
              // Same as SINGLE for GROUP
-            const combined = new Uint8Array(this.name_hash.length + this.identity.identity_hash.length);
-            combined.set(this.name_hash, 0);
-            combined.set(this.identity.identity_hash, this.name_hash.length);
+            const combined = new Uint8Array(this.nameHash.length + this.identity.identityHash.length);
+            combined.set(this.nameHash, 0);
+            combined.set(this.identity.identityHash, this.nameHash.length);
 
             const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
-            this.destination_hash = new Uint8Array(destHashBuffer.slice(0, 16));
+            this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
         } else if (this.type === DestinationType.PLAIN) {
-            // dest_hash = SHA256(name_hash)[:16]
-            const destHashBuffer = await crypto.subtle.digest("SHA-256", this.name_hash);
-            this.destination_hash = new Uint8Array(destHashBuffer.slice(0, 16));
+            // destHash = SHA256(nameHash)[:16]
+            const destHashBuffer = await crypto.subtle.digest("SHA-256", this.nameHash);
+            this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
         } else {
-            this.destination_hash = null;
+            this.destinationHash = null;
         }
     }
 
@@ -165,14 +165,14 @@ export class Destination extends EventTarget {
      */
     static async remember(packet_hash, destination_hash, public_key, app_data = null) {
         const key = bufToHex(destination_hash);
-        if (Destination.known_destinations.has(key)) {
-            const entry = Destination.known_destinations.get(key);
+        if (Destination.knownDestinations.has(key)) {
+            const entry = Destination.knownDestinations.get(key);
             entry[0] = Date.now() / 1000; // time.time() in seconds
             entry[1] = packet_hash;
             entry[2] = public_key;
             entry[3] = app_data;
         } else {
-            Destination.known_destinations.set(key, [Date.now() / 1000, packet_hash, public_key, app_data, 0]);
+            Destination.knownDestinations.set(key, [Date.now() / 1000, packet_hash, public_key, app_data, 0]);
         }
     }
 
@@ -184,10 +184,10 @@ export class Destination extends EventTarget {
      */
     static async recall(target_hash, from_identity_hash = false) {
         if (from_identity_hash) {
-            for (const [key, entry] of Destination.known_destinations.entries()) {
+            for (const [key, entry] of Destination.knownDestinations.entries()) {
                 const public_key = entry[2];
-                const identity = await Identity.from_public_key(public_key);
-                const identity_hash = await Identity.truncated_hash(identity.public_key);
+                const identity = await Identity.fromPublicKey(public_key);
+                const identity_hash = await Identity.truncatedHash(identity.publicKey);
                 
                 if (bufToHex(target_hash) === bufToHex(identity_hash)) {
                     identity.app_data = entry[3];
@@ -197,9 +197,9 @@ export class Destination extends EventTarget {
             return null;
         } else {
             const key = bufToHex(target_hash);
-            if (Destination.known_destinations.has(key)) {
-                const entry = Destination.known_destinations.get(key);
-                const identity = await Identity.from_public_key(entry[2]);
+            if (Destination.knownDestinations.has(key)) {
+                const entry = Destination.knownDestinations.get(key);
+                const identity = await Identity.fromPublicKey(entry[2]);
                 identity.app_data = entry[3];
                 return identity;
             }

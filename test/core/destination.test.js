@@ -10,21 +10,21 @@ async function testDestination() {
     // Test SINGLE destination
     const singleDest = await Destination.SINGLE("myapp", myIdentity);
     assert.strictEqual(singleDest.type, DestinationType.SINGLE);
-    assert.ok(singleDest.destination_hash);
-    assert.strictEqual(singleDest.name_hash.length, 10);
-    assert.strictEqual(singleDest.destination_hash.length, 16);
+    assert.ok(singleDest.destinationHash);
+    assert.strictEqual(singleDest.nameHash.length, 10);
+    assert.strictEqual(singleDest.destinationHash.length, 16);
 
     // Test PLAIN destination
     const plainDest = await Destination.PLAIN("someapp");
     assert.strictEqual(plainDest.type, DestinationType.PLAIN);
-    assert.ok(plainDest.destination_hash);
-    assert.strictEqual(plainDest.destination_hash.length, 16);
+    assert.ok(plainDest.destinationHash);
+    assert.strictEqual(plainDest.destinationHash.length, 16);
 
     // Test GROUP destination
     const groupDest = await Destination.GROUP("mygroup", myIdentity);
     assert.strictEqual(groupDest.type, DestinationType.GROUP);
-    assert.ok(groupDest.destination_hash);
-    assert.strictEqual(groupDest.destination_hash.length, 16);
+    assert.ok(groupDest.destinationHash);
+    assert.strictEqual(groupDest.destinationHash.length, 16);
 
     console.log("Destination tests passed!");
 }

@@ -27,17 +27,17 @@ export class Identity extends EventTarget {
      * @param {CryptoKey} ed25519Priv
      * @param {CryptoKey} x25519Pub
      * @param {CryptoKey} ed25519Pub
-     * @param {Uint8Array} public_key
-     * @param {Uint8Array} identity_hash
+     * @param {Uint8Array} publicKey
+     * @param {Uint8Array} identityHash
      */
-    constructor(x25519Priv, ed25519Priv, x25519Pub, ed25519Pub, public_key, identity_hash) {
+    constructor(x25519Priv, ed25519Priv, x25519Pub, ed25519Pub, publicKey, identityHash) {
         super();
         this.x25519Priv = x25519Priv;
         this.ed25519Priv = ed25519Priv;
         this.x25519Pub = x25519Pub;
         this.ed25519Pub = ed25519Pub;
-        this.public_key = public_key;
-        this.identity_hash = identity_hash;
+        this.publicKey = publicKey;
+        this.identityHash = identityHash;
     }
 
     /**
@@ -45,7 +45,7 @@ export class Identity extends EventTarget {
      * @param {Uint8Array} data
      * @returns {Promise<Uint8Array>}
      */
-    static async full_hash(data) {
+    static async fullHash(data) {
         const hashBuffer = await crypto.subtle.digest("SHA-256", data);
         return new Uint8Array(hashBuffer);
     }
@@ -55,26 +55,26 @@ export class Identity extends EventTarget {
      * @param {Uint8Array} data
      * @returns {Promise<Uint8Array>}
      */
-    static async truncated_hash(data) {
-        const full_hash = await Identity.full_hash(data);
-        return full_hash.slice(0, Identity.TRUNCATED_HASHLENGTH / 8);
+    static async truncatedHash(data) {
+        const fullHash = await Identity.fullHash(data);
+        return fullHash.slice(0, Identity.TRUNCATED_HASHLENGTH / 8);
     }
 
     /**
      * Load an identity from a public key.
-     * @param {Uint8Array} public_key
+     * @param {Uint8Array} publicKey
      * @returns {Promise<Identity>}
      */
-    static async from_public_key(public_key) {
-        const x25519PubBytes = public_key.slice(0, 32);
-        const ed25519PubBytes = public_key.slice(32, 64);
+    static async fromPublicKey(publicKey) {
+        const x25519PubBytes = publicKey.slice(0, 32);
+        const ed25519PubBytes = publicKey.slice(32, 64);
         
         const x25519Pub = await crypto.subtle.importKey("raw", x25519PubBytes, { name: "X25519" }, true, []);
         const ed25519Pub = await crypto.subtle.importKey("raw", ed25519PubBytes, { name: "Ed25519" }, true, []);
 
-        const identity_hash = await Identity.truncated_hash(public_key);
+        const identityHash = await Identity.truncatedHash(publicKey);
 
-        return new Identity(null, null, x25519Pub, ed25519Pub, public_key, identity_hash);
+        return new Identity(null, null, x25519Pub, ed25519Pub, publicKey, identityHash);
     }
 
     /**
@@ -88,45 +88,45 @@ export class Identity extends EventTarget {
         const x25519PubBytes = await exportPublicKey(x25519.publicKey);
         const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
         
-        const public_key = new Uint8Array(64);
-        public_key.set(x25519PubBytes, 0);
-        public_key.set(ed25519PubBytes, 32);
+        const publicKey = new Uint8Array(64);
+        publicKey.set(x25519PubBytes, 0);
+        publicKey.set(ed25519PubBytes, 32);
 
-        const identity_hash = await Identity.truncated_hash(public_key);
+        const identityHash = await Identity.truncatedHash(publicKey);
 
-        return new Identity(x25519.privateKey, ed25519.privateKey, x25519.publicKey, ed25519.publicKey, public_key, identity_hash);
+        return new Identity(x25519.privateKey, ed25519.privateKey, x25519.publicKey, ed25519.publicKey, publicKey, identityHash);
     }
 
     /**
      * Get the raw private key bytes (64 bytes).
      * @returns {Promise<Uint8Array>}
      */
-    async get_private_key() {
+    async getPrivateKey() {
         const x25519PrivBytes = await exportRawPrivateKey(this.x25519Priv);
         const ed25519PrivBytes = await exportRawPrivateKey(this.ed25519Priv);
         const x25519PubBytes = await exportPublicKey(this.x25519Pub);
         const ed25519PubBytes = await exportPublicKey(this.ed25519Pub);
         
-        const priv_key = new Uint8Array(128);
-        priv_key.set(x25519PrivBytes, 0);
-        priv_key.set(x25519PubBytes, 32);
-        priv_key.set(ed25519PrivBytes, 64);
-        priv_key.set(ed25519PubBytes, 96);
-        return priv_key;
+        const privKey = new Uint8Array(128);
+        privKey.set(x25519PrivBytes, 0);
+        privKey.set(x25519PubBytes, 32);
+        privKey.set(ed25519PrivBytes, 64);
+        privKey.set(ed25519PubBytes, 96);
+        return privKey;
     }
 
     /**
      * Get the public key as bytes.
      * @returns {Promise<Uint8Array>}
      */
-    async get_public_key() {
+    async getPublicKey() {
         const x25519PubBytes = await exportPublicKey(this.x25519Pub);
         const ed25519PubBytes = await exportPublicKey(this.ed25519Pub);
         
-        const public_key = new Uint8Array(64);
-        public_key.set(x25519PubBytes, 0);
-        public_key.set(ed25519PubBytes, 32);
-        return public_key;
+        const publicKey = new Uint8Array(64);
+        publicKey.set(x25519PubBytes, 0);
+        publicKey.set(ed25519PubBytes, 32);
+        return publicKey;
     }
 
     /**
@@ -134,20 +134,20 @@ export class Identity extends EventTarget {
      * @param {Uint8Array} bytes
      * @returns {Promise<Identity|null>}
      */
-    static async from_bytes(bytes) {
+    static async fromBytes(bytes) {
         try {
             const x25519Priv = await importRawX25519PrivateKey(bytes.slice(0, 32));
             const x25519Pub = await importX25519PublicKey(bytes.slice(32, 64));
             const ed25519Priv = await importRawEd25519PrivateKey(bytes.slice(64, 96));
             const ed25519Pub = await importEd25519PublicKey(bytes.slice(96, 128));
             
-            const public_key = new Uint8Array(64);
-            public_key.set(bytes.slice(32, 64), 0);
-            public_key.set(bytes.slice(96, 128), 32);
+            const publicKey = new Uint8Array(64);
+            publicKey.set(bytes.slice(32, 64), 0);
+            publicKey.set(bytes.slice(96, 128), 32);
 
-            const identity_hash = await Identity.truncated_hash(public_key);
+            const identityHash = await Identity.truncatedHash(publicKey);
 
-            return new Identity(x25519Priv, ed25519Priv, x25519Pub, ed25519Pub, public_key, identity_hash);
+            return new Identity(x25519Priv, ed25519Priv, x25519Pub, ed25519Pub, publicKey, identityHash);
         } catch (e) {
             console.error("Failed to load identity from bytes:", e);
             return null;
@@ -158,15 +158,15 @@ export class Identity extends EventTarget {
      * Get the salt for HKDF.
      * @returns {Uint8Array}
      */
-    get_salt() {
-        return this.identity_hash;
+    getSalt() {
+        return this.identityHash;
     }
 
     /**
      * Get the context for HKDF.
      * @returns {Uint8Array|null}
      */
-    get_context() {
+    getContext() {
         return null;
     }
 
@@ -198,7 +198,7 @@ export class Identity extends EventTarget {
             256
         );
         const shared_key = new Uint8Array(shared_key_buffer);
-        const derived_key = await hkdf(shared_key, this.get_salt(), this.get_context() || new Uint8Array(0), 64);
+        const derived_key = await hkdf(shared_key, this.getSalt(), this.getContext() || new Uint8Array(0), 64);
 
         const token = new Token(derived_key);
         const ciphertext = await token.encrypt(plaintext);
@@ -239,7 +239,7 @@ export class Identity extends EventTarget {
                             256
                         );
                         const shared_key = new Uint8Array(shared_key_buffer);
-                        const derived_key = await hkdf(shared_key, this.get_salt(), this.get_context() || new Uint8Array(0), 64);
+                        const derived_key = await hkdf(shared_key, this.getSalt(), this.getContext() || new Uint8Array(0), 64);
                         const token = new Token(derived_key);
                         plaintext = await token.decrypt(ciphertext);
                         if (plaintext) break;
@@ -260,7 +260,7 @@ export class Identity extends EventTarget {
                         256
                     );
                     const shared_key = new Uint8Array(shared_key_buffer);
-                    const derived_key = await hkdf(shared_key, this.get_salt(), this.get_context() || new Uint8Array(0), 64);
+                    const derived_key = await hkdf(shared_key, this.getSalt(), this.getContext() || new Uint8Array(0), 64);
                     const token = new Token(derived_key);
                     plaintext = await token.decrypt(ciphertext);
                 } catch (e) {
