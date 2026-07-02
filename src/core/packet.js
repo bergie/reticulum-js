@@ -93,6 +93,9 @@ export class Packet {
         
         // Calculate total length
         let length = 2; // flags + hops
+        if (this.ifac) {
+            length += this.ifac.length;
+        }
         if (this.headerType === HeaderType.HEADER_2) {
             length += 16; // transport_id
         }
@@ -109,6 +112,13 @@ export class Packet {
         uint8[1] = this.hops & 0xFF;
 
         let offset = 2;
+        if (this.ifac) {
+            /** @type {any} */
+            const ifac = this.ifac;
+            uint8.set(ifac, offset);
+            offset += ifac.length;
+        }
+
         if (this.headerType === HeaderType.HEADER_2 && this.transportId) {
             /** @type {any} */
             const tid = this.transportId;
@@ -136,9 +146,10 @@ export class Packet {
     /**
      * Deserializes a packet from a Uint8Array.
      * @param {Uint8Array} data
+     * @param {number} [ifacSize] - Optional size of the IFAC field if present
      * @returns {Packet}
      */
-    static deserialize(data) {
+    static deserialize(data, ifacSize = 0) {
         if (data.length < 3) throw new Error("Packet too short");
 
         const flags = data[0];
@@ -152,6 +163,15 @@ export class Packet {
         const hops = data[1];
 
         let offset = 2;
+        let ifac = undefined;
+        if (ifacFlag) {
+            if (ifacSize === 0) {
+                throw new Error("ifacSize must be provided when ifacFlag is set");
+            }
+            ifac = data.slice(offset, offset + ifacSize);
+            offset += ifacSize;
+        }
+
         let transportId = null;
         if (headerType === HeaderType.HEADER_2) {
             transportId = data.slice(offset, offset + 16);
@@ -179,6 +199,7 @@ export class Packet {
             destinationHash,
             contextByte,
             payload,
+            ifac: ifac,
             transportId: transportId ?? undefined
         });
     }
