@@ -8,7 +8,7 @@ test('Identity generation and keys', async (t) => {
     assert.strictEqual(identity.identity_hash.length, 16);
 
     const priv_key = await identity.get_private_key();
-    assert.strictEqual(priv_key.length, 64);
+    assert.strictEqual(priv_key.length, 128);
 
     const pub_key = await identity.get_public_key();
     assert.strictEqual(pub_key.length, 64);
