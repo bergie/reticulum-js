@@ -1,0 +1,23 @@
+{
+  "name": "reticulum-js",
+  "version": "0.0.1",
+  "description": "Reticulum Network System for JavaScript",
+  "keywords": [
+    "reticulum",
+    "rns",
+    "mesh"
+  ],
+  "license": "EUPL-1.2",
+  "author": "Henri Bergius <henri.bergius@iki.fi>",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "lint": "npx @biomejs/biome check src/ spec/ index.html",
+    "format": "npx @biomejs/biome check --write src/ spec/ index.html",
+    "types": "npx tsc --checkJs --noEmit --allowJs --declaration src/*.js src/**/*.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}
