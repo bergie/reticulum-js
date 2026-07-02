@@ -68,14 +68,23 @@ export async function importX25519PublicKey(rawKey) {
 }
 
 /**
- * Exports the private key.
- * For X25519 and Ed25519, this returns the PKCS#8 encoded key.
+ * Exports the private key as PKCS#8.
  * @param {CryptoKey} privateKey
  * @returns {Promise<Uint8Array>}
  */
 export async function exportPrivateKey(privateKey) {
     const exported = await crypto.subtle.exportKey("pkcs8", privateKey);
     return new Uint8Array(/** @type {any} */ (exported));
+}
+
+/**
+ * Exports the private key as raw bytes (32 bytes).
+ * @param {CryptoKey} privateKey
+ * @returns {Promise<Uint8Array>}
+ */
+export async function exportRawPrivateKey(privateKey) {
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", privateKey);
+    return new Uint8Array(pkcs8).slice(-32);
 }
 
 /**
@@ -102,6 +111,44 @@ export async function importX25519PrivateKey(rawKey) {
     return await crypto.subtle.importKey(
         "pkcs8",
         /** @type {any} */ (rawKey),
+        { name: "X25519" },
+        true,
+        ["deriveKey", "deriveBits"]
+    );
+}
+
+/**
+ * Imports an Ed25519 private key from raw bytes.
+ * @param {Uint8Array} rawKey
+ * @returns {Promise<CryptoKey>}
+ */
+export async function importRawEd25519PrivateKey(rawKey) {
+    const wrapped = new Uint8Array([
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
+        ...rawKey
+    ]);
+    return await crypto.subtle.importKey(
+        "pkcs8",
+        /** @type {any} */ (wrapped),
+        { name: "Ed25519" },
+        true,
+        ["sign"]
+    );
+}
+
+/**
+ * Imports an X25519 private key from raw bytes.
+ * @param {Uint8Array} rawKey
+ * @returns {Promise<CryptoKey>}
+ */
+export async function importRawX25519PrivateKey(rawKey) {
+    const wrapped = new Uint8Array([
+        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
+        ...rawKey
+    ]);
+    return await crypto.subtle.importKey(
+        "pkcs8",
+        /** @type {any} */ (wrapped),
         { name: "X25519" },
         true,
         ["deriveKey", "deriveBits"]

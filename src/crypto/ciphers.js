@@ -3,17 +3,55 @@
  * @description AES-128-CBC, HKDF derivation
  */
 
+import { hmac } from './hmac.js';
+
+/**
+ * Performs HKDF to derive bits.
+ * @param {Uint8Array} masterKey
+ * @param {Uint8Array} salt
+ * @param {Uint8Array} info
+ * @param {number} lengthInBytes
+ * @returns {Promise<Uint8Array>}
+ */
+export async function hkdf(masterKey, salt, info, lengthInBytes) {
+    // HKDF-Extract
+    const prk = await hmac(salt.length === 0 ? new Uint8Array(32) : salt, masterKey);
+
+    // HKDF-Expand
+    const okm = new Uint8Array(lengthInBytes);
+    let lastT = new Uint8Array(0);
+    let offset = 0;
+    let counter = 1;
+
+    while (offset < lengthInBytes) {
+        const input = new Uint8Array(lastT.length + info.length + 1);
+        input.set(lastT, 0);
+        input.set(info, lastT.length);
+        input[input.length - 1] = counter;
+
+        const t = await hmac(prk, input);
+        const toCopy = Math.min(t.length, lengthInBytes - offset);
+        okm.set(t.slice(0, toCopy), offset);
+        
+        offset += toCopy;
+        lastT = t;
+        counter++;
+    }
+
+    return okm;
+}
+
 /**
  * Derives a key using HKDF.
- * @param {CryptoKey} masterKey - The master key to derive from.
- * @param {Uint8Array} salt - The salt for HKDF.
- * @param {Uint8Array} info - The info for HKDF.
- * @param {number} length - The length of the key to derive in bits.
- * @param {string} algorithm - The name of the algorithm to derive (e.g., "AES-CBC").
- * @param {Array<string>} usages - The usages for the derived key.
+ * @param {CryptoKey} masterKey
+ * @param {Uint8Array} salt
+ * @param {Uint8Array} info
+ * @param {number} lengthInBits
+ * @param {string} algorithm
+ * @param {Array<string>} usages
  * @returns {Promise<CryptoKey>}
  */
-export async function deriveKey(masterKey, salt, info, length, algorithm, usages) {
+export async function deriveKey(masterKey, salt, info, lengthInBits, algorithm, usages) {
     return await crypto.subtle.deriveKey(
         {
             name: "HKDF",
@@ -22,7 +60,7 @@ export async function deriveKey(masterKey, salt, info, length, algorithm, usages
             info: /** @type {any} */ (info)
         },
         masterKey,
-        { name: algorithm, length: length },
+        { name: algorithm, length: lengthInBits },
         false,
         /** @type {any} */ (usages)
     );
