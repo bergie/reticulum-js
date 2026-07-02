@@ -12,6 +12,15 @@ The canonical specification is the Reticulum Network Python implementation which
 
 When the two protocol specifications disagree, the Python implementation is correct.
 
+## Work documents
+
+Technical work is planned with work documents (in Markdown) that are managed using `rngit` tool and repository in `rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js`. Commands to read work documents:
+
+- List work documents: `rngit work rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js list`.
+- Read work document: `rngit work rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js view -d N` (where `N` is the document number from the work documents list)
+
+AI agents may not create work documents on their own. Create a markdown file in the root folder of the project and ask user to move it to rngit.
+
 ## Designing interfaces
 
 We aim for modern standard JavaScript feel. This means consistent use of Promises, Web Streams, and if needed, EventTarget. No platform-specific patterns for Node.js or Deno.
