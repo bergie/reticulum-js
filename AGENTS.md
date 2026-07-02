@@ -25,7 +25,7 @@ AI agents may not create work documents on their own. Create a markdown file in 
 
 We aim for modern standard JavaScript feel. This means consistent use of Promises, Web Streams, and if needed, EventTarget. No platform-specific patterns for Node.js or Deno.
 
-At this stage there are no external users for this library, and so API changes are totally OK to do. It is important to keep the API simple and disambiguated.
+At this stage there are no external users for this library, and so API changes are totally OK to do. It is important to keep the API simple and disambiguated. Backwards compatibility is not necessary, just make sure to adapt tests and type definitions.
 
 It is also important to use same terms and concepts as in the Python implementation to maintain familiarity. On high level we should expose roughly the same objects and methods as Python does (allowing for "JavaScriptization" of them).
 
