@@ -17,9 +17,30 @@ export const DestinationType = {
 };
 
 /**
+ * Helper functions for encoding/decoding buffers.
+ */
+function bufToHex(buf) {
+    return Array.from(buf).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBuf(hex) {
+    const buf = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < buf.length; i++) {
+        buf[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
+    }
+    return buf;
+}
+
+/**
  * Represents a Reticulum destination.
  */
 export class Destination extends EventTarget {
+    /**
+     * Storage for known destinations.
+     * @type {Map<string, Array>}
+     */
+    static known_destinations = new Map();
+
     /**
      * @param {string} name - The application name.
      * @param {DestinationType} type - The destination type.
@@ -133,5 +154,56 @@ export class Destination extends EventTarget {
      */
     static async PLAIN(name) {
         return await this.create(name, DestinationType.PLAIN, null);
+    }
+
+    /**
+     * Remember a destination.
+     * @param {Uint8Array} packet_hash
+     * @param {Uint8Array} destination_hash
+     * @param {Uint8Array} public_key
+     * @param {any} app_data
+     */
+    static async remember(packet_hash, destination_hash, public_key, app_data = null) {
+        const key = bufToHex(destination_hash);
+        if (Destination.known_destinations.has(key)) {
+            const entry = Destination.known_destinations.get(key);
+            entry[0] = Date.now() / 1000; // time.time() in seconds
+            entry[1] = packet_hash;
+            entry[2] = public_key;
+            entry[3] = app_data;
+        } else {
+            Destination.known_destinations.set(key, [Date.now() / 1000, packet_hash, public_key, app_data, 0]);
+        }
+    }
+
+    /**
+     * Recall an identity for a destination or identity hash.
+     * @param {Uint8Array} target_hash
+     * @param {boolean} from_identity_hash
+     * @returns {Promise<Identity|null>}
+     */
+    static async recall(target_hash, from_identity_hash = false) {
+        if (from_identity_hash) {
+            for (const [key, entry] of Destination.known_destinations.entries()) {
+                const public_key = entry[2];
+                const identity = await Identity.from_public_key(public_key);
+                const identity_hash = await Identity.truncated_hash(identity.public_key);
+                
+                if (bufToHex(target_hash) === bufToHex(identity_hash)) {
+                    identity.app_data = entry[3];
+                    return identity;
+                }
+            }
+            return null;
+        } else {
+            const key = bufToHex(target_hash);
+            if (Destination.known_destinations.has(key)) {
+                const entry = Destination.known_destinations.get(key);
+                const identity = await Identity.from_public_key(entry[2]);
+                identity.app_data = entry[3];
+                return identity;
+            }
+            return null;
+        }
     }
 }

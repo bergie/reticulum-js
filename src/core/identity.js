@@ -20,6 +20,8 @@ import { Token } from '../crypto/token.js';
  * Represents a Reticulum Identity.
  */
 export class Identity extends EventTarget {
+    static TRUNCATED_HASHLENGTH = 128;
+
     /**
      * @param {CryptoKey} x25519Priv
      * @param {CryptoKey} ed25519Priv
@@ -39,6 +41,43 @@ export class Identity extends EventTarget {
     }
 
     /**
+     * Get a SHA-256 hash of passed data.
+     * @param {Uint8Array} data
+     * @returns {Promise<Uint8Array>}
+     */
+    static async full_hash(data) {
+        const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+        return new Uint8Array(hashBuffer);
+    }
+
+    /**
+     * Get a truncated SHA-256 hash of passed data.
+     * @param {Uint8Array} data
+     * @returns {Promise<Uint8Array>}
+     */
+    static async truncated_hash(data) {
+        const full_hash = await Identity.full_hash(data);
+        return full_hash.slice(0, Identity.TRUNCATED_HASHLENGTH / 8);
+    }
+
+    /**
+     * Load an identity from a public key.
+     * @param {Uint8Array} public_key
+     * @returns {Promise<Identity>}
+     */
+    static async from_public_key(public_key) {
+        const x25519PubBytes = public_key.slice(0, 32);
+        const ed25519PubBytes = public_key.slice(32, 64);
+        
+        const x25519Pub = await crypto.subtle.importKey("raw", x25519PubBytes, { name: "X25519" }, true, []);
+        const ed25519Pub = await crypto.subtle.importKey("raw", ed25519PubBytes, { name: "Ed25519" }, true, []);
+
+        const identity_hash = await Identity.truncated_hash(public_key);
+
+        return new Identity(null, null, x25519Pub, ed25519Pub, public_key, identity_hash);
+    }
+
+    /**
      * Create a new random identity.
      * @returns {Promise<Identity>}
      */
@@ -53,8 +92,7 @@ export class Identity extends EventTarget {
         public_key.set(x25519PubBytes, 0);
         public_key.set(ed25519PubBytes, 32);
 
-        const hashBuffer = await crypto.subtle.digest("SHA-256", public_key);
-        const identity_hash = new Uint8Array(hashBuffer.slice(0, 16));
+        const identity_hash = await Identity.truncated_hash(public_key);
 
         return new Identity(x25519.privateKey, ed25519.privateKey, x25519.publicKey, ed25519.publicKey, public_key, identity_hash);
     }
@@ -107,8 +145,7 @@ export class Identity extends EventTarget {
             public_key.set(bytes.slice(32, 64), 0);
             public_key.set(bytes.slice(96, 128), 32);
 
-            const hashBuffer = await crypto.subtle.digest("SHA-256", public_key);
-            const identity_hash = new Uint8Array(hashBuffer.slice(0, 16));
+            const identity_hash = await Identity.truncated_hash(public_key);
 
             return new Identity(x25519Priv, ed25519Priv, x25519Pub, ed25519Pub, public_key, identity_hash);
         } catch (e) {
