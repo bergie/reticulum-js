@@ -100,9 +100,7 @@ export class Packet {
 			length += 16; // transport_id
 		}
 		length += 16; // destination_hash
-		if (this.contextFlag) {
-			length += 1; // contextByte
-		}
+		length += 1; // contextByte
 		length += this.payload.length;
 
 		const buffer = new ArrayBuffer(length);
@@ -131,10 +129,8 @@ export class Packet {
 		uint8.set(dHash, offset);
 		offset += 16;
 
-		if (this.contextFlag) {
-			uint8[offset] = this.contextByte;
-			offset += 1;
-		}
+		uint8[offset] = this.contextByte;
+		offset += 1;
 
 		/** @type {any} */
 		const pLoad = this.payload;
@@ -182,11 +178,8 @@ export class Packet {
 		const destinationHash = data.slice(offset, offset + 16);
 		offset += 16;
 
-		let contextByte = 0;
-		if (contextFlag) {
-			contextByte = data[offset];
-			offset += 1;
-		}
+		const contextByte = data[offset];
+		offset += 1;
 
 		const payload = data.slice(offset);
 
