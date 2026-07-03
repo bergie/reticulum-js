@@ -20,15 +20,15 @@ export class Transport extends EventTarget {
 
 		// Setup inbound stream: interface (bytes) -> framer (Packets)
 		const readable = this.interface.readable;
-		if (!readable) throw new Error("Interface readable stream is not available");
+		if (!readable)
+			throw new Error("Interface readable stream is not available");
 		this.unframer = createRNSUnframerStream(Packet);
-		this.inboundReader = readable
-			.pipeThrough(this.unframer)
-			.getReader();
+		this.inboundReader = readable.pipeThrough(this.unframer).getReader();
 
 		// Setup outbound stream: Packets -> framer (bytes) -> interface (bytes)
 		const writable = this.interface.writable;
-		if (!writable) throw new Error("Interface writable stream is not available");
+		if (!writable)
+			throw new Error("Interface writable stream is not available");
 		this.outboundFramer = createRNSFramerStream(Packet);
 		this.outboundWriter = this.outboundFramer.writable.getWriter();
 		this.outboundFramer.readable.pipeTo(writable);
