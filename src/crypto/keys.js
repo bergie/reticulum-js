@@ -8,11 +8,10 @@
  * @returns {Promise<{privateKey: CryptoKey, publicKey: CryptoKey}>}
  */
 export async function generateEd25519KeyPair() {
-    return await crypto.subtle.generateKey(
-        { name: "Ed25519" },
-        true,
-        ["sign", "verify"]
-    );
+	return await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
+		"sign",
+		"verify",
+	]);
 }
 
 /**
@@ -20,11 +19,10 @@ export async function generateEd25519KeyPair() {
  * @returns {Promise<{privateKey: CryptoKey, publicKey: CryptoKey}>}
  */
 export async function generateX25519KeyPair() {
-    return await crypto.subtle.generateKey(
-        { name: "X25519" },
-        true,
-        ["deriveKey", "deriveBits"]
-    );
+	return await crypto.subtle.generateKey({ name: "X25519" }, true, [
+		"deriveKey",
+		"deriveBits",
+	]);
 }
 
 /**
@@ -33,8 +31,8 @@ export async function generateX25519KeyPair() {
  * @returns {Promise<Uint8Array>}
  */
 export async function exportPublicKey(publicKey) {
-    const exported = await crypto.subtle.exportKey("raw", publicKey);
-    return new Uint8Array(/** @type {any} */ (exported));
+	const exported = await crypto.subtle.exportKey("raw", publicKey);
+	return new Uint8Array(/** @type {any} */ (exported));
 }
 
 /**
@@ -43,13 +41,13 @@ export async function exportPublicKey(publicKey) {
  * @returns {Promise<CryptoKey>}
  */
 export async function importEd25519PublicKey(rawKey) {
-    return await crypto.subtle.importKey(
-        "raw",
-        /** @type {any} */ (rawKey),
-        { name: "Ed25519" },
-        true,
-        ["verify"]
-    );
+	return await crypto.subtle.importKey(
+		"raw",
+		/** @type {any} */ (rawKey),
+		{ name: "Ed25519" },
+		true,
+		["verify"],
+	);
 }
 
 /**
@@ -58,13 +56,13 @@ export async function importEd25519PublicKey(rawKey) {
  * @returns {Promise<CryptoKey>}
  */
 export async function importX25519PublicKey(rawKey) {
-    return await crypto.subtle.importKey(
-        "raw",
-        /** @type {any} */ (rawKey),
-        { name: "X25519" },
-        true,
-        []
-    );
+	return await crypto.subtle.importKey(
+		"raw",
+		/** @type {any} */ (rawKey),
+		{ name: "X25519" },
+		true,
+		[],
+	);
 }
 
 /**
@@ -73,8 +71,8 @@ export async function importX25519PublicKey(rawKey) {
  * @returns {Promise<Uint8Array>}
  */
 export async function exportPrivateKey(privateKey) {
-    const exported = await crypto.subtle.exportKey("pkcs8", privateKey);
-    return new Uint8Array(/** @type {any} */ (exported));
+	const exported = await crypto.subtle.exportKey("pkcs8", privateKey);
+	return new Uint8Array(/** @type {any} */ (exported));
 }
 
 /**
@@ -83,8 +81,8 @@ export async function exportPrivateKey(privateKey) {
  * @returns {Promise<Uint8Array>}
  */
 export async function exportRawPrivateKey(privateKey) {
-    const pkcs8 = await crypto.subtle.exportKey("pkcs8", privateKey);
-    return new Uint8Array(pkcs8).slice(-32);
+	const pkcs8 = await crypto.subtle.exportKey("pkcs8", privateKey);
+	return new Uint8Array(pkcs8).slice(-32);
 }
 
 /**
@@ -93,13 +91,13 @@ export async function exportRawPrivateKey(privateKey) {
  * @returns {Promise<CryptoKey>}
  */
 export async function importEd25519PrivateKey(rawKey) {
-    return await crypto.subtle.importKey(
-        "pkcs8",
-        /** @type {any} */ (rawKey),
-        { name: "Ed25519" },
-        true,
-        ["sign"]
-    );
+	return await crypto.subtle.importKey(
+		"pkcs8",
+		/** @type {any} */ (rawKey),
+		{ name: "Ed25519" },
+		true,
+		["sign"],
+	);
 }
 
 /**
@@ -108,13 +106,13 @@ export async function importEd25519PrivateKey(rawKey) {
  * @returns {Promise<CryptoKey>}
  */
 export async function importX25519PrivateKey(rawKey) {
-    return await crypto.subtle.importKey(
-        "pkcs8",
-        /** @type {any} */ (rawKey),
-        { name: "X25519" },
-        true,
-        ["deriveKey", "deriveBits"]
-    );
+	return await crypto.subtle.importKey(
+		"pkcs8",
+		/** @type {any} */ (rawKey),
+		{ name: "X25519" },
+		true,
+		["deriveKey", "deriveBits"],
+	);
 }
 
 /**
@@ -123,17 +121,32 @@ export async function importX25519PrivateKey(rawKey) {
  * @returns {Promise<CryptoKey>}
  */
 export async function importRawEd25519PrivateKey(rawKey) {
-    const wrapped = new Uint8Array([
-        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x04, 0x22, 0x04, 0x20,
-        ...rawKey
-    ]);
-    return await crypto.subtle.importKey(
-        "pkcs8",
-        /** @type {any} */ (wrapped),
-        { name: "Ed25519" },
-        true,
-        ["sign"]
-    );
+	const wrapped = new Uint8Array([
+		0x30,
+		0x2e,
+		0x02,
+		0x01,
+		0x00,
+		0x30,
+		0x05,
+		0x06,
+		0x03,
+		0x2b,
+		0x65,
+		0x70,
+		0x04,
+		0x22,
+		0x04,
+		0x20,
+		...rawKey,
+	]);
+	return await crypto.subtle.importKey(
+		"pkcs8",
+		/** @type {any} */ (wrapped),
+		{ name: "Ed25519" },
+		true,
+		["sign"],
+	);
 }
 
 /**
@@ -142,15 +155,30 @@ export async function importRawEd25519PrivateKey(rawKey) {
  * @returns {Promise<CryptoKey>}
  */
 export async function importRawX25519PrivateKey(rawKey) {
-    const wrapped = new Uint8Array([
-        0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20,
-        ...rawKey
-    ]);
-    return await crypto.subtle.importKey(
-        "pkcs8",
-        /** @type {any} */ (wrapped),
-        { name: "X25519" },
-        true,
-        ["deriveKey", "deriveBits"]
-    );
+	const wrapped = new Uint8Array([
+		0x30,
+		0x2e,
+		0x02,
+		0x01,
+		0x00,
+		0x30,
+		0x05,
+		0x06,
+		0x03,
+		0x2b,
+		0x65,
+		0x6e,
+		0x04,
+		0x22,
+		0x04,
+		0x20,
+		...rawKey,
+	]);
+	return await crypto.subtle.importKey(
+		"pkcs8",
+		/** @type {any} */ (wrapped),
+		{ name: "X25519" },
+		true,
+		["deriveKey", "deriveBits"],
+	);
 }

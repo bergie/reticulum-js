@@ -10,19 +10,19 @@
  * @returns {Promise<Uint8Array>} The resulting HMAC signature.
  */
 export async function hmac(key, data) {
-    const cryptoKey = await crypto.subtle.importKey(
-        "raw",
-        /** @type {any} */ (key),
-        { name: "HMAC", hash: "SHA-256" },
-        false,
-        ["sign"]
-    );
+	const cryptoKey = await crypto.subtle.importKey(
+		"raw",
+		/** @type {any} */ (key),
+		{ name: "HMAC", hash: "SHA-256" },
+		false,
+		["sign"],
+	);
 
-    const signature = await crypto.subtle.sign(
-        "HMAC",
-        cryptoKey,
-        /** @type {any} */ (data)
-    );
+	const signature = await crypto.subtle.sign(
+		"HMAC",
+		cryptoKey,
+		/** @type {any} */ (data),
+	);
 
-    return new Uint8Array(signature);
+	return new Uint8Array(signature);
 }
