@@ -19,15 +19,19 @@ export class Transport extends EventTarget {
 		this.destinations = new Map(); // destination_hash -> Destination
 
 		// Setup inbound stream: interface (bytes) -> framer (Packets)
+		const readable = this.interface.readable;
+		if (!readable) throw new Error("Interface readable stream is not available");
 		this.unframer = createRNSUnframerStream(Packet);
-		this.inboundReader = this.interface.readable
+		this.inboundReader = readable
 			.pipeThrough(this.unframer)
 			.getReader();
 
 		// Setup outbound stream: Packets -> framer (bytes) -> interface (bytes)
+		const writable = this.interface.writable;
+		if (!writable) throw new Error("Interface writable stream is not available");
 		this.outboundFramer = createRNSFramerStream(Packet);
 		this.outboundWriter = this.outboundFramer.writable.getWriter();
-		this.outboundFramer.readable.pipeTo(this.interface.writable);
+		this.outboundFramer.readable.pipeTo(writable);
 
 		this._startInboundLoop();
 	}
@@ -61,9 +65,10 @@ export class Transport extends EventTarget {
 	 * @type {ReadableStream<import('../core/packet.js').Packet>}
 	 */
 	get inboundStream() {
+		const transport = this;
 		return new ReadableStream({
 			async pull(controller) {
-				const { value, done } = await this.inboundReader.read();
+				const { value, done } = await transport.inboundReader.read();
 				if (done) {
 					controller.close();
 					return;
@@ -71,7 +76,7 @@ export class Transport extends EventTarget {
 				controller.enqueue(value);
 			},
 			cancel() {
-				this.inboundReader.cancel();
+				transport.inboundReader.cancel();
 			},
 		});
 	}
@@ -81,9 +86,10 @@ export class Transport extends EventTarget {
 	 * @type {WritableStream<import('../core/packet.js').Packet>}
 	 */
 	get outboundStream() {
+		const transport = this;
 		return new WritableStream({
 			async write(packet) {
-				await this.sendPacket(packet);
+				await transport.sendPacket(packet);
 			},
 		});
 	}

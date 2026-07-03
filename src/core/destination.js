@@ -210,6 +210,14 @@ export class Destination extends EventTarget {
 	}
 
 	/**
+	 * Gets the salt for key derivation.
+	 * @returns {Uint8Array}
+	 */
+	getSalt() {
+		return this.destinationHash || new Uint8Array(16);
+	}
+
+	/**
 	 * Requests an encrypted link to this remote destination.
 	 * @param {import('../transport/transport.js').Transport} transport - The transport interface to use.
 	 * @param {Uint8Array} appData - Optional contextual data (e.g., Graph ID, Auth Token)
@@ -222,6 +230,8 @@ export class Destination extends EventTarget {
 		}
 
 		return new Promise((resolve, reject) => {
+			/** @type {CryptoKey | undefined} */
+			let local_x25519_priv;
 			const timer = setTimeout(() => {
 				this.removeEventListener("link_established", onLinkEstablished);
 				this.removeEventListener("link_response", onLinkResponse);
@@ -257,17 +267,13 @@ export class Destination extends EventTarget {
 						[],
 					);
 
-					const shared_key_buffer = await crypto.subtle.deriveBits(
-						{
-							name: "X25519",
-							public: peer_x25519_pub,
-						},
-						local_x25519_priv,
-						256,
-					);
-					const shared_key = new Uint8Array(shared_key_buffer);
+					if (!local_x25519_priv) {
+						throw new Error("Local private key not yet generated");
+					}
+
 					const link_key = await LinkEncryption.deriveLinkKey(
-						shared_key,
+						local_x25519_priv,
+						peer_x25519_pub,
 						this.getSalt(),
 					);
 
@@ -298,7 +304,6 @@ export class Destination extends EventTarget {
 			});
 
 			(async () => {
-				let local_x25519_priv;
 				try {
 					const x25519 = await generateX25519KeyPair();
 					local_x25519_priv = x25519.privateKey;
@@ -365,17 +370,9 @@ export class Destination extends EventTarget {
 			[],
 		);
 
-		const shared_key_buffer = await crypto.subtle.deriveBits(
-			{
-				name: "X25519",
-				public: peer_x25519_pub,
-			},
-			x25519.privateKey,
-			256,
-		);
-		const shared_key = new Uint8Array(shared_key_buffer);
 		const link_key = await LinkEncryption.deriveLinkKey(
-			shared_key,
+			x25519.privateKey,
+			peer_x25519_pub,
 			this.getSalt(),
 		);
 
