@@ -13,6 +13,10 @@ Some principles:
 
 Currently just a sketch.
 
+## License
+
+Licensed under the [EUPL 1.2](https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12).
+
 ## Development
 
 This project is developed following [Reticulim Distributed Development](https://reticulum.network/manual/distributed.html) guidelines. The canonical source lives in `rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js`.
