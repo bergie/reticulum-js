@@ -78,9 +78,21 @@ export class Destination extends EventTarget {
 		this.direction = direction;
 		this.type = type;
 		this.identity = identity;
+		/** @type {Uint8Array|null} */
 		this.destinationHash = null;
+		/** @type {Uint8Array|null} */
 		this.nameHash = null;
 	}
+
+	/**
+	 * @type {Uint8Array|null}
+	 */
+	destinationHash;
+
+	/**
+	 * @type {Uint8Array|null}
+	 */
+	nameHash;
 
 	/**
 	 * Static factory for creating a destination.
@@ -116,7 +128,7 @@ export class Destination extends EventTarget {
 			combined.set(this.nameHash, 0);
 			combined.set(this.identity.identityHash, this.nameHash.length);
 
-			const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
+			const destHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (combined));
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else if (this.type === DestinationType.GROUP && this.identity) {
 			// Same as SINGLE for GROUP
@@ -126,13 +138,13 @@ export class Destination extends EventTarget {
 			combined.set(this.nameHash, 0);
 			combined.set(this.identity.identityHash, this.nameHash.length);
 
-			const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
+			const destHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (combined));
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else if (this.type === DestinationType.PLAIN) {
 			// destHash = SHA256(nameHash)[:16]
 			const destHashBuffer = await crypto.subtle.digest(
 				"SHA-256",
-				this.nameHash,
+				/** @type {any} */ (this.nameHash),
 			);
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else {
@@ -214,7 +226,7 @@ export class Destination extends EventTarget {
 	 * @returns {Uint8Array}
 	 */
 	getSalt() {
-		return this.destinationHash || new Uint8Array(16);
+		return this.destinationHash ?? new Uint8Array(16);
 	}
 
 	/**
@@ -279,10 +291,10 @@ export class Destination extends EventTarget {
 
 					const link = new Link(
 						link_key,
+						this.destinationHash ?? new Uint8Array(16),
 						transport.inboundStream,
 						transport.outboundStream,
 					);
-
 					this.dispatchEvent(
 						new CustomEvent("link_established", {
 							detail: { link },
@@ -397,6 +409,7 @@ export class Destination extends EventTarget {
 
 		const link = new Link(
 			link_key,
+			senderHash,
 			transport.inboundStream,
 			transport.outboundStream,
 		);

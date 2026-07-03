@@ -27,6 +27,16 @@ export const HeaderType = {
 };
 
 /**
+ * Context types.
+ * @enum {number}
+ */
+export const ContextType = {
+	NONE: 0x00,
+	REQUEST: 0x02,
+	RESPONSE: 0x03,
+};
+
+/**
  * Destination types.
  * @enum {number}
  */
