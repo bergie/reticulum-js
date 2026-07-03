@@ -1,6 +1,4 @@
-// @ts-ignore
 import net from "node:net";
-// @ts-ignore
 import { Readable, Writable } from "node:stream";
 import { Packet } from "../core/packet.js";
 import {
@@ -107,11 +105,9 @@ export class TCPClientInterface extends Interface {
 		);
 
 		const framer = createRNSFramerStream(Packet);
-		// @ts-ignore
 		framer.readable.pipeTo(Writable.toWeb(nodeWritable)).catch((err) => {
 			console.error("Framer pipeTo error:", err);
 		});
-		// @ts-ignore
 		this._writable = framer.writable;
 	}
 }
