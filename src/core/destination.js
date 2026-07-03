@@ -227,6 +227,7 @@ export class Destination extends EventTarget {
 				reject(new Error("Link request timed out."));
 			}, timeoutMs);
 
+			/** @param {any} event */
 			const onLinkEstablished = (event) => {
 				clearTimeout(timer);
 				resolve(event.detail.link);
@@ -255,7 +256,9 @@ export class Destination extends EventTarget {
 						destinationType: this.type,
 						packetType: PacketType.LINKREQUEST,
 						contextFlag: false,
+						/** @type {any} */
 						destinationHash: this.destinationHash,
+						contextByte: 0,
 						payload: payload,
 					});
 

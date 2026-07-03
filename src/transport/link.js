@@ -69,6 +69,7 @@ export class Link extends EventTarget {
 	 */
 	_createDecryptionStream() {
 		const reader = this.remoteStream.getReader();
+		const token = this.token;
 
 		return new ReadableStream({
 			async pull(controller) {
@@ -79,7 +80,7 @@ export class Link extends EventTarget {
 				}
 
 				try {
-					const decryptedPayload = await this.token.decrypt(packet.payload);
+					const decryptedPayload = await token.decrypt(packet.payload);
 					if (decryptedPayload) {
 						const decryptedPacket = new packet.constructor({
 							...packet,
@@ -105,11 +106,12 @@ export class Link extends EventTarget {
 	 */
 	_createEncryptionStream() {
 		const writer = this.localStream.getWriter();
+		const token = this.token;
 
 		return new WritableStream({
 			async write(packet, controller) {
 				try {
-					const encryptedPayload = await this.token.encrypt(packet.payload);
+					const encryptedPayload = await token.encrypt(packet.payload);
 					const encryptedPacket = new packet.constructor({
 						...packet,
 						payload: encryptedPayload,
