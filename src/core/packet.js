@@ -32,8 +32,15 @@ export const HeaderType = {
  */
 export const ContextType = {
 	NONE: 0x00,
+	RESOURCE: 0x01,
 	REQUEST: 0x02,
 	RESPONSE: 0x03,
+	RESOURCE_ADV: 0x04,
+	RESOURCE_REQ: 0x05,
+	RESOURCE_HMU: 0x06,
+	RESOURCE_ICL: 0x07,
+	RESOURCE_RCL: 0x08,
+	RESOURCE_PRF: 0x09,
 };
 
 /**

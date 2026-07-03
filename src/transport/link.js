@@ -63,6 +63,11 @@ export class Link extends EventTarget {
 		this._controllers = new Set();
 		this._isReading = false;
 
+		/** @type {Set<import("../core/resource.js").Resource>} */
+		this.incoming_resources = new Set();
+		/** @type {Set<import("../core/resource.js").Resource>} */
+		this.outgoing_resources = new Set();
+
 		this.readable = this._createDecryptionStream();
 		this.writable = this._createEncryptionStream();
 
@@ -100,6 +105,28 @@ export class Link extends EventTarget {
 							new CustomEvent("packet", { detail: decryptedPacket }),
 						);
 
+						// Handle specialized context packets
+						if (decryptedPacket.contextFlag) {
+							if (decryptedPacket.contextByte === 0x04) { // RESOURCE_ADV
+								this.dispatchEvent(
+									new CustomEvent("resource_advertisement", {
+										detail: decryptedPacket,
+									}),
+								);
+							} else if (
+								decryptedPacket.contextByte === 0x05 || // RESOURCE_REQ
+								decryptedPacket.contextByte === 0x06 || // RESOURCE_HMU
+								decryptedPacket.contextByte === 0x07 || // RESOURCE_ICL
+								decryptedPacket.contextByte === 0x08    // RESOURCE_RCL
+							) {
+								this.dispatchEvent(
+									new CustomEvent("resource_part", {
+										detail: decryptedPacket,
+									}),
+								);
+							}
+						}
+
 						// Enqueue to all active consumers
 						for (const controller of this._controllers) {
 							try {
@@ -128,6 +155,22 @@ export class Link extends EventTarget {
 	}
 
 	/**
+	 * Registers an incoming resource.
+	 * @param {import("../core/resource.js").Resource} resource
+	 */
+	register_incoming_resource(resource) {
+		this.incoming_resources.add(resource);
+	}
+
+	/**
+	 * Registers an outgoing resource.
+	 * @param {import("../core/resource.js").Resource} resource
+	 */
+	register_outgoing_resource(resource) {
+		this.outgoing_resources.add(resource);
+	}
+
+	/**
 	 * Creates the decryption stream.
 	 * @private
 	 * @returns {ReadableStream}
@@ -143,7 +186,6 @@ export class Link extends EventTarget {
 			cancel: () => {
 				// We don't want to stop the whole loop if one consumer cancels.
 				// But we don't have a way to know which controller to remove from this function.
-				// In a real implementation, we'd handle this better.
 				// For now, we'll just rely on the error handling in the loop.
 			},
 		});
