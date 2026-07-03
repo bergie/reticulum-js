@@ -96,13 +96,15 @@ export class Link extends EventTarget {
 						});
 
 						// Emit event
-						this.dispatchEvent(new CustomEvent("packet", { detail: decryptedPacket }));
+						this.dispatchEvent(
+							new CustomEvent("packet", { detail: decryptedPacket }),
+						);
 
 						// Enqueue to all active consumers
 						for (const controller of this._controllers) {
 							try {
 								controller.enqueue(decryptedPacket);
-							} catch (e) {
+							} catch (_e) {
 								// Controller might be closed
 								this._controllers.delete(controller);
 							}

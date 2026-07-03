@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { describe, test } from "node:test";
+import { ContextType, Packet } from "../../src/core/packet.js";
 import { RequestManager } from "../../src/core/request.js";
-import { Packet, ContextType } from "../../src/core/packet.js";
 
 describe("RequestManager", () => {
 	test("sendRequest should send a packet and wait for a response", async () => {
@@ -28,7 +28,7 @@ describe("RequestManager", () => {
 		const requestPromise = manager.sendRequest(path, appData);
 
 		// Wait for the async write to complete
-		await new Promise(resolve => setTimeout(resolve, 10));
+		await new Promise((resolve) => setTimeout(resolve, 10));
 
 		// 1. Verify sent packet
 		assert.ok(mockLastSentPacket instanceof Packet);
@@ -41,7 +41,7 @@ describe("RequestManager", () => {
 		const sentRequestId = mockLastSentPacket.payload.slice(0, 16);
 
 		// 2. Simulate incoming response
-		const responseData = new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF]);
+		const responseData = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
 		const responsePayload = new Uint8Array(16 + responseData.length);
 		responsePayload.set(sentRequestId, 0);
 		responsePayload.set(responseData, 16);
@@ -58,7 +58,9 @@ describe("RequestManager", () => {
 			payload: responsePayload,
 		});
 
-		mockLink.dispatchEvent(new CustomEvent("packet", { detail: responsePacket }));
+		mockLink.dispatchEvent(
+			new CustomEvent("packet", { detail: responsePacket }),
+		);
 
 		// 3. Verify response
 		const result = await requestPromise;

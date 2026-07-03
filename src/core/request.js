@@ -4,7 +4,7 @@
  */
 
 import { Identity } from "./identity.js";
-import { Packet, ContextType } from "./packet.js";
+import { ContextType, Packet } from "./packet.js";
 
 /**
  * Handles serialization and deserialization of RNS Requests and Responses.
@@ -19,7 +19,7 @@ export class RequestManager {
 		this.pendingRequests = new Map();
 
 		// Listen for incoming packets on the link to handle responses
-		this.link.addEventListener('packet', (event) => {
+		this.link.addEventListener("packet", (event) => {
 			const packet = /** @type {CustomEvent} */ (event).detail;
 			this._handleResponse(packet);
 		});
@@ -38,7 +38,9 @@ export class RequestManager {
 
 		const requestId = packet.payload.slice(0, 16);
 		const responseData = packet.payload.slice(16);
-		const requestIdKey = Array.from(requestId).map(b => b.toString(16).padStart(2, '0')).join('');
+		const requestIdKey = Array.from(requestId)
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
 
 		const pending = this.pendingRequests.get(requestIdKey);
 		if (pending) {
@@ -56,7 +58,9 @@ export class RequestManager {
 	async sendRequest(path, appData = new Uint8Array(0)) {
 		// 1. Generate a unique 16-byte Request ID
 		const requestId = crypto.getRandomValues(new Uint8Array(16));
-		const requestIdKey = Array.from(requestId).map(b => b.toString(16).padStart(2, '0')).join('');
+		const requestIdKey = Array.from(requestId)
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
 
 		// 2. Generate the 16-byte Path Hash
 		const encoder = new TextEncoder();

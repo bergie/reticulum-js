@@ -128,7 +128,10 @@ export class Destination extends EventTarget {
 			combined.set(this.nameHash, 0);
 			combined.set(this.identity.identityHash, this.nameHash.length);
 
-			const destHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (combined));
+			const destHashBuffer = await crypto.subtle.digest(
+				"SHA-256",
+				/** @type {any} */ (combined),
+			);
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else if (this.type === DestinationType.GROUP && this.identity) {
 			// Same as SINGLE for GROUP
@@ -138,7 +141,10 @@ export class Destination extends EventTarget {
 			combined.set(this.nameHash, 0);
 			combined.set(this.identity.identityHash, this.nameHash.length);
 
-			const destHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (combined));
+			const destHashBuffer = await crypto.subtle.digest(
+				"SHA-256",
+				/** @type {any} */ (combined),
+			);
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else if (this.type === DestinationType.PLAIN) {
 			// destHash = SHA256(nameHash)[:16]
