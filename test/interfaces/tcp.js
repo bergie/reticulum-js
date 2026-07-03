@@ -11,7 +11,7 @@ import {
 	TCPServerInterface,
 } from "../../src/interfaces/tcp.js";
 
-test("TCP interface connection and packet transfer", async (t) => {
+test("TCP interface connection and packet transfer", async () => {
 	const port = 12345;
 	const server = new TCPServerInterface({ port });
 	const client = new TCPClientInterface({ host: "127.0.0.1", port });
