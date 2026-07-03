@@ -8,7 +8,7 @@ Implementation specification can be found from `SPEC.md`.
 
 See `PROCOL-SPEC.md` for a non-canonical but hopefully helpful protocol specification.
 
-The canonical specification is the Reticulum Network Python implementation which can be found in the `Reticulum/RNS` folder.
+The canonical specification is the Reticulum Network Python implementation which can be found in the `./Reticulum/RNS` folder.
 
 When the two protocol specifications disagree, the Python implementation is correct.
 

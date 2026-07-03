@@ -8,14 +8,6 @@ The architecture is strictly bound to native ES6 modules, `Uint8Array`, `DataVie
 
 This implementation is optimized to operate as a "leaf node" transport layer. Functionality needed for building Reticulum Transport nodes in JavaScript may be added later.
 
-### Reference
-
-See `PROTOCOL-SPEC.md` for a non-canonical but hopefully helpful protocol specification.
-
-The canonical specification is the Reticulum Network Python implementation which can be found in the `Reticulum/RNS` folder.
-
-When the two disagree, the Python implementation is correct.
-
 ---
 
 ## 2. Core Directory Structure
