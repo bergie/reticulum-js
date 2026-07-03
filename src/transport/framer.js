@@ -13,8 +13,6 @@ export const FramingMode = {
 
 const FLAG = 0x7E;
 const ESC = 0x7D;
-const TFEND = 0xDC; // 0x7D 0x5E
-const TFESC = 0xDD; // 0x7D 0x5D
 
 /**
  * @param {Uint8Array} data
@@ -93,9 +91,10 @@ export function createRNSFramerStream(packetClass) {
 /**
  * Creates a TransformStream for HDLC un-framing (Bytes -> Packets).
  * @param {typeof import('../core/packet.js').Packet} packetClass
+ * @param {number} [ifacSize=0] - Optional size of the IFAC field if present
  * @returns {TransformStream}
  */
-export function createRNSUnframerStream(packetClass) {
+export function createRNSUnframerStream(packetClass, ifacSize = 0) {
     let buffer = new Uint8Array(0);
 
     return new TransformStream({
@@ -135,7 +134,7 @@ export function createRNSUnframerStream(packetClass) {
                 
                 try {
                     const unescaped = hdlcUnescape(frameData);
-                    const packet = packetClass.deserialize(unescaped);
+                    const packet = packetClass.deserialize(unescaped, ifacSize);
                     controller.enqueue(packet);
                 } catch (e) {
                     console.error("Failed to process HDLC frame:", e);

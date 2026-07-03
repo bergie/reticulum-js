@@ -2,54 +2,24 @@ import { describe, test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { 
     createRNSFramerStream, 
-    createRNSUnframerStream, 
-    FramingMode 
+    createRNSUnframerStream,
+    hdlcEscape,
+    hdlcUnescape
 } from '../../src/transport/framer.js';
+import { Packet, PacketType, HeaderType, DestType } from '../../src/core/packet.js';
 
-// --- 1. System Under Test (Mocked for isolation) ---
-
-// Mocking the RNS length parser: Assumes the first byte dictates total packet length
-function parsePacketLength(buffer) {
-    if (buffer.length < 1) return Infinity; // Need more data
-    return buffer[0]; 
-}
-
-class RNSFramerStream extends TransformStream {
-    constructor() {
-        let buffer = new Uint8Array(0);
-        super({
-            transform(chunk, controller) {
-                const combined = new Uint8Array(buffer.length + chunk.length);
-                combined.set(buffer);
-                combined.set(chunk, buffer.length);
-                buffer = combined;
-
-                while (buffer.length >= 1) { // 1 byte minimum for our mocked header
-                    const expectedLength = parsePacketLength(buffer); 
-                    if (buffer.length >= expectedLength) {
-                        controller.enqueue(buffer.slice(0, expectedLength));
-                        buffer = buffer.slice(expectedLength);
-                    } else {
-                        break; 
-                    }
-                }
-            }
-        });
-    }
-}
-
-// --- 2. Test Helper Utility ---
+// --- 1. Helper Utility ---
 
 /**
  * Feeds an array of Uint8Array chunks into the framer and collects the output.
+ * This is actually for testing the UNFRAMER.
  */
-async function runStreamTest(chunks) {
-    const framer = new RNSFramerStream();
-    const writer = framer.writable.getWriter();
-    const reader = framer.readable.getReader();
+async function runUnframerTest(chunks) {
+    const unframer = createRNSUnframerStream(Packet);
+    const writer = unframer.writable.getWriter();
+    const reader = unframer.readable.getReader();
     const results = [];
 
-    // Push chunks asynchronously to simulate network events
     const pump = async () => {
         for (const chunk of chunks) {
             await writer.write(chunk);
@@ -57,7 +27,6 @@ async function runStreamTest(chunks) {
         await writer.close();
     };
 
-    // Read outputs as they are yielded
     const consume = async () => {
         while (true) {
             const { value, done } = await reader.read();
@@ -70,56 +39,168 @@ async function runStreamTest(chunks) {
     return results;
 }
 
-// --- 3. The Test Suite ---
+/**
+ * Feeds an array of Packet objects into the framer and collects the output.
+ */
+async function runFramerTest(packets) {
+    const framer = createRNSFramerStream(Packet);
+    const writer = framer.writable.getWriter();
+    const reader = framer.readable.getReader();
+    const results = [];
+
+    const pump = async () => {
+        for (const packet of packets) {
+            await writer.write(packet);
+        }
+        await writer.close();
+    };
+
+    const consume = async () => {
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            results.push(value);
+        }
+    };
+
+    await Promise.all([pump(), consume()]);
+    return results;
+}
+
+// --- 2. The Test Suite ---
+
+describe('HDLC Utilities', () => {
+    test('hdlcEscape and hdlcUnescape should be inverses', () => {
+        const data = new Uint8Array([0x7E, 0x01, 0x7D, 0x02, 0x00, 0xFF]);
+        const escaped = hdlcEscape(data);
+        const unescaped = hdlcUnescape(escaped);
+        assert.deepEqual(data, unescaped);
+    });
+});
 
 describe('RNS Framer TransformStream', () => {
-
-    test('Perfect alignment: 1 chunk = 1 packet', async () => {
-        // First byte is 4 (total length). Payload is [0x01, 0x02, 0x03]
-        const packet = new Uint8Array([4, 0x01, 0x02, 0x03]);
+    test('Perfect alignment: 1 packet = 1 frame', async () => {
+        const packet = new Packet({
+            headerType: HeaderType.HEADER_1,
+            hops: 1,
+            transportType: 0,
+            destinationType: DestType.SINGLE,
+            packetType: PacketType.DATA,
+            contextFlag: false,
+            destinationHash: new Uint8Array(16),
+            payload: new Uint8Array([0xDE, 0xAD, 0xBE, 0xEF])
+        });
         
-        const results = await runStreamTest([packet]);
-        
-        assert.equal(results.length, 1);
-        assert.deepEqual(results[0], packet);
-    });
-
-    test('Fragmentation: 1 packet split across 3 separate chunks', async () => {
-        // Simulating TCP MTU fragmentation
-        const chunk1 = new Uint8Array([5, 0xAA]); // Length 5, plus 1 byte of payload
-        const chunk2 = new Uint8Array([0xBB, 0xCC]);
-        const chunk3 = new Uint8Array([0xDD]);
-        
-        const results = await runStreamTest([chunk1, chunk2, chunk3]);
+        const results = await runFramerTest([packet]);
         
         assert.equal(results.length, 1);
-        assert.deepEqual(results[0], new Uint8Array([5, 0xAA, 0xBB, 0xCC, 0xDD]));
+        const serialized = packet.serialize();
+        const escaped = hdlcEscape(serialized);
+        const expectedFrame = new Uint8Array(escaped.length + 2);
+        expectedFrame[0] = 0x7E;
+        expectedFrame.set(escaped, 1);
+        expectedFrame[expectedFrame.length - 1] = 0x7E;
+        
+        assert.deepEqual(results[0], expectedFrame);
+    });
+});
+
+describe('RNS Unframer TransformStream', () => {
+    test('Perfect alignment: 1 frame = 1 packet', async () => {
+        const packet = new Packet({
+            headerType: HeaderType.HEADER_1,
+            hops: 1,
+            transportType: 0,
+            destinationType: DestType.SINGLE,
+            packetType: PacketType.DATA,
+            contextFlag: false,
+            destinationHash: new Uint8Array(16),
+            payload: new Uint8Array([0xAA, 0xBB])
+        });
+        
+        const serialized = packet.serialize();
+        const escaped = hdlcEscape(serialized);
+        const frame = new Uint8Array(escaped.length + 2);
+        frame[0] = 0x7E;
+        frame.set(escaped, 1);
+        frame[frame.length - 1] = 0x7E;
+
+        const results = await runUnframerTest([frame]);
+        
+        assert.equal(results.length, 1);
+        assert.ok(results[0] instanceof Packet);
+        assert.equal(results[0].packetType, PacketType.DATA);
+        assert.deepEqual(results[0].payload, packet.payload);
     });
 
-    test('Coalescing: 2 complete packets bundled in 1 chunk', async () => {
-        // Fast network / Yjs burst updates arriving together
-        const packet1 = [3, 0x11, 0x22];
-        const packet2 = [4, 0xAA, 0xBB, 0xCC];
-        const combinedChunk = new Uint8Array([...packet1, ...packet2]);
+    test('Fragmentation: 1 frame split across multiple chunks', async () => {
+        const packet = new Packet({
+            headerType: HeaderType.HEADER_1,
+            hops: 1,
+            transportType: 0,
+            destinationType: DestType.SINGLE,
+            packetType: PacketType.DATA,
+            contextFlag: false,
+            destinationHash: new Uint8Array(16),
+            payload: new Uint8Array([0x01, 0x02, 0x03, 0x04, 0x05])
+        });
         
-        const results = await runStreamTest([combinedChunk]);
+        const serialized = packet.serialize();
+        const escaped = hdlcEscape(serialized);
+        const frame = new Uint8Array(escaped.length + 2);
+        frame[0] = 0x7E;
+        frame.set(escaped, 1);
+        frame[frame.length - 1] = 0x7E;
+
+        // Split frame into 3 chunks
+        const chunk1 = frame.slice(0, 3);
+        const chunk2 = frame.slice(3, 6);
+        const chunk3 = frame.slice(6);
         
-        assert.equal(results.length, 2);
-        assert.deepEqual(results[0], new Uint8Array(packet1));
-        assert.deepEqual(results[1], new Uint8Array(packet2));
+        const results = await runUnframerTest([chunk1, chunk2, chunk3]);
+        
+        assert.equal(results.length, 1);
+        assert.deepEqual(results[0].payload, packet.payload);
     });
 
-    test('Trailing payload: 1 complete packet + partial next packet', async () => {
-        const packet1 = [3, 0x99, 0x88];
-        const partialPacket2 = [5, 0xAA]; // Needs 3 more bytes to complete
-        
-        const combinedChunk = new Uint8Array([...packet1, ...partialPacket2]);
-        const completingChunk = new Uint8Array([0xBB, 0xCC, 0xDD]);
-        
-        const results = await runStreamTest([combinedChunk, completingChunk]);
+    test('Coalescing: Multiple frames in one chunk', async () => {
+        const p1 = new Packet({
+            headerType: HeaderType.HEADER_1,
+            hops: 1,
+            transportType: 0,
+            destinationType: DestType.SINGLE,
+            packetType: PacketType.DATA,
+            contextFlag: false,
+            destinationHash: new Uint8Array(16),
+            payload: new Uint8Array([0x01])
+        });
+        const p2 = new Packet({
+            headerType: HeaderType.HEADER_1,
+            hops: 2,
+            transportType: 0,
+            destinationType: DestType.SINGLE,
+            packetType: PacketType.DATA,
+            contextFlag: false,
+            destinationHash: new Uint8Array(16),
+            payload: new Uint8Array([0x02])
+        });
+
+        const f1 = new Uint8Array(hdlcEscape(p1.serialize()).length + 2);
+        f1[0] = 0x7E;
+        f1.set(hdlcEscape(p1.serialize()), 1);
+        f1[f1.length - 1] = 0x7E;
+
+        const f2 = new Uint8Array(hdlcEscape(p2.serialize()).length + 2);
+        f2[0] = 0x7E;
+        f2.set(hdlcEscape(p2.serialize()), 1);
+        f2[f2.length - 1] = 0x7E;
+
+        const combined = new Uint8Array([...f1, ...f2]);
+
+        const results = await runUnframerTest([combined]);
         
         assert.equal(results.length, 2);
-        assert.deepEqual(results[0], new Uint8Array(packet1));
-        assert.deepEqual(results[1], new Uint8Array([5, 0xAA, 0xBB, 0xCC, 0xDD]));
+        assert.deepEqual(results[0].payload, p1.payload);
+        assert.deepEqual(results[1].payload, p2.payload);
     });
 });
