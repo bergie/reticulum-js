@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@ably/msgpack-js": "^0.4.1",
+    "@digitaldefiance/bzip2-wasm": "^1.1.1",
     "@types/node": "^26.1.0",
     "typescript": "^6.0.3"
   }
