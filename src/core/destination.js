@@ -4,6 +4,17 @@
  */
 
 import { Identity } from './identity.js';
+import { Packet, PacketType, HeaderType, DestType } from './packet.js';
+import { generateX25519KeyPair, generateEd25519KeyPair, exportPublicKey } from '../crypto/keys.js';
+import { Link } from '../transport/link.js';
+
+/**
+ * @enum {number}
+ */
+export const Direction = {
+    IN: 0,
+    OUT: 1
+};
 
 /**
  * Types of destinations.
@@ -51,12 +62,14 @@ export class Destination extends EventTarget {
 
     /**
      * @param {string} name - The application name.
-     * @param {DestinationType} type - The destination type.
+     * @param {Direction} direction - The direction of this destination.
+     * @param {DestinationType} type - The type of this destination.
      * @param {Identity|null} identity - The identity associated with this destination.
      */
-    constructor(name, type, identity = null) {
+    constructor(name, direction, type, identity = null) {
         super();
         this.name = name;
+        this.direction = direction;
         this.type = type;
         this.identity = identity;
         this.destinationHash = null;
@@ -66,12 +79,13 @@ export class Destination extends EventTarget {
     /**
      * Static factory for creating a destination.
      * @param {string} name
+     * @param {Direction} direction
      * @param {DestinationType} type
      * @param {Identity|null} identity
      * @returns {Promise<Destination>}
      */
-    static async create(name, type, identity = null) {
-        const dest = new Destination(name, type, identity);
+    static async create(name, direction, type, identity = null) {
+        const dest = new Destination(name, direction, type, identity);
         await dest._computeHashes();
         return dest;
     }
@@ -121,7 +135,7 @@ export class Destination extends EventTarget {
      * @returns {Promise<Destination>}
      */
     static async IN(name, type, identity = null) {
-        return await this.create(name, type, identity);
+        return await this.create(name, Direction.IN, type, identity);
     }
 
     /**
@@ -132,36 +146,97 @@ export class Destination extends EventTarget {
      * @returns {Promise<Destination>}
      */
     static async OUT(name, type, identity = null) {
-        return await this.create(name, type, identity);
+        return await this.create(name, Direction.OUT, type, identity);
     }
 
     /**
      * Creates a SINGLE destination.
      * @param {string} name
+     * @param {Direction} direction
      * @param {Identity|null} identity
      * @returns {Promise<Destination>}
      */
-    static async SINGLE(name, identity = null) {
-        return await this.create(name, DestinationType.SINGLE, identity);
+    static async SINGLE(name, direction, identity = null) {
+        return await this.create(name, direction, DestinationType.SINGLE, identity);
     }
 
     /**
      * Creates a GROUP destination.
      * @param {string} name
+     * @param {Direction} direction
      * @param {Identity|null} identity
      * @returns {Promise<Destination>}
      */
-    static async GROUP(name, identity = null) {
-        return await this.create(name, DestinationType.GROUP, identity);
+    static async GROUP(name, direction, identity = null) {
+        return await this.create(name, direction, DestinationType.GROUP, identity);
     }
 
     /**
      * Creates a PLAIN destination.
      * @param {string} name
+     * @param {Direction} direction
      * @returns {Promise<Destination>}
      */
-    static async PLAIN(name) {
-        return await this.create(name, DestinationType.PLAIN, null);
+    static async PLAIN(name, direction) {
+        return await this.create(name, direction, DestinationType.PLAIN, null);
+    }
+
+    /**
+     * Requests an encrypted link to this remote destination.
+     * @param {import('../transport/transport.js').Transport} transport - The transport interface to use.
+     * @param {Uint8Array} appData - Optional contextual data (e.g., Graph ID, Auth Token)
+     * @param {number} timeoutMs - How long to wait for the remote node to accept
+     * @returns {Promise<import('../transport/link.js').Link>} Resolves when the secure tunnel is established
+     */
+    async createLink(transport, appData = new Uint8Array(0), timeoutMs = 15000) {
+        if (this.direction !== Direction.OUT) {
+            throw new Error("Can only initiate links to OUT destinations.");
+        }
+
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this.removeEventListener('link_established', onLinkEstablished);
+                reject(new Error("Link request timed out."));
+            }, timeoutMs);
+
+            const onLinkEstablished = (event) => {
+                clearTimeout(timer);
+                resolve(event.detail.link);
+            };
+
+            this.addEventListener('link_established', onLinkEstablished, { once: true });
+
+            (async () => {
+                try {
+                    const x25519 = await generateX25519KeyPair();
+                    const ed25519 = await generateEd25519KeyPair();
+                    const x25519PubBytes = await exportPublicKey(x25519.publicKey);
+                    const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
+
+                    const payload = new Uint8Array(64 + appData.length);
+                    payload.set(x25519PubBytes, 0);
+                    payload.set(ed25519PubBytes, 32);
+                    payload.set(appData, 64);
+
+                    const packet = new Packet({
+                        headerType: HeaderType.HEADER_1,
+                        hops: 0,
+                        transportType: 0,
+                        destinationType: this.type,
+                        packetType: PacketType.LINKREQUEST,
+                        contextFlag: false,
+                        destinationHash: this.destinationHash,
+                        payload: payload
+                    });
+
+                    await transport.sendPacket(packet);
+                } catch (e) {
+                    clearTimeout(timer);
+                    this.removeEventListener('link_established', onLinkEstablished);
+                    reject(e);
+                }
+            })();
+        });
     }
 
     /**
