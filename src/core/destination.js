@@ -266,13 +266,22 @@ export class Destination extends EventTarget {
 						256,
 					);
 					const shared_key = new Uint8Array(shared_key_buffer);
-					const link_key = await LinkEncryption.deriveLinkKey(shared_key, this.getSalt());
+					const link_key = await LinkEncryption.deriveLinkKey(
+						shared_key,
+						this.getSalt(),
+					);
 
-					const link = new Link(link_key, transport.inboundStream, transport.outboundStream);
+					const link = new Link(
+						link_key,
+						transport.inboundStream,
+						transport.outboundStream,
+					);
 
-					this.dispatchEvent(new CustomEvent("link_established", {
-						detail: { link },
-					}));
+					this.dispatchEvent(
+						new CustomEvent("link_established", {
+							detail: { link },
+						}),
+					);
 
 					resolve(link);
 				} catch (e) {
@@ -334,7 +343,12 @@ export class Destination extends EventTarget {
 	 * @param {Uint8Array} appData
 	 * @returns {Promise<import('../transport/link.js').Link>}
 	 */
-	async respondToLinkRequest(transport, requestPacket, senderHash, appData = new Uint8Array(0)) {
+	async respondToLinkRequest(
+		transport,
+		requestPacket,
+		senderHash,
+		appData = new Uint8Array(0),
+	) {
 		const peer_x25519_pub_bytes = requestPacket.payload.slice(0, 32);
 		const peer_ed25519_pub_bytes = requestPacket.payload.slice(32, 64);
 
@@ -360,7 +374,10 @@ export class Destination extends EventTarget {
 			256,
 		);
 		const shared_key = new Uint8Array(shared_key_buffer);
-		const link_key = await LinkEncryption.deriveLinkKey(shared_key, this.getSalt());
+		const link_key = await LinkEncryption.deriveLinkKey(
+			shared_key,
+			this.getSalt(),
+		);
 
 		const responsePayload = new Uint8Array(64);
 		responsePayload.set(x25519PubBytes, 0);
@@ -381,10 +398,16 @@ export class Destination extends EventTarget {
 
 		await transport.sendPacket(responsePacket);
 
-		const link = new Link(link_key, transport.inboundStream, transport.outboundStream);
-		this.dispatchEvent(new CustomEvent("link_established", {
-			detail: { link },
-		}));
+		const link = new Link(
+			link_key,
+			transport.inboundStream,
+			transport.outboundStream,
+		);
+		this.dispatchEvent(
+			new CustomEvent("link_established", {
+				detail: { link },
+			}),
+		);
 
 		return link;
 	}

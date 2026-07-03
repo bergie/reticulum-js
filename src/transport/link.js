@@ -109,7 +109,7 @@ export class Link extends EventTarget {
 		const token = this.token;
 
 		return new WritableStream({
-			async write(packet, controller) {
+			async write(packet, _controller) {
 				try {
 					const encryptedPayload = await token.encrypt(packet.payload);
 					const encryptedPacket = new packet.constructor({

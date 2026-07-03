@@ -114,8 +114,8 @@ export class Transport extends EventTarget {
 					packet.packetType === PacketType.LINKREQUEST
 						? "linkrequest"
 						: packet.packetType === PacketType.LINKRESPONSE
-						? "link_response"
-						: "linkproof";
+							? "link_response"
+							: "linkproof";
 				destination.dispatchEvent(
 					new CustomEvent(eventName, {
 						detail: { packet },

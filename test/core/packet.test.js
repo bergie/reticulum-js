@@ -25,7 +25,7 @@ async function testPacket() {
 	});
 
 	const serialized1 = packet1.serialize();
-	assert.strictEqual(serialized1.length, 2 + 16 + 4); // flags + hops + destHash + payload
+	assert.strictEqual(serialized1.length, 2 + 16 + 1 + 4); // flags + hops + destHash + contextByte + payload
 	assert.strictEqual(serialized1[0] & 0x0f, PacketType.DATA);
 	assert.strictEqual(serialized1[1], 5);
 
