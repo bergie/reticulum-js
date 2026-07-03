@@ -8,7 +8,7 @@ import {
 	generateEd25519KeyPair,
 	generateX25519KeyPair,
 } from "../crypto/keys.js";
-import { Link } from "../transport/link.js";
+import { Link, LinkEncryption } from "../transport/link.js";
 import { Identity } from "./identity.js";
 import { DestType, HeaderType, Packet, PacketType } from "./packet.js";
 
@@ -224,22 +224,75 @@ export class Destination extends EventTarget {
 		return new Promise((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.removeEventListener("link_established", onLinkEstablished);
+				this.removeEventListener("link_response", onLinkResponse);
 				reject(new Error("Link request timed out."));
 			}, timeoutMs);
 
 			/** @param {any} event */
 			const onLinkEstablished = (event) => {
 				clearTimeout(timer);
+				this.removeEventListener("link_response", onLinkResponse);
 				resolve(event.detail.link);
+			};
+
+			/** @param {any} event */
+			const onLinkResponse = async (event) => {
+				clearTimeout(timer);
+				this.removeEventListener("link_established", onLinkEstablished);
+
+				try {
+					const { packet } = event.detail;
+					if (packet.packetType !== PacketType.LINKRESPONSE) {
+						throw new Error("Expected LINKRESPONSE packet");
+					}
+
+					const peer_x25519_pub_bytes = packet.payload.slice(0, 32);
+					const peer_ed25519_pub_bytes = packet.payload.slice(32, 64);
+
+					const peer_x25519_pub = await crypto.subtle.importKey(
+						"raw",
+						peer_x25519_pub_bytes,
+						{ name: "X25519" },
+						true,
+						[],
+					);
+
+					const shared_key_buffer = await crypto.subtle.deriveBits(
+						{
+							name: "X25519",
+							public: peer_x25519_pub,
+						},
+						local_x25519_priv,
+						256,
+					);
+					const shared_key = new Uint8Array(shared_key_buffer);
+					const link_key = await LinkEncryption.deriveLinkKey(shared_key, this.getSalt());
+
+					const link = new Link(link_key, transport.inboundStream, transport.outboundStream);
+
+					this.dispatchEvent(new CustomEvent("link_established", {
+						detail: { link },
+					}));
+
+					resolve(link);
+				} catch (e) {
+					reject(e);
+				}
 			};
 
 			this.addEventListener("link_established", onLinkEstablished, {
 				once: true,
 			});
 
+			this.addEventListener("link_response", onLinkResponse, {
+				once: true,
+			});
+
 			(async () => {
+				let local_x25519_priv;
 				try {
 					const x25519 = await generateX25519KeyPair();
+					local_x25519_priv = x25519.privateKey;
 					const ed25519 = await generateEd25519KeyPair();
 					const x25519PubBytes = await exportPublicKey(x25519.publicKey);
 					const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
@@ -266,10 +319,74 @@ export class Destination extends EventTarget {
 				} catch (e) {
 					clearTimeout(timer);
 					this.removeEventListener("link_established", onLinkEstablished);
+					this.removeEventListener("link_response", onLinkResponse);
 					reject(e);
 				}
 			})();
 		});
+	}
+
+	/**
+	 * Responds to a link request.
+	 * @param {import('../transport/transport.js').Transport} transport
+	 * @param {import('../core/packet.js').Packet} requestPacket
+	 * @param {Uint8Array} senderHash - The destination hash of the requester.
+	 * @param {Uint8Array} appData
+	 * @returns {Promise<import('../transport/link.js').Link>}
+	 */
+	async respondToLinkRequest(transport, requestPacket, senderHash, appData = new Uint8Array(0)) {
+		const peer_x25519_pub_bytes = requestPacket.payload.slice(0, 32);
+		const peer_ed25519_pub_bytes = requestPacket.payload.slice(32, 64);
+
+		const x25519 = await generateX25519KeyPair();
+		const ed25519 = await generateEd25519KeyPair();
+		const x25519PubBytes = await exportPublicKey(x25519.publicKey);
+		const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
+
+		const peer_x25519_pub = await crypto.subtle.importKey(
+			"raw",
+			peer_x25519_pub_bytes,
+			{ name: "X25519" },
+			true,
+			[],
+		);
+
+		const shared_key_buffer = await crypto.subtle.deriveBits(
+			{
+				name: "X25519",
+				public: peer_x25519_pub,
+			},
+			x25519.privateKey,
+			256,
+		);
+		const shared_key = new Uint8Array(shared_key_buffer);
+		const link_key = await LinkEncryption.deriveLinkKey(shared_key, this.getSalt());
+
+		const responsePayload = new Uint8Array(64);
+		responsePayload.set(x25519PubBytes, 0);
+		responsePayload.set(ed25519PubBytes, 32);
+
+		const responsePacket = new Packet({
+			headerType: HeaderType.HEADER_1,
+			hops: 0,
+			transportType: 0,
+			destinationType: this.type,
+			packetType: PacketType.LINKRESPONSE,
+			contextFlag: false,
+			/** @type {any} */
+			destinationHash: senderHash,
+			contextByte: 0,
+			payload: responsePayload,
+		});
+
+		await transport.sendPacket(responsePacket);
+
+		const link = new Link(link_key, transport.inboundStream, transport.outboundStream);
+		this.dispatchEvent(new CustomEvent("link_established", {
+			detail: { link },
+		}));
+
+		return link;
 	}
 
 	/**

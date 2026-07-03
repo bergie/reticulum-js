@@ -57,6 +57,38 @@ export class Transport extends EventTarget {
 	}
 
 	/**
+	 * The stream of incoming packets.
+	 * @type {ReadableStream<import('../core/packet.js').Packet>}
+	 */
+	get inboundStream() {
+		return new ReadableStream({
+			async pull(controller) {
+				const { value, done } = await this.inboundReader.read();
+				if (done) {
+					controller.close();
+					return;
+				}
+				controller.enqueue(value);
+			},
+			cancel() {
+				this.inboundReader.cancel();
+			},
+		});
+	}
+
+	/**
+	 * The stream of outgoing packets.
+	 * @type {WritableStream<import('../core/packet.js').Packet>}
+	 */
+	get outboundStream() {
+		return new WritableStream({
+			async write(packet) {
+				await this.sendPacket(packet);
+			},
+		});
+	}
+
+	/**
 	 * Sends a packet through the interface.
 	 * @param {import('../core/packet.js').Packet} packet
 	 */
@@ -70,9 +102,10 @@ export class Transport extends EventTarget {
 	 * @private
 	 */
 	async handleInboundPacket(packet) {
-		// Dispatch to destination if it's a link request or proof
+		// Dispatch to destination if it's a link request, response or proof
 		if (
 			packet.packetType === PacketType.LINKREQUEST ||
+			packet.packetType === PacketType.LINKRESPONSE ||
 			packet.packetType === PacketType.PROOF
 		) {
 			const destination = this.destinations.get(packet.destinationHash);
@@ -80,6 +113,8 @@ export class Transport extends EventTarget {
 				const eventName =
 					packet.packetType === PacketType.LINKREQUEST
 						? "linkrequest"
+						: packet.packetType === PacketType.LINKRESPONSE
+						? "link_response"
 						: "linkproof";
 				destination.dispatchEvent(
 					new CustomEvent(eventName, {
