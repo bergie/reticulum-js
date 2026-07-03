@@ -15,7 +15,7 @@ Currently just a sketch.
 
 ## Development
 
-This project is developed following [Reticulim Distributed Development]() guidelines. The canonical source lives in `rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js`.
+This project is developed following [Reticulim Distributed Development](https://reticulum.network/manual/distributed.html) guidelines. The canonical source lives in `rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js`.
 
 We also provide a sporadically updated GitHub mirror at `https://github.com/bergie/reticulum-js`.
 
