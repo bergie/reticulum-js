@@ -13,6 +13,12 @@ Some principles:
 
 Currently just a sketch.
 
+## Development
+
+This project is developed following [Reticulim Distributed Development]() guidelines. The canonical source lives in `rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js`.
+
+We also provide a sporadically updated GitHub mirror at `https://github.com/bergie/reticulum-js`.
+
 ## Acknowledgements
 
 Prior art includes [Liam Cottle's rns.js](https://github.com/liamcottle/rns.js).
