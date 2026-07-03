@@ -50,13 +50,15 @@ export class Link extends EventTarget {
 	 * @param {Uint8Array} destinationHash - The remote destination hash.
 	 * @param {ReadableStream} remoteStream - The raw stream from the interface (yielding Packets).
 	 * @param {WritableStream} localStream - The raw stream to the interface (accepting bytes).
+	 * @param {number} [mtu=1024] - The Maximum Transmission Unit.
 	 */
-	constructor(tokenKey, destinationHash, remoteStream, localStream) {
+	constructor(tokenKey, destinationHash, remoteStream, localStream, mtu = 1024) {
 		super();
 		this.tokenKey = tokenKey;
 		this.destinationHash = destinationHash;
 		this.remoteStream = remoteStream;
 		this.localStream = localStream;
+		this.mtu = mtu;
 		this.token = new Token(tokenKey);
 
 		/** @type {Set<ReadableStreamDefaultController>} */

@@ -64,7 +64,7 @@ export class ResourceAdvertisement {
 		this.o = options.o || new Uint8Array(0);
 		this.i = options.i || 0;
 		this.l = options.l || 0;
-		this.q = options.q || null;
+		this.q = options.q || undefined;
 		this.f = options.f || 0;
 		this.m = options.m || new Uint8Array(0);
 
@@ -106,9 +106,10 @@ export class ResourceAdvertisement {
 	 * @returns {ResourceAdvertisement}
 	 */
 	static unpack(data) {
+		/** @type {any} */
 		const dict = MicroMsgPack.decode(data);
 
-		return new ResourceAdvertisement({
+		return new ResourceAdvertisement(/** @type {any} */ ({
 			t: dict.t,
 			d: dict.d,
 			n: dict.n,
@@ -117,10 +118,10 @@ export class ResourceAdvertisement {
 			o: new Uint8Array(dict.o),
 			i: dict.i,
 			l: dict.l,
-			q: dict.q ? new Uint8Array(dict.q) : null,
+			q: dict.q ? new Uint8Array(dict.q) : undefined,
 			f: dict.f,
 			m: new Uint8Array(dict.m)
-		});
+		}));
 	}
 
 	/**

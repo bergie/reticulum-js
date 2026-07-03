@@ -19,6 +19,7 @@ export const ResourceStatus = {
 	FAILED: 6,
 	CORRUPT: 7,
 	REJECTED: 8,
+	ASSEMBLING: 9,
 };
 
 /**
@@ -31,46 +32,72 @@ export class Resource extends EventTarget {
 	 * @param {Object} options
 	 * @param {Uint8Array|ReadableStream|null} [options.data] - The data to be transferred.
 	 * @param {import("../transport/link.js").Link} [options.link] - The link to use.
-	 * @param {boolean} [options.advertise=true] - Whether to automatically advertise the resource.
-	 * @param {boolean} [options.auto_compress=true] - Whether to auto-compress the resource.
+	 * @param {boolean} [options.autoAdvertise=true] - Whether to automatically advertise the resource.
+	 * @param {boolean} [options.autoCompress=true] - Whether to auto-compress the resource.
 	 * @param {Function} [options.callback] - Callback when transfer concludes.
-	 * @param {Function} [options.progress_callback] - Callback for progress updates.
+	 * @param {Function} [options.progressCallback] - Callback for progress updates.
 	 * @param {number} [options.timeout] - Timeout for the transfer.
-	 * @param {number} [options.segment_index=1] - The segment index (for split resources).
-	 * @param {Uint8Array} [options.original_hash] - The hash of the original resource.
-	 * @param {Uint8Array} [options.request_id] - The ID of the associated request.
-	 * @param {boolean} [options.is_response=false] - Whether this is a response resource.
-	 * @param {number} [options.sent_metadata_size=0] - Size of metadata sent with the first segment.
+	 * @param {number} [options.segmentIndex=1] - The segment index (for split resources).
+	 * @param {Uint8Array} [options.originalHash] - The hash of the original resource.
+	 * @param {Uint8Array} [options.requestId] - The ID of the associated request.
+	 * @param {boolean} [options.isResponse=false] - Whether this is a response resource.
+	 * @param {number} [options.sentMetadataSize=0] - Size of metadata sent with the first segment.
 	 */
 	constructor(options = {}) {
 		super();
-		this.data = options.data || null;
-		this.link = options.link || null;
-		this.advertise = options.advertise ?? true;
-		this.auto_compress = options.auto_compress ?? true;
-		this.callback = options.callback || null;
-		this.progress_callback = options.progress_callback || null;
-		this.timeout = options.timeout || null;
-		this.segment_index = options.segment_index || 1;
-		this.original_hash = options.original_hash || null;
-		this.request_id = options.request_id || null;
-		this.is_response = options.is_response || false;
-		this.sent_metadata_size = options.sent_metadata_size || 0;
+		/** @type {Uint8Array|ReadableStream|undefined} */
+		this.data = options.data || undefined;
+		/** @type {import("../transport/link.js").Link|undefined} */
+		this.link = options.link || undefined;
+		/** @type {boolean} */
+		this.autoAdvertise = options.autoAdvertise ?? true;
+		/** @type {boolean} */
+		this.autoCompress = options.autoCompress ?? true;
+		/** @type {Function|undefined} */
+		this.callback = options.callback || undefined;
+		/** @type {Function|undefined} */
+		this.progressCallback = options.progressCallback || undefined;
+		/** @type {number|undefined} */
+		this.timeout = options.timeout || undefined;
+		/** @type {number} */
+		this.segmentIndex = options.segmentIndex || 1;
+		/** @type {Uint8Array|undefined} */
+		this.originalHash = options.originalHash || undefined;
+		/** @type {Uint8Array|undefined} */
+		this.requestId = options.requestId || undefined;
+		/** @type {boolean} */
+		this.isResponse = options.isResponse || false;
+		/** @type {number} */
+		this.sentMetadataSize = options.sentMetadataSize || 0;
 
+		/** @type {number} */
 		this.status = ResourceStatus.NONE;
+		/** @type {(Uint8Array|null)[]} */
 		this.parts = [];
-		this.received_count = 0;
-		this.outstanding_parts = 0;
-		this.total_parts = 0;
-		this.total_size = 0;
+		/** @type {number} */
+		this.receivedCount = 0;
+		/** @type {number} */
+		this.outstandingParts = 0;
+		/** @type {number} */
+		this.totalParts = 0;
+		/** @type {number} */
+		this.totalSize = 0;
+		/** @type {number} */
 		this.size = 0; // Transfer size
-		this.hash = null;
-		this.random_hash = null;
+		/** @type {Uint8Array|undefined} */
+		this.hash = undefined;
+		/** @type {Uint8Array|undefined} */
+		this.randomHash = undefined;
+		/** @type {boolean} */
 		this.compressed = false;
+		/** @type {boolean} */
 		this.encrypted = false;
+		/** @type {boolean} */
 		this.split = false;
-		this.has_metadata = false;
-		this.metadata = null;
+		/** @type {boolean} */
+		this.hasMetadata = false;
+		/** @type {Uint8Array|undefined} */
+		this.metadata = undefined;
 
 		if (this.data) {
 			this._prepareSender();
@@ -90,11 +117,11 @@ export class Resource extends EventTarget {
 
 		if (this.data instanceof Uint8Array) {
 			const total_len = this.data.length;
-			this.total_size = total_len;
-			this.total_parts = Math.ceil(total_len / sdu);
-			this.size = this.total_parts;
+			this.totalSize = total_len;
+			this.totalParts = Math.ceil(total_len / sdu);
+			this.size = this.totalParts;
 
-			for (let i = 0; i < this.total_parts; i++) {
+			for (let i = 0; i < this.totalParts; i++) {
 				const start = i * sdu;
 				const end = Math.min(start + sdu, total_len);
 				this.parts.push(this.data.slice(start, end));
@@ -116,16 +143,17 @@ export class Resource extends EventTarget {
 
 		// 1. Create ResourceAdvertisement
 		const adv = new ResourceAdvertisement({
-			t: this.total_size,
-			d: this.total_size,
-			n: this.total_parts,
+			t: this.totalSize,
+			d: this.totalSize,
+			n: this.totalParts,
 			h: this.hash || new Uint8Array(32),
-			r: this.random_hash || new Uint8Array(16),
-			o: this.original_hash || new Uint8Array(32),
-			i: this.segment_index,
-			l: this.total_parts,
-			q: this.request_id,
+			r: this.randomHash || new Uint8Array(16),
+			o: this.originalHash || new Uint8Array(32),
+			i: this.segmentIndex,
+			l: this.totalParts,
+			q: this.requestId,
 			f: 0, // flags
+			m: new Uint8Array(0),
 		});
 
 		const advPayload = adv.pack();
@@ -166,26 +194,26 @@ export class Resource extends EventTarget {
 
 			const resource = new Resource({
 				link: link,
-				request_id: adv.q,
-				is_response: true,
+				requestId: adv.q,
+				isResponse: true,
 			});
 
 			resource.status = ResourceStatus.TRANSFERRING;
-			resource.total_size = adv.t;
-			resource.total_parts = adv.n;
+			resource.totalSize = adv.t;
+			resource.totalParts = adv.n;
 			resource.hash = adv.h;
-			resource.random_hash = adv.r;
-			resource.original_hash = adv.o;
-			resource.segment_index = adv.i;
+			resource.randomHash = adv.r;
+			resource.originalHash = adv.o;
+			resource.segmentIndex = adv.i;
 			resource.split = adv.s;
-			resource.has_metadata = adv.x;
+			resource.hasMetadata = adv.x;
 			resource.compressed = adv.c;
 			resource.encrypted = adv.e;
 
-			if (resource.is_response) {
-				resource.parts = new Array(resource.total_parts).fill(null);
-				resource.received_count = 0;
-				resource.outstanding_parts = resource.total_parts;
+			if (resource.isResponse) {
+				resource.parts = new Array(resource.totalParts).fill(null);
+				resource.receivedCount = 0;
+				resource.outstandingParts = resource.totalParts;
 			}
 
 			// Register with the link
@@ -213,10 +241,10 @@ export class Resource extends EventTarget {
 		
 		const partData = packet.payload;
 		this.parts.push(partData);
-		this.received_count++;
-		this.outstanding_parts--;
+		this.receivedCount++;
+		this.outstandingParts--;
 
-		if (this.received_count === this.total_parts) {
+		if (this.receivedCount === this.totalParts) {
 			this._assemble();
 		}
 	}
@@ -231,14 +259,14 @@ export class Resource extends EventTarget {
 			const assembledData = this._concatenateParts(this.parts);
 			// In a real implementation, we would verify the hash here.
 			
-			this.data = assembledData;
+			this.data = assembledData || undefined;
 			this.status = ResourceStatus.COMPLETE;
 
 			if (this.callback) {
 				this.callback(this);
 			}
-			if (this.progress_callback) {
-				this.progress_callback(this);
+			if (this.progressCallback) {
+				this.progressCallback(this);
 			}
 		} catch (e) {
 			this.status = ResourceStatus.CORRUPT;
@@ -248,15 +276,22 @@ export class Resource extends EventTarget {
 
 	/**
 	 * Concatenates an array of Uint8Arrays.
-	 * @param {Uint8Array[]} parts
+	 * @param {(Uint8Array|null)[]} parts
 	 * @returns {Uint8Array}
 	 * @private
 	 */
 	_concatenateParts(parts) {
-		const totalLength = parts.reduce((acc, part) => acc + part.length, 0);
+		/** @type {Uint8Array[]} */
+		const validParts = [];
+		for (const part of parts) {
+			if (part !== null) {
+				validParts.push(part);
+			}
+		}
+		const totalLength = validParts.reduce((acc, part) => acc + part.length, 0);
 		const result = new Uint8Array(totalLength);
 		let offset = 0;
-		for (const part of parts) {
+		for (const part of validParts) {
 			result.set(part, offset);
 			offset += part.length;
 		}
@@ -268,7 +303,7 @@ export class Resource extends EventTarget {
 	 * @returns {number}
 	 */
 	getProgress() {
-		if (this.total_parts === 0) return 0;
-		return this.received_count / this.total_parts;
+		if (this.totalParts === 0) return 0;
+		return this.receivedCount / this.totalParts;
 	}
 }

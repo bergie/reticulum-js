@@ -11,6 +11,7 @@ export class MicroMsgPack {
 	 * @returns {Uint8Array}
 	 */
 	static encode(value) {
+		/** @type {number[]} */
 		const bytes = [];
 		this._encodeValue(value, bytes);
 		return new Uint8Array(bytes);
@@ -31,6 +32,11 @@ export class MicroMsgPack {
 
 	// --- ENCODER ---
 
+	/**
+	 * @param {any} value
+	 * @param {number[]} bytes
+	 * @private
+	 */
 	static _encodeValue(value, bytes) {
 		if (value === null || value === undefined) {
 			bytes.push(0xc0); // nil
@@ -51,6 +57,11 @@ export class MicroMsgPack {
 		}
 	}
 
+	/**
+	 * @param {number} value
+	 * @param {number[]} bytes
+	 * @private
+	 */
 	static _encodeNumber(value, bytes) {
 		if (Number.isInteger(value)) {
 			if (value >= 0) {
@@ -83,6 +94,11 @@ export class MicroMsgPack {
 		}
 	}
 
+	/**
+	 * @param {number} value
+	 * @param {number[]} bytes
+	 * @private
+	 */
 	static _encodeFloat64(value, bytes) {
 		bytes.push(0xcb); // float 64
 		const buffer = new ArrayBuffer(8);
@@ -90,6 +106,11 @@ export class MicroMsgPack {
 		bytes.push(...new Uint8Array(buffer));
 	}
 
+	/**
+	 * @param {string} value
+	 * @param {number[]} bytes
+	 * @private
+	 */
 	static _encodeString(value, bytes) {
 		const utf8 = new TextEncoder().encode(value);
 		const len = utf8.length;
@@ -105,6 +126,11 @@ export class MicroMsgPack {
 		bytes.push(...utf8);
 	}
 
+	/**
+	 * @param {Uint8Array} value
+	 * @param {number[]} bytes
+	 * @private
+	 */
 	static _encodeBinary(value, bytes) {
 		const len = value.length;
 		if (len <= 255) {
@@ -117,6 +143,11 @@ export class MicroMsgPack {
 		bytes.push(...value);
 	}
 
+	/**
+	 * @param {any[]} value
+	 * @param {number[]} bytes
+	 * @private
+	 */
 	static _encodeArray(value, bytes) {
 		const len = value.length;
 		if (len <= 15) {
@@ -131,6 +162,11 @@ export class MicroMsgPack {
 		}
 	}
 
+	/**
+	 * @param {Object<string, any>} value
+	 * @param {number[]} bytes
+	 * @private
+	 */
 	static _encodeMap(value, bytes) {
 		const keys = Object.keys(value);
 		const len = keys.length;
@@ -149,6 +185,11 @@ export class MicroMsgPack {
 
 	// --- DECODER ---
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {any}
+	 * @private
+	 */
 	static _decodeValue(state) {
 		if (state.offset >= state.view.byteLength)
 			throw new Error("Unexpected end of data");
@@ -192,52 +233,99 @@ export class MicroMsgPack {
 		}
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {number}
+	 * @private
+	 */
 	static _readUint8(state) {
 		return state.view.getUint8(state.offset++);
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {number}
+	 * @private
+	 */
 	static _readUint16(state) {
 		const val = state.view.getUint16(state.offset, false);
 		state.offset += 2;
 		return val;
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {number}
+	 * @private
+	 */
 	static _readUint32(state) {
 		const val = state.view.getUint32(state.offset, false);
 		state.offset += 4;
 		return val;
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {number}
+	 * @private
+	 */
 	static _readInt8(state) {
 		const val = state.view.getInt8(state.offset);
 		state.offset += 1;
 		return val;
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {number}
+	 * @private
+	 */
 	static _readInt16(state) {
 		const val = state.view.getInt16(state.offset, false);
 		state.offset += 2;
 		return val;
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {number}
+	 * @private
+	 */
 	static _readInt32(state) {
 		const val = state.view.getInt32(state.offset, false);
 		state.offset += 4;
 		return val;
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {number}
+	 * @private
+	 */
 	static _readFloat64(state) {
 		const val = state.view.getFloat64(state.offset, false);
 		state.offset += 8;
 		return val;
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @param {number} length
+	 * @returns {string}
+	 * @private
+	 */
 	static _decodeString(state, length) {
 		const bytes = new Uint8Array(state.view.buffer, state.view.byteOffset + state.offset, length);
 		state.offset += length;
 		return new TextDecoder().decode(bytes);
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @param {number} length
+	 * @returns {Uint8Array}
+	 * @private
+	 */
 	static _decodeBinary(state, length) {
 		const bytes = new Uint8Array(state.view.buffer.slice(
 			state.view.byteOffset + state.offset,
@@ -247,6 +335,12 @@ export class MicroMsgPack {
 		return bytes;
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @param {number} length
+	 * @returns {any[]}
+	 * @private
+	 */
 	static _decodeArray(state, length) {
 		const arr = new Array(length);
 		for (let i = 0; i < length; i++) {
@@ -255,6 +349,11 @@ export class MicroMsgPack {
 		return arr;
 	}
 
+	/**
+	 * @param {{view: DataView, offset: number}} state
+	 * @returns {Object<string, any>}
+	 * @private
+	 */
 	static _decodeMap(state, length) {
 		const map = {};
 		for (let i = 0; i < length; i++) {
