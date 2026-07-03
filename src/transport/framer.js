@@ -1,3 +1,5 @@
+import { TransformStream } from "node:stream/web";
+
 /**
  * @file framer.js
  * @description HDLC-based framing for TCP/WS streams

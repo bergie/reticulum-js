@@ -10,7 +10,7 @@
 export class Interface extends EventTarget {
 	/**
 	 * The readable stream of incoming data.
-	 * @type {ReadableStream|null}
+	 * @type {import('node:stream/web').ReadableStream | null}
 	 */
 	get readable() {
 		throw new Error("Interface.readable is not implemented");
@@ -18,7 +18,7 @@ export class Interface extends EventTarget {
 
 	/**
 	 * The writable stream of outgoing data.
-	 * @type {WritableStream|null}
+	 * @type {import('node:stream/web').WritableStream | null}
 	 */
 	get writable() {
 		throw new Error("Interface.writable is not implemented");
