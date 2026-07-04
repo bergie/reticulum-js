@@ -19,10 +19,18 @@ Licensed under the [EUPL 1.2](https://interoperable-europe.ec.europa.eu/collecti
 
 ## Development
 
-This project is developed following [Reticulim Distributed Development](https://reticulum.network/manual/distributed.html) guidelines. The canonical source lives in `rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js`.
+This project is developed following [Reticulum Distributed Development](https://reticulum.network/manual/distributed.html) guidelines. The canonical source lives in `rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js`.
 
 We also provide a sporadically updated GitHub mirror at `https://github.com/bergie/reticulum-js`.
 
 ## Acknowledgements
 
 Prior art includes [Liam Cottle's rns.js](https://github.com/liamcottle/rns.js).
+
+## Support Reticulum-js
+
+[Supporting the Reticulum Project](https://reticulum.network/donate.html) is the best way to support. If you want to support this JavaScript library directly, here are some ways:
+
+* Ethereum: `0xFC872bA86812B2bbe90c38cfD2553F7865d04094`
+* Liberapay: https://liberapay.com/bergie/
+* ko-fi: https://ko-fi.com/bergius
