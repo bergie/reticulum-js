@@ -9,6 +9,7 @@ import {
 	generateX25519KeyPair,
 } from "../crypto/keys.js";
 import { Link, LinkEncryption } from "../transport/link.js";
+import { toHex } from "../utils/encoding.js";
 import { Identity } from "./identity.js";
 import { DestType, HeaderType, Packet, PacketType } from "./packet.js";
 
@@ -426,7 +427,7 @@ export class Destination extends EventTarget {
 						payload: payload,
 					});
 
-					await transport.sendPacket(packet);
+					await this.interfaceLayer.transport.sendPacket(packet);
 				} catch (e) {
 					clearTimeout(timer);
 					this.removeEventListener("link_established", onLinkEstablished);
@@ -468,7 +469,7 @@ export class Destination extends EventTarget {
 	 * @param {import('../interfaces/base.js').Interface} transport
 	 */
 	async acceptLink(packet, transport, appData = new Uint8Array(0)) {
-		const senderHash = packet.destinationHash;
+		const senderHash = packet.sourceHash;
 		return await this.respondToLinkRequest(
 			transport,
 			packet,
@@ -495,12 +496,108 @@ export class Destination extends EventTarget {
 
 	/**
 	 * Responds to a link request.
+	 * @param {import('../transport/transport.js').TransportCore} transport
+	 * @param {import('../core/packet.js').Packet} requestPacket
+	 */
+	async respondToLinkRequest(transport, requestPacket) {
+		// ---------------------------------------------------------
+		// 1. DERIVE THE LINK ID
+		// Spec: link_id = SHA256(hashable_part_of_LINKREQUEST)[:16]
+		// ---------------------------------------------------------
+		const n = requestPacket.headerType === HeaderType.HEADER_1 ? 2 : 18;
+		const maskedFlag = requestPacket.raw[0] & 0x0f;
+
+		let hashableLength = 1 + requestPacket.raw.length - n;
+
+		// Strip signalling bytes if payload > 32 bytes (Link.ECPUBSIZE)
+		if (requestPacket.payload.length > 32) {
+			const signallingLength = requestPacket.payload.length - 32;
+			hashableLength -= signallingLength;
+		}
+
+		const hashablePart = new Uint8Array(hashableLength);
+		hashablePart[0] = maskedFlag;
+		hashablePart.set(requestPacket.raw.subarray(n, n + hashableLength - 1), 1);
+
+		const linkId = await Identity.truncatedHash(hashablePart);
+
+		// ---------------------------------------------------------
+		// 2. GENERATE EPHEMERAL KEY
+		// ---------------------------------------------------------
+		const ephemeralKey = await generateX25519KeyPair();
+		const ephemeralPubBytes = await exportPublicKey(ephemeralKey.publicKey); // 32 bytes
+
+		// ---------------------------------------------------------
+		// 3. CONSTRUCT SIGNED DATA
+		// Spec: link_id || responder_X25519_pub || responder_long_term_Ed25519_pub
+		// ---------------------------------------------------------
+		// Exporting directly to avoid any previous byte-order slicing issues
+		const ed25519PubBytes = await exportPublicKey(this.identity.ed25519Pub);
+
+		const signedData = new Uint8Array(16 + 32 + 32);
+		signedData.set(linkId, 0);
+		signedData.set(ephemeralPubBytes, 16);
+		signedData.set(ed25519PubBytes, 48);
+
+		// ---------------------------------------------------------
+		// 4. SIGN THE DATA
+		// ---------------------------------------------------------
+		const signature = await this.identity.sign(signedData); // 64 bytes
+
+		// ---------------------------------------------------------
+		// 5. CONSTRUCT LRPROOF PAYLOAD
+		// Spec: signature(64) || responder_X25519_pub(32)
+		// ---------------------------------------------------------
+		const responsePayload = new Uint8Array(96);
+		responsePayload.set(signature, 0); // Signature MUST be first
+		responsePayload.set(ephemeralPubBytes, 64); // Ephemeral key MUST be second
+
+		// ---------------------------------------------------------
+		// 6. CREATE LRPROOF PACKET
+		// ---------------------------------------------------------
+		const responsePacket = new Packet({
+			headerType: HeaderType.HEADER_1,
+			hops: 0, // Outgoing packets start at 0
+			transportType: 0,
+			destinationType: DestType.LINK,
+			packetType: PacketType.PROOF, // MUST be 3
+			contextFlag: true,
+			contextByte: 0xff, // MUST be LRPROOF context
+			destinationHash: linkId, // MUST be addressed to the link_id
+			sourceHash: await Identity.truncatedHash(this.identity.publicKey),
+			payload: responsePayload,
+		});
+
+		// ---------------------------------------------------------
+		// 7. REGISTER LINK & SEND
+		// ---------------------------------------------------------
+		// The initiator's X25519 pubkey is the first 32 bytes of the LINKREQUEST payload
+		const initiatorPubBytes = requestPacket.payload.slice(0, 32);
+
+		const link = new Link(
+			ephemeralKey,
+			initiatorPubBytes,
+			this.interfaceLayer.transport,
+		);
+
+		// Register the ephemeral link_id with the router so follow-up packets reach the Link instance
+		// transport.localDestinations.set(toHex(linkId), link);
+		this.interfaceLayer.transport.addLink(linkId, link);
+
+		await this.interfaceLayer.transport.sendPacket(responsePacket);
+
+		console.log(`[LINK] Handshake response sent to link_id: ${toHex(linkId)}`);
+
+		return link;
+	}
+
+	/**
+	 * Responds to a link request.
 	 * @param {import('../transport/transport.js').Transport} transport
 	 * @param {import('../core/packet.js').Packet} requestPacket
 	 * @param {Uint8Array} senderHash - The destination hash of the requester.
 	 * @param {Uint8Array} appData
 	 * @returns {Promise<import('../transport/link.js').Link>}
-	 */
 	async respondToLinkRequest(
 		transport,
 		requestPacket,
@@ -535,21 +632,30 @@ export class Destination extends EventTarget {
 
 		const responsePacket = new Packet({
 			headerType: HeaderType.HEADER_1,
-			hops: 0,
+			hops: 1,
 			transportType: 0,
 			destinationType: this.type,
 			packetType: PacketType.LINKRESPONSE,
 			contextFlag: false,
-			/** @type {any} */
 			destinationHash: senderHash,
+			sourceHash: await Identity.truncatedHash(this.identity.publicKey),
 			contextByte: 0,
 			payload: responsePayload,
 		});
 
-		await transport.send(responsePacket);
+		console.log(`[DEBUG] Responding to ${bufToHex(senderHash)}`);
+		console.log(
+			`[DEBUG] Our Response Hash: ${bufToHex(responsePacket.destinationHash)}`,
+		);
 
+    await this.interfaceLayer.transport.sendPacket(responsePacket);
+
+		const linkHash = await Identity.truncatedHash(link_key);
 		const link = new Link(link_key, senderHash, this.interfaceLayer.transport);
-		this.interfaceLayer.transport.addLink(senderHash, link);
+		// CRITICAL: The daemon is sending future packets to the Link's ephemeral hash,
+		// not your original 'lxmf.delivery' hash.
+		// You need to map the Link's ephemeral hash to the Link instance.
+		this.interfaceLayer.transport.addLink(linkHash, link);
 		this.dispatchEvent(
 			new CustomEvent("link_established", {
 				detail: { link },
@@ -558,6 +664,7 @@ export class Destination extends EventTarget {
 
 		return link;
 	}
+   */
 
 	/**
 	 * Remember a destination.

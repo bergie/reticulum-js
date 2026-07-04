@@ -1,9 +1,9 @@
 /**
  * @file packet.js
- * @description Binary serialization/deserialization
+ * @description Binary serialization/deserialization for Reticulum packets
  */
 
-import { Destination } from "./destination.js";
+import { toHex } from "../utils/encoding.js";
 
 /**
  * Packet types.
@@ -60,65 +60,62 @@ export const DestType = {
 export class Packet {
 	/**
 	 * @param {Object} options
-	 * @param {number} options.headerType - HEADER_1 or HEADER_2
-	 * @param {number} options.hops - Hop count
-	 * @param {number} options.transportType - BROADCAST or TRANSPORT
-	 * @param {number} options.destinationType - SINGLE, GROUP, PLAIN, or LINK
-	 * @param {number} options.packetType - DATA, ANNOUNCE, LINKREQUEST, or PROOF
-	 * @param {boolean} options.contextFlag - if true, context byte is present
-	 * @param {Uint8Array} options.destinationHash - 16-byte destination hash
-	 * @param {number} options.contextByte - 1-byte context
-	 * @param {Uint8Array} options.payload - payload bytes
-	 * @param {Uint8Array} [options.ifac] - Optional IFAC field
-	 * @param {Uint8Array} [options.transportId] - 16-byte transport identity hash (for HEADER_2)
+	 * @param {number} options.headerType
+	 * @param {number} options.hops
+	 * @param {number} options.transportType
+	 * @param {number} options.destinationType
+	 * @param {number} options.packetType
+	 * @param {boolean} options.contextFlag
+	 * @param {Uint8Array} options.destinationHash
+	 * @param {Uint8Array} [options.sourceHash]
+	 * @param {number} options.contextByte
+	 * @param {Uint8Array} options.payload
+	 * @param {Uint8Array} [options.ifac]
+	 * @param {Uint8Array} [options.transportId]
+	 * @param {Uint8Array} [options.raw]
 	 */
 	constructor(options) {
 		this.headerType = options.headerType || HeaderType.HEADER_1;
 		this.hops = options.hops || 0;
 		this.transportType = options.transportType || 0;
-		this.destinationType = options.destinationType || DestType.SINGLE;
+		this.destinationType = options.destinationType || 0;
 		this.packetType = options.packetType || PacketType.DATA;
 		this.contextFlag = options.contextFlag || false;
 		this.destinationHash = options.destinationHash;
+		this.sourceHash = options.sourceHash || new Uint8Array(16);
 		this.contextByte = options.contextByte || 0x00;
-		this.payload = options.payload || new Uint8Array(0); // Default to empty buffer;
+		this.payload = options.payload || new Uint8Array(0);
 		this.ifac = options.ifac;
 		this.transportId = options.transportId;
+		this.raw = options.raw || new Uint8Array(0);
 	}
 
-	/**
-	 * Builds the flags byte (Byte 0).
-	 * @private
-	 * @returns {number}
-	 */
 	_buildFlagsByte() {
 		let flags = 0x00;
 		if (this.ifac) flags |= 0x80;
 		if (this.headerType === HeaderType.HEADER_2) flags |= 0x40;
 		if (this.contextFlag) flags |= 0x20;
-		if (this.transportType === 1) flags |= 0x10; // 1 = TRANSPORT
+		if (this.transportType === 1) flags |= 0x10;
+		// Fix: Mask to 2 bits (0x03) before shifting
 		flags |= (this.destinationType & 0x03) << 2;
-		flags |= this.packetType & 0x0f;
+		// Fix: Mask to 2 bits (0x03) so it doesn't overwrite destinationType
+		flags |= this.packetType & 0x03;
 		return flags;
 	}
 
-	/**
-	 * Serializes the packet to a Uint8Array.
-	 * @returns {Uint8Array}
-	 */
 	serialize() {
 		const flags = this._buildFlagsByte();
 
-		// Calculate total length
+		// Calculate total length conditionally
 		let length = 2; // flags + hops
-		if (this.ifac) {
-			length += this.ifac.length;
-		}
-		if (this.headerType === HeaderType.HEADER_2) {
-			length += 16; // transport_id
-		}
+		if (this.ifac) length += this.ifac.length;
+		if (this.headerType === HeaderType.HEADER_2) length += 16;
 		length += 16; // destination_hash
-		length += 1; // contextByte
+		length += 16; // source_hash
+
+		// Fix: Only add length for contextByte if flag is TRUE
+		if (this.contextFlag) length += 1;
+
 		length += this.payload.length;
 
 		const buffer = new ArrayBuffer(length);
@@ -129,60 +126,53 @@ export class Packet {
 
 		let offset = 2;
 		if (this.ifac) {
-			/** @type {any} */
-			const ifac = this.ifac;
-			uint8.set(ifac, offset);
-			offset += ifac.length;
+			uint8.set(this.ifac, offset);
+			offset += this.ifac.length;
 		}
 
 		if (this.headerType === HeaderType.HEADER_2 && this.transportId) {
-			/** @type {any} */
-			const tid = this.transportId;
-			uint8.set(tid, offset);
+			uint8.set(this.transportId, offset);
 			offset += 16;
 		}
 
-		/** @type {any} */
-		const dHash = this.destinationHash;
-		uint8.set(dHash, offset);
+		uint8.set(this.destinationHash, offset);
 		offset += 16;
 
-		uint8[offset] = this.contextByte;
-		offset += 1;
+		uint8.set(this.sourceHash, offset);
+		offset += 16;
 
-		/** @type {any} */
-		const pLoad = this.payload;
-		uint8.set(pLoad, offset);
+		// Fix: Only write the contextByte if flag is TRUE
+		if (this.contextFlag) {
+			uint8[offset] = this.contextByte;
+			offset += 1;
+		}
+
+		uint8.set(this.payload, offset);
 
 		return uint8;
 	}
 
-	/**
-	 * Deserializes a packet from a Uint8Array.
-	 * @param {Uint8Array} data
-	 * @param {number} [ifacSize] - Optional size of the IFAC field if present
-	 * @returns {Packet}
-	 */
 	static deserialize(data, ifacSize = 0) {
 		if (data.length < 3) throw new Error("Packet too short");
 
 		const flags = data[0];
+		console.log(
+			`[FORENSICS] Flags Binary: ${flags.toString(2).padStart(8, "0")}`,
+		);
 		const ifacFlag = (flags & 0x80) !== 0;
 		const headerType =
 			(flags & 0x40) !== 0 ? HeaderType.HEADER_2 : HeaderType.HEADER_1;
 		const contextFlag = (flags & 0x20) !== 0;
 		const transportType = (flags & 0x10) !== 0 ? 1 : 0;
 		const destinationType = (flags & 0x0c) >> 2;
-		const packetType = flags & 0x0f;
+		// Fix: Mask to 2 bits
+		const packetType = flags & 0x03;
 
 		const hops = data[1];
 
 		let offset = 2;
 		let ifac;
 		if (ifacFlag) {
-			if (ifacSize === 0) {
-				throw new Error("ifacSize must be provided when ifacFlag is set");
-			}
 			ifac = data.slice(offset, offset + ifacSize);
 			offset += ifacSize;
 		}
@@ -196,8 +186,15 @@ export class Packet {
 		const destinationHash = data.slice(offset, offset + 16);
 		offset += 16;
 
-		const contextByte = data[offset];
-		offset += 1;
+		const sourceHash = data.slice(offset, offset + 16);
+		offset += 16;
+
+		// Fix: Only extract contextByte if flag is TRUE
+		let contextByte = 0x00;
+		if (contextFlag) {
+			contextByte = data[offset];
+			offset += 1;
+		}
 
 		const payload = data.slice(offset);
 
@@ -209,6 +206,7 @@ export class Packet {
 			packetType,
 			contextFlag,
 			destinationHash,
+			sourceHash,
 			contextByte,
 			payload,
 			ifac: ifac,

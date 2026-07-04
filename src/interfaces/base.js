@@ -74,5 +74,12 @@ export class Interface extends EventTarget {
 		}
 
 		await this._packetWriter.write(packet);
+
+		// FORCE DRAIN:
+		// If the socket has a buffer, wait for it to empty
+		if (this.socket && this.socket.writable) {
+			// This forces Node to push the buffered data out of the NIC
+			await new Promise((resolve) => this.socket.write("", resolve));
+		}
 	}
 }

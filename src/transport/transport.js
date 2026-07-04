@@ -1,7 +1,9 @@
 // src/transport/transport.js
 
 import { Destination } from "../core/destination.js";
+import { Identity } from "../core/identity.js";
 import { PacketType } from "../core/packet.js";
+import { toHex } from "../utils/encoding.js";
 import { RoutingTable } from "./router.js";
 
 /**
@@ -76,6 +78,7 @@ export class TransportCore extends EventTarget {
 	 */
 	addLink(destinationHash, link) {
 		const hex = bufToHex(destinationHash);
+		console.log(`Registering link ${hex}`);
 		this.activeLinks.set(hex, link);
 	}
 
@@ -98,61 +101,90 @@ export class TransportCore extends EventTarget {
 	 * @param {import("../interfaces/base.js").Interface} receivingInterface
 	 */
 	async _routeIncomingPacket(packet, receivingInterface) {
-		if (packet.packetType === PacketType.ANNOUNCE) {
-			this.routingTable.addOrUpdateRoute(
-				packet.destinationHash,
-				receivingInterface,
-				packet.hops,
+		// 1. Log arrival
+		console.log(
+			`[ROUTER] Processing packet type ${packet.packetType} for ${toHex(packet.destinationHash)}`,
+		);
+
+		// Force a dump if it's a LINKREQUEST so we can see why it's not triggering
+		if (packet.packetType === PacketType.LINKREQUEST) {
+			console.log(
+				`[!] CRITICAL: Received Type 2 request for ${toHex(packet.destinationHash)}`,
 			);
+		}
 
-			// Harvest the Identity Proof
-			if (packet.payload && packet.payload.length >= 148) {
-				const pubKey = packet.payload.slice(0, 64);
-				const appData = packet.payload.slice(148);
+		// If it's an ANNOUNCE, the router handles it, but don't re-broadcast it!
+		if (packet.packetType === PacketType.ANNOUNCE) {
+			this._handleAnnounce(packet);
+			return; // STOP! Do not pass to any other logic.
+		}
 
-				const packetHashBuffer = await globalThis.crypto.subtle.digest(
-					"SHA-256",
-					packet.serialize(),
-				);
-				const packetHash = new Uint8Array(packetHashBuffer).subarray(0, 16);
+		// 2. CHECK IF THIS PACKET IS FOR US
+		const destHex = toHex(packet.destinationHash);
 
-				console.log(
-					`Received announce for ${packet.destinationHash} (${appData}`,
-				);
-				await Destination.remember(
-					packetHash,
-					packet.destinationHash,
-					pubKey,
-					appData,
-				);
-			}
+		// 3. If it's for a known local destination, route it there
+		if (this.localDestinations.has(destHex)) {
+			console.log(`Packet to local destination ${destHex}`);
+			const destination = this.localDestinations.get(destHex);
+			await destination.receive(packet, receivingInterface);
+			return; // STOP! Success.
+		}
+
+		// 4. If it's for an active link, route it there
+		if (this.activeLinks.has(destHex)) {
+			console.log(`Packet to LINK ${destHex}`);
+			const link = this.activeLinks.get(destHex);
+			await link.receive(packet);
+			return; // STOP! Success.
+		}
+
+		// 5. IF WE REACH HERE: It's not for us.
+		// If you are acting as a router/node, you'd forward it.
+		// But since you are a bot, JUST DROP IT.
+		console.log(`[ROUTER] Packet for ${destHex} is not for us. Dropping.`);
+	}
+
+	/**
+	 * @param {import("../core/packet.js").Packet} packet
+	 */
+	async _handleAnnounce(packet) {
+		// 1. The payload of an ANNOUNCE packet contains the public key
+		//    and metadata required to build an Identity.
+		// 2. We use Destination.remember to store this peer
+		console.log(`[DEBUG] Announce payload length: ${packet.payload.length}`);
+
+		// In Reticulum, the identity key is at the very beginning of the payload.
+		// If it's less than 32 bytes, the packet is corrupted.
+		if (packet.payload.length < 64) {
+			console.error("[!] Announce payload too short!");
 			return;
 		}
 
-		if (packet.packetType === 0x00) {
-			console.log(
-				`\n\n[!!!] DATA PACKET RECEIVED: ${packet.payload.length} bytes [!!!]\n\n`,
-			);
-		} else if (packet.packetType === 0x02) {
-			console.log(
-				`\n\n[!!!] LINK REQUEST RECEIVED: Handshake incoming [!!!]\n\n`,
-			);
-		}
-		const appPackets = [
-			PacketType.DATA,
-			PacketType.LINKREQUEST,
-			PacketType.LINKRESPONSE,
-			PacketType.PROOF,
-		];
+		try {
+			// The payload contains the full identity block at the start
+			const identityBlock = packet.payload.slice(0, 64);
+			// Log the first 32 bytes and the last 32 bytes
+			console.log("Bytes 0-32 (Ed25519?):", identityBlock.slice(0, 32));
+			console.log("Bytes 32-64 (X25519?):", identityBlock.slice(32, 64));
+			const appData = packet.payload.slice(64);
 
-		if (appPackets.includes(packet.packetType)) {
-			const destHex = Buffer.from(packet.destinationHash).toString("hex");
+			// For ANNOUNCE, the sender hash is actually the hash of the public key
+			// embedded in the payload.
+			// Use your Identity class to derive the hash:
+			const identity = await Identity.fromPublicKey(identityBlock);
+			const senderHash = await Identity.truncatedHash(identity.publicKey);
 
-			if (this.localDestinations.has(destHex)) {
-				const destination = this.localDestinations.get(destHex);
-				await destination.receive(packet, receivingInterface);
-				return;
-			}
+			// Use your existing Destination.remember to add this to the network graph
+			await Destination.remember(
+				senderHash,
+				packet.destinationHash,
+				identityBlock,
+				appData,
+			);
+
+			console.log(`[!] Network: Remembered new peer ${toHex(senderHash)}`);
+		} catch (e) {
+			console.error("[!] Failed to process announce:", e);
 		}
 	}
 
@@ -170,7 +202,8 @@ export class TransportCore extends EventTarget {
 	async sendPacket(packet) {
 		const destHex = Buffer.from(packet.destinationHash).toString("hex");
 		const nextHopInterface =
-			this.routingTable.lookup(destHex) || this.defaultInterface;
+			this.routingTable.getRoute(packet.destinationHash)?.interface ||
+			this.defaultInterface;
 
 		if (nextHopInterface && nextHopInterface._packetWriter) {
 			await nextHopInterface._packetWriter.write(packet);

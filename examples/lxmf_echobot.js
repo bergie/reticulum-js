@@ -29,14 +29,14 @@ async function startEchoBot() {
 
 	// 2. Connect to the local Reticulum mesh daemon via TCP
 	const tcpInterface = new TCPClientInterface({
-		//host: "127.0.0.1",
-		//port: 42424,
-		host: "192.168.2.138",
-		port: 4242,
+		host: "127.0.0.1",
+		port: 42424,
+		//host: "192.168.2.138",
+		//port: 4242,
 	});
 	// Wait for the TCP connection to establish before proceeding
 	await tcpInterface.connect();
-	rns.addInterface(tcpInterface);
+	rns.addInterface(tcpInterface, true);
 	console.log("Connected to local RNS transport node.");
 
 	// 3. Load or generate the Bot's Ed25519 Identity

@@ -88,6 +88,7 @@ export class LXMRouter extends EventTarget {
 	 * @private
 	 */
 	async _processIncomingMessage(wireData) {
+		console.log(wireData);
 		if (wireData.length < 96) {
 			throw new Error("LXMF message too short to contain required headers");
 		}
