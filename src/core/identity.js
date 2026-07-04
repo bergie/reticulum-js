@@ -49,6 +49,43 @@ export class Identity extends EventTarget {
 	}
 
 	/**
+	 * Attempts to load an identity from a storage adapter, or generates and saves a new one.
+	 * @param {Object} [storageAdapter] - Must implement async loadKey() and async saveKey(bytes)
+	 * @returns {Promise<Identity>}
+	 */
+	static async loadOrGenerate(storageAdapter) {
+		if (!storageAdapter) {
+			console.warn(
+				"No storage adapter provided. Generating ephemeral identity.",
+			);
+			return await Identity.generate();
+		}
+
+		try {
+			const savedBytes = await storageAdapter.loadKey();
+			// Reticulum private keys export to exactly 128 bytes
+			if (savedBytes && savedBytes.length === 128) {
+				const identity = await Identity.fromBytes(savedBytes);
+				if (identity) {
+					return identity;
+				}
+			}
+		} catch (e) {
+			console.warn(
+				"Failed to load identity from storage, generating new one:",
+				e,
+			);
+		}
+
+		// Fallback to generation if the file is missing or corrupt
+		const newIdentity = await Identity.generate();
+		const privateBytes = await newIdentity.getPrivateKey();
+		await storageAdapter.saveKey(privateBytes);
+
+		return newIdentity;
+	}
+
+	/**
 	 * Get a SHA-256 hash of passed data.
 	 * @param {Uint8Array} data
 	 * @returns {Promise<Uint8Array>}

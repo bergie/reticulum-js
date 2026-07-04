@@ -9,6 +9,20 @@
  */
 export class Interface extends EventTarget {
 	/**
+	 * The name of the interface.
+	 * @type {string}
+	 */
+	name = "unknown";
+
+	/**
+	 * Whether the interface is currently open/online.
+	 * @type {boolean}
+	 */
+	get isOpen() {
+		return false;
+	}
+
+	/**
 	 * The readable stream of incoming data.
 	 * @type {import('node:stream/web').ReadableStream | null}
 	 */

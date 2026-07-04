@@ -13,12 +13,14 @@ import { Interface } from "./base.js";
  * @property {number} [port]
  * @property {any} [socket]
  * @property {number} [ifacSize]
+ * @property {string} [name]
  */
 
 /**
  * @typedef {Object} TCPServerInterfaceOptions
  * @property {number} port
  * @property {number} [ifacSize]
+ * @property {string} [name]
  */
 
 /**
@@ -30,6 +32,8 @@ export class TCPClientInterface extends Interface {
 	 */
 	constructor(options) {
 		super();
+		this.name =
+			options.name || `tcp-client-${options.host || ""}:${options.port || ""}`;
 		this.host = options.host || "";
 		this.port = options.port || 0;
 		/** @type {any} */
@@ -40,6 +44,15 @@ export class TCPClientInterface extends Interface {
 		/** @type {any} */
 		this._writable = null;
 		this.online = false;
+		/** @type {Promise<void> | null} */
+		this._loopPromise = null;
+		/** @type {boolean} */
+		this._closed = false;
+	}
+
+	/** @returns {boolean} */
+	get isOpen() {
+		return this.online;
 	}
 
 	/** @returns {any} */
@@ -69,7 +82,10 @@ export class TCPClientInterface extends Interface {
 					resolve();
 				},
 			);
-			this.socket.on("error", reject);
+			this.socket.on("error", (err) => {
+				this.online = false;
+				reject(err);
+			});
 		});
 	}
 
@@ -82,6 +98,9 @@ export class TCPClientInterface extends Interface {
 			this.socket = null;
 		}
 		this.online = false;
+		if (this._loopPromise) {
+			await this._loopPromise;
+		}
 	}
 
 	/**
@@ -109,6 +128,40 @@ export class TCPClientInterface extends Interface {
 			console.error("Framer pipeTo error:", err);
 		});
 		this._writable = framer.writable;
+
+		this._loopPromise = this._startInboundLoop();
+	}
+
+	/**
+	 * Starts the loop that reads from the inbound stream and dispatches packets.
+	 * @private
+	 */
+	async _startInboundLoop() {
+		const reader = this._readable.getReader();
+		try {
+			while (true) {
+				const { value: packet, done } = await reader.read();
+				if (done) {
+					if (!this._closed) {
+						this._closed = true;
+						this.dispatchEvent(new CustomEvent("closed"));
+					}
+					break;
+				}
+				this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
+			}
+		} catch (e) {
+			if (e.name === "AbortError" || e.code === "ABORT_ERR") {
+				if (!this._closed) {
+					this._closed = true;
+					this.dispatchEvent(new CustomEvent("closed"));
+				}
+			} else {
+				this.dispatchEvent(new CustomEvent("error", { detail: e }));
+			}
+		} finally {
+			reader.releaseLock();
+		}
 	}
 }
 
@@ -121,6 +174,7 @@ export class TCPServerInterface extends Interface {
 	 */
 	constructor(options) {
 		super();
+		this.name = options.name || `tcp-server-${options.port}`;
 		this.port = options.port;
 		this.ifacSize = options.ifacSize || 0;
 		/** @type {any} */
@@ -128,6 +182,11 @@ export class TCPServerInterface extends Interface {
 		/** @type {Set<TCPClientInterface>} */
 		this.spawnedInterfaces = new Set();
 		this.online = false;
+	}
+
+	/** @returns {boolean} */
+	get isOpen() {
+		return this.online;
 	}
 
 	/** @returns {any} */
@@ -148,6 +207,7 @@ export class TCPServerInterface extends Interface {
 				const client = new TCPClientInterface({
 					socket,
 					ifacSize: this.ifacSize,
+					name: `tcp-client-from-server-${socket.remoteAddress}:${socket.remotePort}`,
 				});
 				await client.connect();
 				this.spawnedInterfaces.add(client);
@@ -157,7 +217,10 @@ export class TCPServerInterface extends Interface {
 				this.online = true;
 				resolve();
 			});
-			this.server.on("error", reject);
+			this.server.on("error", (err) => {
+				this.online = false;
+				reject(err);
+			});
 		});
 	}
 
@@ -174,5 +237,6 @@ export class TCPServerInterface extends Interface {
 		await Promise.all(disconnects);
 		this.spawnedInterfaces.clear();
 		this.online = false;
+		this.dispatchEvent(new CustomEvent("closed"));
 	}
 }

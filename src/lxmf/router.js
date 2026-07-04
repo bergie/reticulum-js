@@ -30,7 +30,11 @@ export class LXMRouter extends EventTarget {
 	async _init() {
 		// Register the standard LXMF delivery destination.
 		// The aspect "lxmf.delivery" is part of the name.
-		this.deliveryDest = await Destination.IN("lxmf.delivery", DestinationType.SINGLE, this.identity);
+		this.deliveryDest = await Destination.IN(
+			"lxmf.delivery",
+			DestinationType.SINGLE,
+			this.identity,
+		);
 
 		this.interfaceLayer.registerDestination(this.deliveryDest);
 		this._setupListeners();
@@ -99,12 +103,12 @@ export class LXMRouter extends EventTarget {
 		);
 		const messageId = new Uint8Array(messageIdBuffer.slice(0, 16));
 
-		console.log('Router processing - messageId:', messageId);
-		console.log('Router processing - signature:', signature);
+		console.log("Router processing - messageId:", messageId);
+		console.log("Router processing - signature:", signature);
 
 		const isValid = await this.identity.validate(signature, messageId);
 		if (!isValid) {
-			console.log('Router processing - validation failed');
+			console.log("Router processing - validation failed");
 			throw new Error("Invalid LXMF message signature");
 		}
 

@@ -39,7 +39,10 @@ export class LXMessage {
 		idBuffer.set(sourceHash, 16);
 		idBuffer.set(msgpackPayload, 32);
 
-		const messageIdBuffer = await globalThis.crypto.subtle.digest('SHA-256', idBuffer);
+		const messageIdBuffer = await globalThis.crypto.subtle.digest(
+			"SHA-256",
+			idBuffer,
+		);
 		const messageId = new Uint8Array(messageIdBuffer.slice(0, 16));
 
 		// 3. Cryptographically sign the Message ID

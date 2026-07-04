@@ -1,81 +1,83 @@
 // src/core/reticulum.js
-import { TransportCore } from '../transport/transport.js';
+import { TransportCore } from "../transport/transport.js";
 
 /**
  * The primary entry point and orchestrator for the Reticulum Network System.
  */
 export class Reticulum {
-    /**
-     * Initializes the Reticulum engine.
-     * @param {Object} config - Configuration options for the node.
-     * @param {Object} [config.storageAdapter] - Interface for persisting identities and caches.
-     * @param {Object} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
-     */
-    constructor(config = {}) {
-        this.storage = config.storageAdapter || null;
-        this.compressionProvider = config.compressionProvider || null;
+	/**
+	 * Initializes the Reticulum engine.
+	 * @param {Object} config - Configuration options for the node.
+	 * @param {Object} [config.storageAdapter] - Interface for persisting identities and caches.
+	 * @param {Object} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
+	 */
+	constructor(config = {}) {
+		this.storage = config.storageAdapter || null;
+		this.compressionProvider = config.compressionProvider || null;
 
-        // The internal router that handles Interface failover, KISS framing, and packet delivery
-        this.transport = new TransportCore();
+		// The internal router that handles Interface failover, KISS framing, and packet delivery
+		this.transport = new TransportCore();
 
-        // Local registered endpoints (e.g., the Yjs sync endpoint, LXMF delivery)
-        this.localDestinations = new Map();
+		// Local registered endpoints (e.g., the Yjs sync endpoint, LXMF delivery)
+		this.localDestinations = new Map();
 
-        console.log("Reticulum Engine initialized.");
-    }
+		console.log("Reticulum Engine initialized.");
+	}
 
-    /**
-     * Attaches a physical or virtual network interface to the router.
-     * * @param {Object} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
-     * @param {boolean} isDefault - If true, unroutable packets fallback to this interface
-     */
-    addInterface(rnsInterface, isDefault = false) {
-        this.transport.addInterface(rnsInterface, isDefault);
-        console.log(`[+] Interface attached: ${rnsInterface.name}`);
-    }
+	/**
+	 * Attaches a physical or virtual network interface to the router.
+	 * * @param {Object} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
+	 * @param {boolean} isDefault - If true, unroutable packets fallback to this interface
+	 */
+	addInterface(rnsInterface, isDefault = false) {
+		this.transport.addInterface(rnsInterface, isDefault);
+		console.log(`[+] Interface attached: ${rnsInterface.name}`);
+	}
 
-    /**
-     * Removes an interface and purges its routes from the TransportCore.
-     */
-    removeInterface(rnsInterface) {
-        this.transport.removeInterface(rnsInterface);
-        console.log(`[-] Interface removed: ${rnsInterface.name}`);
-    }
+	/**
+	 * Removes an interface and purges its routes from the TransportCore.
+	 */
+	removeInterface(rnsInterface) {
+		this.transport.removeInterface(rnsInterface);
+		console.log(`[-] Interface removed: ${rnsInterface.name}`);
+	}
 
-    /**
-     * Binds an application-level Destination to the network.
-     * When your web components spin up and instantiate a Yjs provider,
-     * this is where they register their collaborative endpoints to receive traffic.
-     * * @param {Destination} destination - The initialized Destination object
-     */
-    registerDestination(destination) {
-        const hashHex = Buffer.from(destination.hash).toString('hex');
+	/**
+	 * Binds an application-level Destination to the network.
+	 * When your web components spin up and instantiate a Yjs provider,
+	 * this is where they register their collaborative endpoints to receive traffic.
+	 * * @param {Destination} destination - The initialized Destination object
+	 */
+	registerDestination(destination) {
+		const hashHex = Buffer.from(destination.hash).toString("hex");
 
-        if (this.localDestinations.has(hashHex)) {
-            throw new Error(`Destination ${destination.name} is already registered.`);
-        }
+		if (this.localDestinations.has(hashHex)) {
+			throw new Error(`Destination ${destination.name} is already registered.`);
+		}
 
-        // 1. Store locally for inbound routing
-        this.localDestinations.set(hashHex, destination);
+		// 1. Store locally for inbound routing
+		this.localDestinations.set(hashHex, destination);
 
-        // 2. Bind the destination to the transport layer so the router knows
-        // to deliver incoming packets here instead of dropping/forwarding them.
-        this.transport.bindLocalDestination(destination);
+		// 2. Bind the destination to the transport layer so the router knows
+		// to deliver incoming packets here instead of dropping/forwarding them.
+		this.transport.bindLocalDestination(destination);
 
-        // 3. Inject the compression provider if the destination needs to handle Resources
-        if (this.compressionProvider) {
-            destination.setCompressionProvider(this.compressionProvider);
-        }
+		// 3. Inject the compression provider if the destination needs to handle Resources
+		if (this.compressionProvider) {
+			destination.setCompressionProvider(this.compressionProvider);
+		}
 
-        console.log(`[+] Destination registered: ${destination.appName}.${destination.aspectName}`);
-    }
+		console.log(
+			`[+] Destination registered: ${destination.appName}.${destination.aspectName}`,
+		);
+	}
 
-    /**
-     * Removes a local destination, ceasing all incoming traffic to that application endpoint.
-     */
-    deregisterDestination(destination) {
-        const hashHex = Buffer.from(destination.hash).toString('hex');
-        this.localDestinations.delete(hashHex);
-        this.transport.unbindLocalDestination(destination);
-    }
+	/**
+	 * Removes a local destination, ceasing all incoming traffic to that application endpoint.
+	 */
+	deregisterDestination(destination) {
+		const hashHex = Buffer.from(destination.hash).toString("hex");
+		this.localDestinations.delete(hashHex);
+		this.transport.unbindLocalDestination(destination);
+	}
 }

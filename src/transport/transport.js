@@ -135,50 +135,52 @@ export class Transport extends EventTarget {
 
 // src/transport/transport.js
 export class TransportCore {
-    constructor() {
-        this.interfaces = new Set();
-        this.routingTable = new RoutingTable();
-        // A "catch-all" interface for destinations not in the routing table
-        this.defaultInterface = null;
-    }
+	constructor() {
+		this.interfaces = new Set();
+		this.routingTable = new RoutingTable();
+		// A "catch-all" interface for destinations not in the routing table
+		this.defaultInterface = null;
+	}
 
-    addInterface(rnsInterface, isDefault = false) {
-        this.interfaces.add(rnsInterface);
+	addInterface(rnsInterface, isDefault = false) {
+		this.interfaces.add(rnsInterface);
 
-        if (isDefault) {
-            this.defaultInterface = rnsInterface;
-        }
+		if (isDefault) {
+			this.defaultInterface = rnsInterface;
+		}
 
-        // 1. Ingest packets from the interface
-        rnsInterface.addEventListener('packet', (event) => {
-            this._handleIncomingPacket(event.detail.packet, rnsInterface);
-        });
+		// 1. Ingest packets from the interface
+		rnsInterface.addEventListener("packet", (event) => {
+			this._handleIncomingPacket(event.detail.packet, rnsInterface);
+		});
 
-        // 2. The Failover Trigger: Interface Disconnection
-        rnsInterface.addEventListener('closed', () => {
-            console.warn(`Interface ${rnsInterface.name} closed. Triggering failover.`);
-            this.interfaces.delete(rnsInterface);
+		// 2. The Failover Trigger: Interface Disconnection
+		rnsInterface.addEventListener("closed", () => {
+			console.warn(
+				`Interface ${rnsInterface.name} closed. Triggering failover.`,
+			);
+			this.interfaces.delete(rnsInterface);
 
-            if (this.defaultInterface === rnsInterface) {
-                this.defaultInterface = null; // We lost our default gateway
-            }
+			if (this.defaultInterface === rnsInterface) {
+				this.defaultInterface = null; // We lost our default gateway
+			}
 
-            // Immediately scrub the routing table.
-            // Subsequent packets will automatically seek alternative routes.
-            this.routingTable.dropInterface(rnsInterface);
-        });
-    }
+			// Immediately scrub the routing table.
+			// Subsequent packets will automatically seek alternative routes.
+			this.routingTable.dropInterface(rnsInterface);
+		});
+	}
 
-    _handleIncomingPacket(packet, receivingInterface) {
-        // If this is an Announce packet (Packet Type 0x01)
-        if (packet.type === PACKET_TYPE_ANNOUNCE) {
-            // Note: In a real implementation, you increment packet.hops by 1 here
-            this.routingTable.addOrUpdateRoute(
-                packet.destinationHash,
-                receivingInterface,
-                packet.hops
-            );
-        }
-        // ... handle data packets ...
-    }
+	_handleIncomingPacket(packet, receivingInterface) {
+		// If this is an Announce packet (Packet Type 0x01)
+		if (packet.type === PACKET_TYPE_ANNOUNCE) {
+			// Note: In a real implementation, you increment packet.hops by 1 here
+			this.routingTable.addOrUpdateRoute(
+				packet.destinationHash,
+				receivingInterface,
+				packet.hops,
+			);
+		}
+		// ... handle data packets ...
+	}
 }
