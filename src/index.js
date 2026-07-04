@@ -1,5 +1,32 @@
-export * from "./core/destination.js";
-export * from "./core/identity.js";
-export * from "./core/packet.js";
-export * from "./crypto/ciphers.js";
-export * from "./crypto/keys.js";
+/**
+ * Reticulum Network System - JavaScript Implementation
+ * Zero-dependency, EUPL-1.2 compliant protocol stack.
+ */
+
+// --- 1. Core Orchestration ---
+// The primary client class that wires the transport router, interfaces, and compression together.
+export { Reticulum } from './core/reticulum.js';
+
+// --- 2. Cryptography & Identity ---
+// Everything needed to create, load, and sign data as an RNS node.
+export { Identity } from './core/identity.js';
+export { Destination } from './core/destination.js';
+
+// --- 3. Network Interfaces ---
+// The physical and virtual pathways into the mesh.
+export { TCPClientInterface, TCPServerInterface } from './interfaces/tcp.js';
+
+// --- 4. Application Protocols (RPC & Streams) ---
+// The primitives for building Yjs sync, rngit, and NomadNet layers.
+export { Link } from './transport/link.js';
+export { Resource } from './core/resource.js';
+
+// --- 5. LXMF (Lightweight Extensible Message Format) ---
+// Asynchronous, store-and-forward messaging primitives.
+export { LXMRouter } from './lxmf/router.js';
+export { LXMessage } from './lxmf/message.js';
+
+// --- 6. Utilities ---
+// Exposed purely for convenience if the caller needs them, but not strictly required.
+export { MicroMsgPack as MsgPack } from './utils/msgpack.js';
+export { toHex, fromHex } from './utils/encoding.js';

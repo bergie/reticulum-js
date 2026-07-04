@@ -283,11 +283,11 @@ export class MicroMsgPack {
 				return MicroMsgPack._readUint32(state); // uint 32
 			case 0xcb:
 				return MicroMsgPack._readFloat64(state); // float 64
-			case 0xd1:
+			case 0xd0:
 				return MicroMsgPack._readInt8(state); // int 8
-			case 0xd2:
+			case 0xd1:
 				return MicroMsgPack._readInt16(state); // int 16
-			case 0xd3:
+			case 0xd2:
 				return MicroMsgPack._readInt32(state); // int 32
 			case 0xd9:
 				return MicroMsgPack._decodeString(
