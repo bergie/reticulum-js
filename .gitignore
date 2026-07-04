@@ -1,3 +1,4 @@
 node_modules/
 Reticulum/
 PROTOCOL-SPEC.md
+*.key
