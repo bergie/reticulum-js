@@ -1,5 +1,6 @@
 // src/core/reticulum.js
 import { TransportCore } from "../transport/transport.js";
+import { Packet } from "./packet.js";
 
 /**
  * The primary entry point and orchestrator for the Reticulum Network System.
@@ -46,10 +47,10 @@ export class Reticulum {
 	 * Binds an application-level Destination to the network.
 	 * When your web components spin up and instantiate a Yjs provider,
 	 * this is where they register their collaborative endpoints to receive traffic.
-	 * * @param {Destination} destination - The initialized Destination object
+	 * @param {import("../core/destination.js").Destination} destination
 	 */
 	registerDestination(destination) {
-		const hashHex = Buffer.from(destination.hash).toString("hex");
+		const hashHex = Buffer.from(destination.destinationHash).toString("hex");
 
 		if (this.localDestinations.has(hashHex)) {
 			throw new Error(`Destination ${destination.name} is already registered.`);
@@ -60,15 +61,14 @@ export class Reticulum {
 
 		// 2. Bind the destination to the transport layer so the router knows
 		// to deliver incoming packets here instead of dropping/forwarding them.
-		this.transport.bindLocalDestination(destination);
+		// this.transport.bindLocalDestination(destination);
 
 		// 3. Inject the compression provider if the destination needs to handle Resources
-		if (this.compressionProvider) {
-			destination.setCompressionProvider(this.compressionProvider);
-		}
-
+		const appData = JSON.parse(
+			new TextDecoder().decode(destination.identity.appData),
+		);
 		console.log(
-			`[+] Destination registered: ${destination.appName}.${destination.aspectName}`,
+			`[+] Destination registered: ${destination.name} (${appData.name})`,
 		);
 	}
 
@@ -79,5 +79,14 @@ export class Reticulum {
 		const hashHex = Buffer.from(destination.hash).toString("hex");
 		this.localDestinations.delete(hashHex);
 		this.transport.unbindLocalDestination(destination);
+	}
+
+	/**
+	 * Broadcasts a packet from a specific destination to the mesh.
+	 * @param {Packet} packet
+	 */
+	broadcast(packet) {
+		// The core acts as the mediator
+		this.transport.broadcast(packet);
 	}
 }

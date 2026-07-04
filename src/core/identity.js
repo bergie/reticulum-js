@@ -45,7 +45,7 @@ export class Identity extends EventTarget {
 		this.ed25519Pub = ed25519Pub;
 		this.publicKey = publicKey;
 		this.identityHash = identityHash;
-		this.app_data = null;
+		this.appData = null;
 	}
 
 	/**

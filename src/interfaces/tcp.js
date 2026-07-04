@@ -79,11 +79,21 @@ export class TCPClientInterface extends Interface {
 				() => {
 					this._setupStreams(this.socket);
 					this.online = true;
+					this.dispatchEvent(
+						new CustomEvent("connected", {
+							detail: { host: this.host, port: this.port },
+						}),
+					);
 					resolve();
 				},
 			);
 			this.socket.on("error", (err) => {
 				this.online = false;
+				this.dispatchEvent(
+					new CustomEvent("disconnected", {
+						detail: { host: this.host, port: this.port },
+					}),
+				);
 				reject(err);
 			});
 		});
@@ -98,6 +108,11 @@ export class TCPClientInterface extends Interface {
 			this.socket = null;
 		}
 		this.online = false;
+		this.dispatchEvent(
+			new CustomEvent("disconnected", {
+				detail: { host: this.host, port: this.port },
+			}),
+		);
 		if (this._loopPromise) {
 			await this._loopPromise;
 		}

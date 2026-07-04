@@ -173,7 +173,7 @@ export class TransportCore {
 
 	_handleIncomingPacket(packet, receivingInterface) {
 		// If this is an Announce packet (Packet Type 0x01)
-		if (packet.type === PACKET_TYPE_ANNOUNCE) {
+		if (packet.type === PacketType.ANNOUNCE) {
 			// Note: In a real implementation, you increment packet.hops by 1 here
 			this.routingTable.addOrUpdateRoute(
 				packet.destinationHash,
@@ -182,5 +182,26 @@ export class TransportCore {
 			);
 		}
 		// ... handle data packets ...
+	}
+
+	/**
+	 * Broadcasts a packet to all interfaces, excluding the one it may have arrived on
+	 * to prevent circular loops in the mesh.
+	 * @param {Packet} packet
+	 * @param {Object|null} [sourceInterface=null] - Interface that originated/received the packet
+	 */
+	broadcast(packet, sourceInterface = null) {
+		for (const iface of this.interfaces) {
+			// Loop Prevention: Do not echo a packet back to the interface it came from
+			if (iface === sourceInterface) continue;
+
+			// Interface Health Check
+			if (iface.isOpen) {
+				// Ensure the interface is prepared to handle the raw bytes
+				iface.send(packet).catch((err) => {
+					console.error(`[!] Failed to broadcast via ${iface.name}:`, err);
+				});
+			}
+		}
 	}
 }

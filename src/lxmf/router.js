@@ -12,7 +12,7 @@ import { MicroMsgPack } from "../utils/msgpack.js";
 export class LXMRouter extends EventTarget {
 	/**
 	 * @param {import("../core/identity.js").Identity} identity
-	 * @param {any} interfaceLayer - An object that manages destinations and dispatches link requests.
+	 * @param {import("../core/reticulum.js").Reticulum} interfaceLayer - An object that manages destinations and dispatches link requests.
 	 */
 	constructor(identity, interfaceLayer) {
 		super();
@@ -34,10 +34,14 @@ export class LXMRouter extends EventTarget {
 			"lxmf.delivery",
 			DestinationType.SINGLE,
 			this.identity,
+			this.interfaceLayer,
 		);
 
 		this.interfaceLayer.registerDestination(this.deliveryDest);
 		this._setupListeners();
+		this.dispatchEvent(
+			new CustomEvent("ready", { detail: { destination: this.deliveryDest } }),
+		);
 	}
 
 	/**

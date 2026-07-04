@@ -73,15 +73,15 @@ export class Packet {
 	 * @param {Uint8Array} [options.transportId] - 16-byte transport identity hash (for HEADER_2)
 	 */
 	constructor(options) {
-		this.headerType = options.headerType;
-		this.hops = options.hops;
-		this.transportType = options.transportType;
-		this.destinationType = options.destinationType;
-		this.packetType = options.packetType;
-		this.contextFlag = options.contextFlag;
+		this.headerType = options.headerType || HeaderType.HEADER_1;
+		this.hops = options.hops || 0;
+		this.transportType = options.transportType || 0;
+		this.destinationType = options.destinationType || DestType.SINGLE;
+		this.packetType = options.packetType || PacketType.DATA;
+		this.contextFlag = options.contextFlag || false;
 		this.destinationHash = options.destinationHash;
-		this.contextByte = options.contextByte;
-		this.payload = options.payload;
+		this.contextByte = options.contextByte || 0x00;
+		this.payload = options.payload || new Uint8Array(0); // Default to empty buffer;
 		this.ifac = options.ifac;
 		this.transportId = options.transportId;
 	}

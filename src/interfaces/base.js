@@ -53,4 +53,15 @@ export class Interface extends EventTarget {
 	async disconnect() {
 		throw new Error("Interface.disconnect is not implemented");
 	}
+
+	/**
+	 * Sends bytes wrapped in KISS framing
+	 * @param {import("../core/packet.js").Packet} packet
+	 */
+	async send(packet) {
+		if (!this.writable) return;
+		const writer = this.writable.getWriter();
+		writer.write(packet);
+		await writer.close();
+	}
 }

@@ -71,13 +71,15 @@ export class Destination extends EventTarget {
 	 * @param {Direction} direction - The direction of this destination.
 	 * @param {DestinationType} type - The type of this destination.
 	 * @param {Identity|null} identity - The identity associated with this destination.
+	 * @param {import("../core/reticulum.js").Reticulum} interfaceLayer - An object that manages destinations and dispatches link requests.
 	 */
-	constructor(name, direction, type, identity = null) {
+	constructor(name, direction, type, identity = null, interfaceLayer = null) {
 		super();
 		this.name = name;
 		this.direction = direction;
 		this.type = type;
 		this.identity = identity;
+		this.interfaceLayer = interfaceLayer;
 		/** @type {Uint8Array|null} */
 		this.destinationHash = null;
 		/** @type {Uint8Array|null} */
@@ -94,16 +96,57 @@ export class Destination extends EventTarget {
 	 */
 	nameHash;
 
+	async announce() {
+		if (!this.interfaceLayer)
+			throw new Error("Destination not bound to an RNS instance.");
+
+		// 1. Create packet targeted at this destination
+		const announcePacket = new Packet({
+			packetType: PacketType.ANNOUNCE,
+			destinationHash: this.destinationHash,
+			headerType: HeaderType.HEADER_1,
+		});
+
+		// 2. Attach metadata if available
+		if (this.identity && this.identity.app_data) {
+			announcePacket.payload = this.identity.app_data;
+		}
+
+		// 3. Sign using the identity
+		// IMPORTANT: Verify that your identity.sign() returns a 64-byte Ed25519 signature
+		// and that Packet.serialize() includes space for that signature at the end.
+		const signature = await this.identity.sign(announcePacket.serialize());
+
+		// Append signature to payload or set as packet signature field
+		announcePacket.signature = signature;
+
+		// 4. Send to the core for network-wide flooding
+		this.interfaceLayer.broadcast(announcePacket);
+	}
+
 	/**
 	 * Static factory for creating a destination.
 	 * @param {string} name
 	 * @param {Direction} direction
 	 * @param {DestinationType} type
 	 * @param {Identity|null} identity
+	 * @param {import("../core/reticulum.js").Reticulum} interfaceLayer - An object that manages destinations and dispatches link requests.
 	 * @returns {Promise<Destination>}
 	 */
-	static async create(name, direction, type, identity = null) {
-		const dest = new Destination(name, direction, type, identity);
+	static async create(
+		name,
+		direction,
+		type,
+		identity = null,
+		interfaceLayer = null,
+	) {
+		const dest = new Destination(
+			name,
+			direction,
+			type,
+			identity,
+			interfaceLayer,
+		);
 		await dest._computeHashes();
 		return dest;
 	}
@@ -163,10 +206,17 @@ export class Destination extends EventTarget {
 	 * @param {string} name
 	 * @param {DestinationType} type
 	 * @param {Identity|null} identity
+	 * @param {import("../core/reticulum.js").Reticulum} interfaceLayer - An object that manages destinations and dispatches link requests.
 	 * @returns {Promise<Destination>}
 	 */
-	static async IN(name, type, identity = null) {
-		return await Destination.create(name, Direction.IN, type, identity);
+	static async IN(name, type, identity = null, interfaceLayer = null) {
+		return await Destination.create(
+			name,
+			Direction.IN,
+			type,
+			identity,
+			interfaceLayer,
+		);
 	}
 
 	/**
@@ -433,13 +483,13 @@ export class Destination extends EventTarget {
 	 * @param {Uint8Array} packet_hash
 	 * @param {Uint8Array} destination_hash
 	 * @param {Uint8Array} public_key
-	 * @param {any} app_data
+	 * @param {any} appData
 	 */
 	static async remember(
 		packet_hash,
 		destination_hash,
 		public_key,
-		app_data = null,
+		appData = null,
 	) {
 		const key = bufToHex(destination_hash);
 		const entry = Destination.knownDestinations.get(key);
@@ -447,13 +497,13 @@ export class Destination extends EventTarget {
 			entry[0] = Date.now() / 1000; // time.time() in seconds
 			entry[1] = packet_hash;
 			entry[2] = public_key;
-			entry[3] = app_data;
+			entry[3] = appData;
 		} else {
 			Destination.knownDestinations.set(key, [
 				Date.now() / 1000,
 				packet_hash,
 				public_key,
-				app_data,
+				appData,
 				0,
 			]);
 		}
@@ -473,7 +523,7 @@ export class Destination extends EventTarget {
 				const identity_hash = await Identity.truncatedHash(identity.publicKey);
 
 				if (bufToHex(target_hash) === bufToHex(identity_hash)) {
-					identity.app_data = entry[3];
+					identity.appData = entry[3];
 					return identity;
 				}
 			}
@@ -483,7 +533,7 @@ export class Destination extends EventTarget {
 			const entry = Destination.knownDestinations.get(key);
 			if (entry) {
 				const identity = await Identity.fromPublicKey(entry[2]);
-				identity.app_data = entry[3];
+				identity.appData = entry[3];
 				return identity;
 			}
 			return null;

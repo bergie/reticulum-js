@@ -43,15 +43,26 @@ async function startEchoBot() {
 
 	// 3. Load or generate the Bot's Ed25519 Identity
 	const botIdentity = await Identity.loadOrGenerate(rns.storage);
+	console.log(botIdentity);
 	console.log(
-		`Bot Address Hash: ${Buffer.from(botIdentity.hash).toString("hex")}`,
+		`Bot Address Hash: ${Buffer.from(botIdentity.identityHash).toString("hex")}`,
 	);
+	// Set the metadata
+	const metadata = {
+		name: "JS Echo Bot",
+		version: "1.0.0",
+		capabilities: ["echo", "lxmf"],
+	};
+
+	// Convert to bytes
+	botIdentity.appData = new TextEncoder().encode(JSON.stringify(metadata));
 
 	// 4. Bind the LXMF Router to our Identity and Network Core
 	// This automatically registers the 'lxmf.delivery' destination
 	const lxmf = new LXMRouter(botIdentity, rns);
 
 	// Announce the bot's presence to the mesh so clients know it's online
+	await new Promise((resolve) => lxmf.addEventListener("ready", resolve));
 	await lxmf.deliveryDest.announce();
 	console.log("Bot announced to the mesh. Listening for messages...");
 
