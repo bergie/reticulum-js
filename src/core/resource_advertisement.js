@@ -37,17 +37,17 @@ export const ResourceAdvertisementConstants = {
 export class ResourceAdvertisement {
 	/**
 	 * @param {Object} options
-	 * @param {number} options.t - Transfer size
-	 * @param {number} options.d - Total uncompressed data size
-	 * @param {number} options.n - Number of parts
-	 * @param {Uint8Array} options.h - Resource hash
-	 * @param {Uint8Array} options.r - Resource random hash
-	 * @param {Uint8Array} options.o - Original hash (first-segment hash)
-	 * @param {number} options.i - Segment index
-	 * @param {number} options.l - Total segments
+	 * @param {number} [options.t] - Transfer size
+	 * @param {number} [options.d] - Total uncompressed data size
+	 * @param {number} [options.n] - Number of parts
+	 * @param {Uint8Array} [options.h] - Resource hash
+	 * @param {Uint8Array} [options.r] - Resource random hash
+	 * @param {Uint8Array} [options.o] - Original hash (first-segment hash)
+	 * @param {number} [options.i] - Segment index
+	 * @param {number} [options.l] - Total segments
 	 * @param {Uint8Array} [options.q] - Associated request ID
-	 * @param {number} options.f - Resource flags
-	 * @param {Uint8Array} options.m - Resource hashmap
+	 * @param {number} [options.f] - Resource flags
+	 * @param {Uint8Array} [options.m] - Resource hashmap
 	 * @param {boolean} [options.u] - Is request flag
 	 * @param {boolean} [options.p] - Is response flag
 	 * @param {boolean} [options.x] - Has metadata flag

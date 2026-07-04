@@ -23,6 +23,12 @@ export const ResourceStatus = {
 };
 
 /**
+ * @typedef {Object} Bzip2
+ * @property {function(Uint8Array): Uint8Array} compress
+ * @property {function(Uint8Array, number): Uint8Array} decompress
+ */
+
+/**
  * Represents a Reticulum Resource.
  * A Resource allows for transferring arbitrary amounts of data over a link,
  * handling chunking, sequencing, and reassembly.
@@ -42,6 +48,7 @@ export class Resource extends EventTarget {
 	 * @param {Uint8Array} [options.requestId] - The ID of the associated request.
 	 * @param {boolean} [options.isResponse=false] - Whether this is a response resource.
 	 * @param {number} [options.sentMetadataSize=0] - Size of metadata sent with the first segment.
+	 * @param {Bzip2} [options.bz2] - Bzip2 implementation.
 	 */
 	constructor(options = {}) {
 		super();
@@ -69,7 +76,7 @@ export class Resource extends EventTarget {
 		this.isResponse = options.isResponse || false;
 		/** @type {number} */
 		this.sentMetadataSize = options.sentMetadataSize || 0;
-		/** @type {Object|undefined} */
+		/** @type {Bzip2|undefined} */
 		this.bz2 = options.bz2 || undefined;
 		/** @type {number} */
 		this.uncompressedSize = 0;
@@ -120,15 +127,17 @@ export class Resource extends EventTarget {
 		const sdu = mdu - 128; // Leave room for headers
 
 		if (this.data instanceof Uint8Array) {
-			const original_len = this.data.length;
+			let data = this.data;
+			const original_len = data.length;
 
 			if (this.autoCompress && this.bz2) {
-				this.data = this.bz2.compress(this.data);
+				data = this.bz2.compress(data);
+				this.data = data;
 				this.compressed = true;
 			}
 
 			this.uncompressedSize = original_len;
-			const total_len = this.data.length;
+			const total_len = data.length;
 			this.totalSize = total_len;
 			this.totalParts = Math.ceil(total_len / sdu);
 			this.size = this.totalParts;
@@ -136,7 +145,7 @@ export class Resource extends EventTarget {
 			for (let i = 0; i < this.totalParts; i++) {
 				const start = i * sdu;
 				const end = Math.min(start + sdu, total_len);
-				this.parts.push(this.data.slice(start, end));
+				this.parts.push(data.slice(start, end));
 			}
 		} else {
 			throw new Error("Unsupported data type for resource preparation");
@@ -207,7 +216,7 @@ export class Resource extends EventTarget {
 	 * @param {import("../transport/link.js").Link} link
 	 * @param {Packet} advertisementPacket
 	 * @param {Object} [options] - Optional configuration for the resource.
-	 * @param {Object} [options.bz2] - Bzip2 implementation for decompression.
+	 * @param {Bzip2} [options.bz2] - Bzip2 implementation for decompression.
 	 * @returns {Resource|null}
 	 */
 	static accept(link, advertisementPacket, options = {}) {
