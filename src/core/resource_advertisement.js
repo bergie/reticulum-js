@@ -31,7 +31,7 @@ export const ResourceAdvertisementConstants = {
 /**
  * Represents a Resource Advertisement.
  * This class handles the packing and unpacking of resource advertisement data.
- * 
+ *
  * NOTE: The Python implementation uses MessagePack (umsgpack).
  */
 export class ResourceAdvertisement {
@@ -74,12 +74,12 @@ export class ResourceAdvertisement {
 		this.u = !!((this.f >> 3) & 0x01); // is_request
 		this.s = !!((this.f >> 2) & 0x01); // is_split
 		this.c = !!((this.f >> 1) & 0x01); // is_compressed
-		this.e = !!(this.f & 0x01);        // is_encrypted
+		this.e = !!(this.f & 0x01); // is_encrypted
 	}
 
 	/**
 	 * Pack the advertisement into a Uint8Array.
-	 * 
+	 *
 	 * @returns {Uint8Array}
 	 */
 	pack() {
@@ -94,14 +94,14 @@ export class ResourceAdvertisement {
 			l: this.l,
 			q: this.q ? Array.from(this.q) : null,
 			f: this.f,
-			m: Array.from(this.m)
+			m: Array.from(this.m),
 		};
 		return MicroMsgPack.encode(dict);
 	}
 
 	/**
 	 * Unpack an advertisement from a Uint8Array.
-	 * 
+	 *
 	 * @param {Uint8Array} data
 	 * @returns {ResourceAdvertisement}
 	 */
@@ -109,19 +109,21 @@ export class ResourceAdvertisement {
 		/** @type {any} */
 		const dict = MicroMsgPack.decode(data);
 
-		return new ResourceAdvertisement(/** @type {any} */ ({
-			t: dict.t,
-			d: dict.d,
-			n: dict.n,
-			h: new Uint8Array(dict.h),
-			r: new Uint8Array(dict.r),
-			o: new Uint8Array(dict.o),
-			i: dict.i,
-			l: dict.l,
-			q: dict.q ? new Uint8Array(dict.q) : undefined,
-			f: dict.f,
-			m: new Uint8Array(dict.m)
-		}));
+		return new ResourceAdvertisement(
+			/** @type {any} */ ({
+				t: dict.t,
+				d: dict.d,
+				n: dict.n,
+				h: new Uint8Array(dict.h),
+				r: new Uint8Array(dict.r),
+				o: new Uint8Array(dict.o),
+				i: dict.i,
+				l: dict.l,
+				q: dict.q ? new Uint8Array(dict.q) : undefined,
+				f: dict.f,
+				m: new Uint8Array(dict.m),
+			}),
+		);
 	}
 
 	/**

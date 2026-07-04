@@ -52,7 +52,13 @@ export class Link extends EventTarget {
 	 * @param {WritableStream} localStream - The raw stream to the interface (accepting bytes).
 	 * @param {number} [mtu=1024] - The Maximum Transmission Unit.
 	 */
-	constructor(tokenKey, destinationHash, remoteStream, localStream, mtu = 1024) {
+	constructor(
+		tokenKey,
+		destinationHash,
+		remoteStream,
+		localStream,
+		mtu = 1024,
+	) {
 		super();
 		this.tokenKey = tokenKey;
 		this.destinationHash = destinationHash;
@@ -109,7 +115,8 @@ export class Link extends EventTarget {
 
 						// Handle specialized context packets
 						if (decryptedPacket.contextFlag) {
-							if (decryptedPacket.contextByte === 0x04) { // RESOURCE_ADV
+							if (decryptedPacket.contextByte === 0x04) {
+								// RESOURCE_ADV
 								this.dispatchEvent(
 									new CustomEvent("resource_advertisement", {
 										detail: decryptedPacket,
@@ -119,7 +126,7 @@ export class Link extends EventTarget {
 								decryptedPacket.contextByte === 0x05 || // RESOURCE_REQ
 								decryptedPacket.contextByte === 0x06 || // RESOURCE_HMU
 								decryptedPacket.contextByte === 0x07 || // RESOURCE_ICL
-								decryptedPacket.contextByte === 0x08    // RESOURCE_RCL
+								decryptedPacket.contextByte === 0x08 // RESOURCE_RCL
 							) {
 								this.dispatchEvent(
 									new CustomEvent("resource_part", {

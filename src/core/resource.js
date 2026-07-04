@@ -3,7 +3,7 @@
  * @description Resource chunking and reassembly API
  */
 
-import { Packet, ContextType } from "../core/packet.js";
+import { ContextType, Packet } from "../core/packet.js";
 import { ResourceAdvertisement } from "./resource_advertisement.js";
 
 /**
@@ -69,6 +69,10 @@ export class Resource extends EventTarget {
 		this.isResponse = options.isResponse || false;
 		/** @type {number} */
 		this.sentMetadataSize = options.sentMetadataSize || 0;
+		/** @type {Object|undefined} */
+		this.bz2 = options.bz2 || undefined;
+		/** @type {number} */
+		this.uncompressedSize = 0;
 
 		/** @type {number} */
 		this.status = ResourceStatus.NONE;
@@ -112,10 +116,18 @@ export class Resource extends EventTarget {
 		if (!this.data) return;
 
 		// Determine SDU size (Maximum Data Unit)
-		const mdu = this.link?.mtu || 1024; 
+		const mdu = this.link?.mtu || 1024;
 		const sdu = mdu - 128; // Leave room for headers
 
 		if (this.data instanceof Uint8Array) {
+			const original_len = this.data.length;
+
+			if (this.autoCompress && this.bz2) {
+				this.data = this.bz2.compress(this.data);
+				this.compressed = true;
+			}
+
+			this.uncompressedSize = original_len;
 			const total_len = this.data.length;
 			this.totalSize = total_len;
 			this.totalParts = Math.ceil(total_len / sdu);
@@ -137,14 +149,22 @@ export class Resource extends EventTarget {
 	 */
 	async advertise() {
 		if (!this.link) throw new Error("Link is required for advertisement");
-		if (this.status !== ResourceStatus.NONE) throw new Error("Resource already advertised or in progress");
+		if (this.status !== ResourceStatus.NONE)
+			throw new Error("Resource already advertised or in progress");
 
 		this.status = ResourceStatus.QUEUED;
 
 		// 1. Create ResourceAdvertisement
+		let f = 0;
+		if (this.hasMetadata) f |= 1 << 5;
+		if (this.isResponse) f |= 1 << 4;
+		if (this.split) f |= 1 << 2;
+		if (this.compressed) f |= 1 << 1;
+		if (this.encrypted) f |= 1 << 0;
+
 		const adv = new ResourceAdvertisement({
 			t: this.totalSize,
-			d: this.totalSize,
+			d: this.uncompressedSize,
 			n: this.totalParts,
 			h: this.hash || new Uint8Array(32),
 			r: this.randomHash || new Uint8Array(16),
@@ -152,7 +172,7 @@ export class Resource extends EventTarget {
 			i: this.segmentIndex,
 			l: this.totalParts,
 			q: this.requestId,
-			f: 0, // flags
+			f: f,
 			m: new Uint8Array(0),
 		});
 
@@ -186,9 +206,11 @@ export class Resource extends EventTarget {
 	 * Handles an incoming resource advertisement.
 	 * @param {import("../transport/link.js").Link} link
 	 * @param {Packet} advertisementPacket
+	 * @param {Object} [options] - Optional configuration for the resource.
+	 * @param {Object} [options.bz2] - Bzip2 implementation for decompression.
 	 * @returns {Resource|null}
 	 */
-	static accept(link, advertisementPacket) {
+	static accept(link, advertisementPacket, options = {}) {
 		try {
 			const adv = ResourceAdvertisement.unpack(advertisementPacket.payload);
 
@@ -196,6 +218,7 @@ export class Resource extends EventTarget {
 				link: link,
 				requestId: adv.q,
 				isResponse: true,
+				bz2: options.bz2,
 			});
 
 			resource.status = ResourceStatus.TRANSFERRING;
@@ -209,6 +232,7 @@ export class Resource extends EventTarget {
 			resource.hasMetadata = adv.x;
 			resource.compressed = adv.c;
 			resource.encrypted = adv.e;
+			resource.uncompressedSize = adv.d;
 
 			if (resource.isResponse) {
 				resource.parts = new Array(resource.totalParts).fill(null);
@@ -231,14 +255,17 @@ export class Resource extends EventTarget {
 	 * @param {Packet} packet
 	 */
 	receivePart(packet) {
-		if (this.status !== ResourceStatus.TRANSFERRING && this.status !== ResourceStatus.ADVERTISED) {
+		if (
+			this.status !== ResourceStatus.TRANSFERRING &&
+			this.status !== ResourceStatus.ADVERTISED
+		) {
 			return;
 		}
 
 		// For a response, parts are identified by their index in the hashmap or similar.
 		// In this simplified implementation, we assume parts arrive in order for now.
 		// A real implementation would use the hashmap to place parts correctly.
-		
+
 		const partData = packet.payload;
 		this.parts.push(partData);
 		this.receivedCount++;
@@ -256,9 +283,17 @@ export class Resource extends EventTarget {
 	async _assemble() {
 		this.status = ResourceStatus.ASSEMBLING;
 		try {
-			const assembledData = this._concatenateParts(this.parts);
+			let assembledData = this._concatenateParts(this.parts);
+
+			if (this.compressed && this.bz2) {
+				assembledData = this.bz2.decompress(
+					assembledData,
+					this.uncompressedSize,
+				);
+			}
+
 			// In a real implementation, we would verify the hash here.
-			
+
 			this.data = assembledData || undefined;
 			this.status = ResourceStatus.COMPLETE;
 
