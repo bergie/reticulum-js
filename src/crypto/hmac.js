@@ -18,11 +18,8 @@ export async function hmac(key, data) {
 		["sign"],
 	);
 
-	const signature = await crypto.subtle.sign(
-		"HMAC",
-		cryptoKey,
-		/** @type {any} */ (data),
-	);
+	const cleanData = new Uint8Array(data);
+	const signature = await crypto.subtle.sign("HMAC", cryptoKey, cleanData);
 
 	return new Uint8Array(signature);
 }

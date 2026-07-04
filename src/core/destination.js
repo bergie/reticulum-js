@@ -100,27 +100,54 @@ export class Destination extends EventTarget {
 		if (!this.interfaceLayer)
 			throw new Error("Destination not bound to an RNS instance.");
 
-		// 1. Create packet targeted at this destination
+		// 1. Generate a 10-byte Random Hash (Required by RNS to prevent replay attacks)
+		const randomHash = new Uint8Array(10);
+		crypto.getRandomValues(randomHash);
+
+		// 2. Fetch the 64-byte Public Key (32 bytes X25519 + 32 bytes Ed25519)
+		const pubKey = await this.identity.getPublicKey();
+
+		// 3. Prepare App Data (The human-readable name or metadata)
+		const appData = this.identity.appData || new Uint8Array(0);
+
+		// 4. Construct the Data to be Signed
+		// Reticulum requires the signature to cover these specific fields in order:
+		// [DestHash (16)] + [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [AppData]
+		const signedData = new Uint8Array(16 + 64 + 10 + 10 + appData.length);
+		signedData.set(this.destinationHash, 0);
+		signedData.set(pubKey, 16);
+		signedData.set(this.nameHash, 16 + 64);
+		signedData.set(randomHash, 16 + 64 + 10);
+		signedData.set(appData, 16 + 64 + 10 + 10);
+
+		// 5. Generate the 64-byte Ed25519 Signature
+		const signature = await this.identity.sign(signedData);
+
+		// 6. Construct the final Announce Payload for the wire
+		// Format: [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [Signature (64)] + [AppData]
+		const payload = new Uint8Array(64 + 10 + 10 + 64 + appData.length);
+		payload.set(pubKey, 0);
+		payload.set(this.nameHash, 64);
+		payload.set(randomHash, 64 + 10);
+		payload.set(signature, 64 + 10 + 10);
+		payload.set(appData, 64 + 10 + 10 + 64);
+
+		// 7. Broadcast the Packet
 		const announcePacket = new Packet({
 			packetType: PacketType.ANNOUNCE,
+			destinationType: this.type,
 			destinationHash: this.destinationHash,
-			headerType: HeaderType.HEADER_1,
+			payload: payload,
 		});
 
-		// 2. Attach metadata if available
-		if (this.identity && this.identity.app_data) {
-			announcePacket.payload = this.identity.app_data;
+		// DEBUG: Validate payload size
+		console.log(`[DEBUG] Announce Payload Size: ${payload.length} bytes`);
+		if (payload.length < 148) {
+			console.error(
+				"[!] Announce payload too small! Check your concatenation.",
+			);
 		}
 
-		// 3. Sign using the identity
-		// IMPORTANT: Verify that your identity.sign() returns a 64-byte Ed25519 signature
-		// and that Packet.serialize() includes space for that signature at the end.
-		const signature = await this.identity.sign(announcePacket.serialize());
-
-		// Append signature to payload or set as packet signature field
-		announcePacket.signature = signature;
-
-		// 4. Send to the core for network-wide flooding
 		this.interfaceLayer.broadcast(announcePacket);
 	}
 
@@ -282,12 +309,14 @@ export class Destination extends EventTarget {
 	 * @returns {Uint8Array}
 	 */
 	getSalt() {
-		return this.destinationHash ?? new Uint8Array(16);
+		// Force conversion to a clean Uint8Array
+		const salt = this.destinationHash ?? new Uint8Array(16);
+		return new Uint8Array(salt.buffer, salt.byteOffset, salt.byteLength);
 	}
 
 	/**
 	 * Requests an encrypted link to this remote destination.
-	 * @param {import('../transport/transport.js').Transport} transport - The transport interface to use.
+	 * @param {import('../interfaces/base.js').Interface} transport - The transport interface to use.
 	 * @param {Uint8Array} appData - Optional contextual data (e.g., Graph ID, Auth Token)
 	 * @param {number} timeoutMs - How long to wait for the remote node to accept
 	 * @returns {Promise<import('../transport/link.js').Link>} Resolves when the secure tunnel is established
@@ -348,9 +377,9 @@ export class Destination extends EventTarget {
 					const link = new Link(
 						link_key,
 						this.destinationHash ?? new Uint8Array(16),
-						transport.inboundStream,
-						transport.outboundStream,
+						this.interfaceLayer.transport,
 					);
+					// this.interfaceLayer.transport.addLink(senderHash, link);
 					this.dispatchEvent(
 						new CustomEvent("link_established", {
 							detail: { link },
@@ -409,6 +438,62 @@ export class Destination extends EventTarget {
 	}
 
 	/**
+	 * Handles incoming packets routed to this destination.
+	 * @param {import('./packet.js').Packet} packet
+	 * @param {Object} receivingInterface
+	 */
+	async receive(packet, receivingInterface) {
+		console.log(
+			`[DEST] Destination ${this.name} received packet type ${packet.packetType}`,
+		);
+
+		// Dispatch to internal handlers based on packet type
+		switch (packet.packetType) {
+			case PacketType.DATA:
+				await this._handleData(packet);
+				break;
+			case PacketType.LINKREQUEST:
+				this.dispatchEvent(
+					new CustomEvent("link_request", {
+						detail: { packet, transport: receivingInterface },
+					}),
+				);
+				break;
+			// Add other types as needed
+		}
+	}
+
+	/**
+	 * @param {import('./packet.js').Packet} packet
+	 * @param {import('../interfaces/base.js').Interface} transport
+	 */
+	async acceptLink(packet, transport, appData = new Uint8Array(0)) {
+		const senderHash = packet.destinationHash;
+		return await this.respondToLinkRequest(
+			transport,
+			packet,
+			senderHash,
+			appData,
+		);
+	}
+
+	/**
+	 * @param {import('./packet.js').Packet} packet
+	 */
+	async _handleData(packet) {
+		let plaintext = null;
+		if (this.type === DestinationType.SINGLE && this.identity) {
+			plaintext = await this.identity.decrypt(packet.payload);
+		} else {
+			plaintext = packet.payload;
+		}
+
+		if (plaintext) {
+			this.dispatchEvent(new CustomEvent("data", { detail: { plaintext } }));
+		}
+	}
+
+	/**
 	 * Responds to a link request.
 	 * @param {import('../transport/transport.js').Transport} transport
 	 * @param {import('../core/packet.js').Packet} requestPacket
@@ -461,14 +546,10 @@ export class Destination extends EventTarget {
 			payload: responsePayload,
 		});
 
-		await transport.sendPacket(responsePacket);
+		await transport.send(responsePacket);
 
-		const link = new Link(
-			link_key,
-			senderHash,
-			transport.inboundStream,
-			transport.outboundStream,
-		);
+		const link = new Link(link_key, senderHash, this.interfaceLayer.transport);
+		this.interfaceLayer.transport.addLink(senderHash, link);
 		this.dispatchEvent(
 			new CustomEvent("link_established", {
 				detail: { link },

@@ -133,17 +133,23 @@ export class TCPClientInterface extends Interface {
 			write(chunk, encoding, callback) {
 				socket.write(chunk, encoding, callback);
 			},
+			flush(callback) {
+				callback();
+			},
 		});
 		this._readable = Readable.toWeb(nodeReadable).pipeThrough(
 			createRNSUnframerStream(Packet, this.ifacSize),
 		);
 
 		const framer = createRNSFramerStream(Packet);
+
+		// IMPORTANT: Create the writer ONCE here and store it
+		this._packetWriter = framer.writable.getWriter();
+
 		framer.readable.pipeTo(Writable.toWeb(nodeWritable)).catch((err) => {
 			console.error("Framer pipeTo error:", err);
 		});
 		this._writable = framer.writable;
-
 		this._loopPromise = this._startInboundLoop();
 	}
 

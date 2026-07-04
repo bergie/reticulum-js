@@ -105,6 +105,7 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
 		 * @param {TransformStreamDefaultController} controller
 		 */
 		transform(chunk, controller) {
+			console.log(`[DEBUG] Received ${chunk.length} bytes from TCP socket`);
 			const combined = new Uint8Array(buffer.length + chunk.length);
 			combined.set(buffer);
 			combined.set(chunk, buffer.length);
@@ -119,6 +120,9 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
 
 				// If the first flag is not at the start, the data before it is junk/malformed
 				if (firstFlag > 0) {
+					console.warn(
+						`[DEBUG] Discarding ${firstFlag} bytes of junk/malformed data before first 0x7E`,
+					);
 					// In a real stream, we might want to log this or handle it.
 					// For now, we just discard it.
 					buffer = buffer.slice(firstFlag);

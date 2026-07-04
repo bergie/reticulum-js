@@ -29,23 +29,20 @@ async function startEchoBot() {
 
 	// 2. Connect to the local Reticulum mesh daemon via TCP
 	const tcpInterface = new TCPClientInterface({
+		//host: "127.0.0.1",
+		//port: 42424,
 		host: "192.168.2.138",
 		port: 4242,
 	});
-	rns.addInterface(tcpInterface);
-	tcpInterface.connect();
-
 	// Wait for the TCP connection to establish before proceeding
-	await new Promise((resolve) =>
-		tcpInterface.addEventListener("connected", resolve),
-	);
+	await tcpInterface.connect();
+	rns.addInterface(tcpInterface);
 	console.log("Connected to local RNS transport node.");
 
 	// 3. Load or generate the Bot's Ed25519 Identity
 	const botIdentity = await Identity.loadOrGenerate(rns.storage);
-	console.log(botIdentity);
 	console.log(
-		`Bot Address Hash: ${Buffer.from(botIdentity.identityHash).toString("hex")}`,
+		`Bot Identity Hash: ${Buffer.from(botIdentity.identityHash).toString("hex")}`,
 	);
 	// Set the metadata
 	const metadata = {
@@ -55,14 +52,19 @@ async function startEchoBot() {
 	};
 
 	// Convert to bytes
-	botIdentity.appData = new TextEncoder().encode(JSON.stringify(metadata));
+	botIdentity.appData = new TextEncoder().encode(
+		`${metadata.name} (${metadata.version})`,
+	);
 
 	// 4. Bind the LXMF Router to our Identity and Network Core
 	// This automatically registers the 'lxmf.delivery' destination
 	const lxmf = new LXMRouter(botIdentity, rns);
+	await lxmf.init();
+	console.log(
+		`Bot Destination Hash: ${Buffer.from(lxmf.deliveryDest.destinationHash).toString("hex")}`,
+	);
 
 	// Announce the bot's presence to the mesh so clients know it's online
-	await new Promise((resolve) => lxmf.addEventListener("ready", resolve));
 	await lxmf.deliveryDest.announce();
 	console.log("Bot announced to the mesh. Listening for messages...");
 

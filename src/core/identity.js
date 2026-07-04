@@ -409,7 +409,14 @@ export class Identity extends EventTarget {
 			this.ed25519Priv,
 			/** @type {any} */ (message),
 		);
-		return new Uint8Array(signature);
+		const sigArray = new Uint8Array(signature);
+
+		if (sigArray.length !== 64) {
+			throw new Error(
+				`CRITICAL: Signature length is ${sigArray.length}, expected 64!`,
+			);
+		}
+		return sigArray;
 	}
 
 	/**

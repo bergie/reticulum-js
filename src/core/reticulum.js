@@ -27,7 +27,7 @@ export class Reticulum {
 
 	/**
 	 * Attaches a physical or virtual network interface to the router.
-	 * * @param {Object} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
+	 * @param {import("../interfaces/base.js").Interface} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
 	 * @param {boolean} isDefault - If true, unroutable packets fallback to this interface
 	 */
 	addInterface(rnsInterface, isDefault = false) {
@@ -64,12 +64,8 @@ export class Reticulum {
 		// this.transport.bindLocalDestination(destination);
 
 		// 3. Inject the compression provider if the destination needs to handle Resources
-		const appData = JSON.parse(
-			new TextDecoder().decode(destination.identity.appData),
-		);
-		console.log(
-			`[+] Destination registered: ${destination.name} (${appData.name})`,
-		);
+		const appData = new TextDecoder().decode(destination.identity.appData);
+		console.log(`[+] Destination registered: ${destination.name} (${appData})`);
 	}
 
 	/**

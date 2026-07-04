@@ -9,6 +9,11 @@
  */
 export class Interface extends EventTarget {
 	/**
+	 * @type {import('node:stream/web').WritableStreamDefaultWriter | null}
+	 */
+	_packetWriter = null;
+
+	/**
 	 * The name of the interface.
 	 * @type {string}
 	 */
@@ -59,9 +64,15 @@ export class Interface extends EventTarget {
 	 * @param {import("../core/packet.js").Packet} packet
 	 */
 	async send(packet) {
-		if (!this.writable) return;
-		const writer = this.writable.getWriter();
-		writer.write(packet);
-		await writer.close();
+		if (!this.writable) {
+			throw new Error("Interface not ready: No packet writer found.");
+		}
+
+		if (!this._packetWriter) {
+			// Only get a writer if it doesn't exist yet
+			this._packetWriter = this.writable.getWriter();
+		}
+
+		await this._packetWriter.write(packet);
 	}
 }

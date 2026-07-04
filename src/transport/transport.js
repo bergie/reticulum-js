@@ -1,207 +1,181 @@
-/**
- * @file transport.js
- * @description Basic Transport implementation for managing interfaces and framing
- */
+// src/transport/transport.js
 
-import { Packet, PacketType } from "../core/packet.js";
-import { createRNSFramerStream, createRNSUnframerStream } from "./framer.js";
+import { Destination } from "../core/destination.js";
+import { PacketType } from "../core/packet.js";
 import { RoutingTable } from "./router.js";
 
 /**
- * A basic Transport implementation that manages an Interface and handles framing.
+ * @param {Uint8Array} buf
+ * @returns {string}
  */
-export class Transport extends EventTarget {
-	/**
-	 * @param {import('../interfaces/base.js').Interface} iface - The underlying interface.
-	 */
-	constructor(iface) {
-		super();
-		this.interface = iface;
-		this.destinations = new Map(); // destination_hash -> Destination
-
-		// Setup inbound stream: interface (bytes) -> framer (Packets)
-		const readable = this.interface.readable;
-		if (!readable)
-			throw new Error("Interface readable stream is not available");
-		this.unframer = createRNSUnframerStream(Packet);
-		this.inboundReader = readable.pipeThrough(this.unframer).getReader();
-
-		// Setup outbound stream: Packets -> framer (bytes) -> interface (bytes)
-		const writable = this.interface.writable;
-		if (!writable)
-			throw new Error("Interface writable stream is not available");
-		this.outboundFramer = createRNSFramerStream(Packet);
-		this.outboundWriter = this.outboundFramer.writable.getWriter();
-		this.outboundFramer.readable.pipeTo(writable);
-
-		this._startInboundLoop();
-	}
-
-	/**
-	 * Starts the loop that reads from the inbound stream.
-	 * @private
-	 */
-	async _startInboundLoop() {
-		try {
-			while (true) {
-				const { value: packet, done } = await this.inboundReader.read();
-				if (done) break;
-				await this.handleInboundPacket(packet);
-			}
-		} catch (e) {
-			this.dispatchEvent(new CustomEvent("error", { detail: e }));
-		}
-	}
-
-	/**
-	 * Registers a destination to receive events from this transport.
-	 * @param {import('../core/destination.js').Destination} destination
-	 */
-	registerDestination(destination) {
-		this.destinations.set(destination.destinationHash, destination);
-	}
-
-	/**
-	 * The stream of incoming packets.
-	 * @type {ReadableStream<import('../core/packet.js').Packet>}
-	 */
-	get inboundStream() {
-		const transport = this;
-		return new ReadableStream({
-			async pull(controller) {
-				const { value, done } = await transport.inboundReader.read();
-				if (done) {
-					controller.close();
-					return;
-				}
-				controller.enqueue(value);
-			},
-			cancel() {
-				transport.inboundReader.cancel();
-			},
-		});
-	}
-
-	/**
-	 * The stream of outgoing packets.
-	 * @type {WritableStream<import('../core/packet.js').Packet>}
-	 */
-	get outboundStream() {
-		const transport = this;
-		return new WritableStream({
-			async write(packet) {
-				await transport.sendPacket(packet);
-			},
-		});
-	}
-
-	/**
-	 * Sends a packet through the interface.
-	 * @param {import('../core/packet.js').Packet} packet
-	 */
-	async sendPacket(packet) {
-		await this.outboundWriter.write(packet);
-	}
-
-	/**
-	 * Handles an incoming packet from the interface.
-	 * @param {import('../core/packet.js').Packet} packet
-	 * @private
-	 */
-	async handleInboundPacket(packet) {
-		// Dispatch to destination if it's a link request, response or proof
-		if (
-			packet.packetType === PacketType.LINKREQUEST ||
-			packet.packetType === PacketType.LINKRESPONSE ||
-			packet.packetType === PacketType.PROOF
-		) {
-			const destination = this.destinations.get(packet.destinationHash);
-			if (destination) {
-				const eventName =
-					packet.packetType === PacketType.LINKREQUEST
-						? "linkrequest"
-						: packet.packetType === PacketType.LINKRESPONSE
-							? "link_response"
-							: "linkproof";
-				destination.dispatchEvent(
-					new CustomEvent(eventName, {
-						detail: { packet },
-					}),
-				);
-			}
-		}
-	}
+function bufToHex(buf) {
+	return Array.from(buf)
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
 }
 
-// src/transport/transport.js
-export class TransportCore {
+/**
+ * The central network router for the Reticulum node.
+ * Routes packets emitted by Interfaces.
+ */
+export class TransportCore extends EventTarget {
 	constructor() {
+		super();
 		this.interfaces = new Set();
+		this.localDestinations = new Map();
+		this.activeLinks = new Map();
 		this.routingTable = new RoutingTable();
-		// A "catch-all" interface for destinations not in the routing table
 		this.defaultInterface = null;
 	}
 
-	addInterface(rnsInterface, isDefault = false) {
-		this.interfaces.add(rnsInterface);
+	/**
+	 * Attaches an interface that emits "packet" events.
+	 * @param {import("../interfaces/base.js").Interface} iface
+	 * @param {boolean} isDefault
+	 */
+	addInterface(iface, isDefault = false) {
+		this.interfaces.add(iface);
+		if (isDefault) this.defaultInterface = iface;
 
-		if (isDefault) {
-			this.defaultInterface = rnsInterface;
+		// 1. Hook into the Interface's existing outbound Framer
+		// Since iface.writable is the input to the RNSFramerStream, we just get a writer for it
+		if (!iface._packetWriter) {
+			iface._packetWriter = iface.writable.getWriter();
 		}
 
-		// 1. Ingest packets from the interface
-		rnsInterface.addEventListener("packet", (event) => {
-			this._handleIncomingPacket(event.detail.packet, rnsInterface);
+		// 2. Listen to the Interface's inbound Packet loop
+		iface.addEventListener("packet", async (event) => {
+			await this._routeIncomingPacket(event.detail.packet, iface);
 		});
 
-		// 2. The Failover Trigger: Interface Disconnection
-		rnsInterface.addEventListener("closed", () => {
-			console.warn(
-				`Interface ${rnsInterface.name} closed. Triggering failover.`,
-			);
-			this.interfaces.delete(rnsInterface);
+		// 3. Handle graceful teardown
+		iface.addEventListener("closed", () => this.removeInterface(iface));
+		iface.addEventListener("error", (e) =>
+			console.error(`[!] Interface ${iface.name} error:`, e.detail),
+		);
 
-			if (this.defaultInterface === rnsInterface) {
-				this.defaultInterface = null; // We lost our default gateway
-			}
-
-			// Immediately scrub the routing table.
-			// Subsequent packets will automatically seek alternative routes.
-			this.routingTable.dropInterface(rnsInterface);
-		});
+		console.log(`[+] Transport bound to interface: ${iface.name}`);
 	}
 
-	_handleIncomingPacket(packet, receivingInterface) {
-		// If this is an Announce packet (Packet Type 0x01)
-		if (packet.type === PacketType.ANNOUNCE) {
-			// Note: In a real implementation, you increment packet.hops by 1 here
+	/**
+	 * @param {import("../interfaces/base.js").Interface} iface
+	 */
+	removeInterface(iface) {
+		if (iface._packetWriter) {
+			iface._packetWriter.releaseLock();
+		}
+		this.interfaces.delete(iface);
+		this.routingTable.dropInterface(iface);
+		if (this.defaultInterface === iface) this.defaultInterface = null;
+		console.warn(`[-] Interface removed: ${iface.name}`);
+	}
+
+	/**
+	 * @param {Uint8Array} destinationHash
+	 * @param {import("./link.js").Link} link
+	 */
+	addLink(destinationHash, link) {
+		const hex = bufToHex(destinationHash);
+		this.activeLinks.set(hex, link);
+	}
+
+	/**
+	 * @param {Uint8Array} destinationHash
+	 */
+	removeLink(destinationHash) {
+		const hex = bufToHex(destinationHash);
+		this.activeLinks.delete(hex);
+		console.log(`[-] Link closed for ${hex}`);
+	}
+
+	bindLocalDestination(destination) {
+		const destHex = Buffer.from(destination.destinationHash).toString("hex");
+		this.localDestinations.set(destHex, destination);
+	}
+
+	/**
+	 * @param {import("../core/packet.js").Packet} packet
+	 * @param {import("../interfaces/base.js").Interface} receivingInterface
+	 */
+	async _routeIncomingPacket(packet, receivingInterface) {
+		if (packet.packetType === PacketType.ANNOUNCE) {
 			this.routingTable.addOrUpdateRoute(
 				packet.destinationHash,
 				receivingInterface,
 				packet.hops,
 			);
+
+			// Harvest the Identity Proof
+			if (packet.payload && packet.payload.length >= 148) {
+				const pubKey = packet.payload.slice(0, 64);
+				const appData = packet.payload.slice(148);
+
+				const packetHashBuffer = await globalThis.crypto.subtle.digest(
+					"SHA-256",
+					packet.serialize(),
+				);
+				const packetHash = new Uint8Array(packetHashBuffer).subarray(0, 16);
+
+				console.log(
+					`Received announce for ${packet.destinationHash} (${appData}`,
+				);
+				await Destination.remember(
+					packetHash,
+					packet.destinationHash,
+					pubKey,
+					appData,
+				);
+			}
+			return;
 		}
-		// ... handle data packets ...
+
+		if (packet.packetType === 0x00) {
+			console.log(
+				`\n\n[!!!] DATA PACKET RECEIVED: ${packet.payload.length} bytes [!!!]\n\n`,
+			);
+		} else if (packet.packetType === 0x02) {
+			console.log(
+				`\n\n[!!!] LINK REQUEST RECEIVED: Handshake incoming [!!!]\n\n`,
+			);
+		}
+		const appPackets = [
+			PacketType.DATA,
+			PacketType.LINKREQUEST,
+			PacketType.LINKRESPONSE,
+			PacketType.PROOF,
+		];
+
+		if (appPackets.includes(packet.packetType)) {
+			const destHex = Buffer.from(packet.destinationHash).toString("hex");
+
+			if (this.localDestinations.has(destHex)) {
+				const destination = this.localDestinations.get(destHex);
+				await destination.receive(packet, receivingInterface);
+				return;
+			}
+		}
 	}
 
-	/**
-	 * Broadcasts a packet to all interfaces, excluding the one it may have arrived on
-	 * to prevent circular loops in the mesh.
-	 * @param {Packet} packet
-	 * @param {Object|null} [sourceInterface=null] - Interface that originated/received the packet
-	 */
 	broadcast(packet, sourceInterface = null) {
 		for (const iface of this.interfaces) {
-			// Loop Prevention: Do not echo a packet back to the interface it came from
-			if (iface === sourceInterface) continue;
+			if (iface === sourceInterface || !iface._packetWriter) continue;
 
-			// Interface Health Check
-			if (iface.isOpen) {
-				// Ensure the interface is prepared to handle the raw bytes
-				iface.send(packet).catch((err) => {
-					console.error(`[!] Failed to broadcast via ${iface.name}:`, err);
-				});
-			}
+			// Write the Packet object directly. The interface's Framer turns it into bytes.
+			iface._packetWriter.write(packet).catch((err) => {
+				console.error(`[!] Broadcast failed on ${iface.name}:`, err);
+			});
+		}
+	}
+
+	async sendPacket(packet) {
+		const destHex = Buffer.from(packet.destinationHash).toString("hex");
+		const nextHopInterface =
+			this.routingTable.lookup(destHex) || this.defaultInterface;
+
+		if (nextHopInterface && nextHopInterface._packetWriter) {
+			await nextHopInterface._packetWriter.write(packet);
+		} else {
+			throw new Error(`No route to host: ${destHex}`);
 		}
 	}
 }
