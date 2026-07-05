@@ -83,8 +83,6 @@ export class Token {
       throw new TypeError("Token plaintext input must be Uint8Array");
 
     const iv = crypto.getRandomValues(new Uint8Array(16));
-    const paddedData = pkcs7.pad(data);
-
     const cryptoKey = await crypto.subtle.importKey(
       "raw",
       this.encryptionKey,
@@ -93,7 +91,7 @@ export class Token {
       ["encrypt"],
     );
 
-    const ciphertext = await encryptAES(cryptoKey, iv, paddedData);
+    const ciphertext = await encryptAES(cryptoKey, iv, data);
 
     const signedParts = new Uint8Array(iv.length + ciphertext.length);
     signedParts.set(iv, 0);
@@ -125,13 +123,15 @@ export class Token {
     const cryptoKey = await crypto.subtle.importKey(
       "raw",
       this.encryptionKey,
-      { name: this.algorithm },
+      { name: this.algorithm }, // Assuming this evaluates to "AES-CBC"
       false,
       ["decrypt"],
     );
 
-    const decryptedPadded = await decryptAES(cryptoKey, iv, ciphertext);
-    return pkcs7.unpad(decryptedPadded);
+    // crypto.subtle.decrypt automatically removes PKCS7 padding
+    const decryptedPlaintext = await decryptAES(cryptoKey, iv, ciphertext);
+
+    return new Uint8Array(decryptedPlaintext);
   }
 
   /**

@@ -335,9 +335,15 @@ export class Destination extends EventTarget {
       throw new Error("Destination hash not computed.");
     }
 
+    const activeTransport = transport || this.interfaceLayer.transport;
+    if (!activeTransport) {
+      throw new Error("No transport available to create link.");
+    }
+
     return new Promise((resolve, reject) => {
       /** @type {CryptoKey | undefined} */
       let local_x25519_priv;
+      let local_ephemeral_keypair;
       const timer = setTimeout(() => {
         this.removeEventListener("link_established", onLinkEstablished);
         this.removeEventListener("link_response", onLinkResponse);
@@ -362,8 +368,14 @@ export class Destination extends EventTarget {
             throw new Error("Expected LINKRESPONSE packet");
           }
 
-          const peer_x25519_pub_bytes = packet.payload.slice(0, 32);
-          const peer_ed25519_pub_bytes = packet.payload.slice(32, 64);
+          const linkId = packet.destinationHash;
+          const peer_x25519_pub_bytes = packet.payload.slice(64, 96);
+          const peer_ed25519_pub_bytes = packet.payload.slice(32, 64); // Wait, signature is 64 bytes.
+          // Let's re-examine responsePayload in respondToLinkRequest.
+          // responsePayload.set(signature, 0); // 64 bytes
+          // responsePayload.set(ephemeralPubBytes, 64); // 32 bytes
+          // Total 96 bytes.
+          // So peer_x25519_pub_bytes is at offset 64.
 
           const peer_x25519_pub = await crypto.subtle.importKey(
             "raw",
@@ -384,11 +396,14 @@ export class Destination extends EventTarget {
           );
 
           const link = new Link(
-            link_key,
-            this.destinationHash,
-            this.interfaceLayer.transport,
+            this,
+            linkId,
+            local_ephemeral_keypair,
+            peer_x25519_pub_bytes,
+            activeTransport,
           );
-          // this.interfaceLayer.transport.addLink(senderHash, link);
+          await link.deriveKeys();
+
           this.dispatchEvent(
             new CustomEvent("link_established", {
               detail: { link },
@@ -411,10 +426,12 @@ export class Destination extends EventTarget {
 
       (async () => {
         try {
-          const x25519 = await generateX25519KeyPair();
-          local_x25519_priv = x25519.privateKey;
+          local_ephemeral_keypair = await generateX25519KeyPair();
+          local_x25519_priv = local_ephemeral_keypair.privateKey;
           const ed25519 = await generateEd25519KeyPair();
-          const x25519PubBytes = await exportPublicKey(x25519.publicKey);
+          const x25519PubBytes = await exportPublicKey(
+            local_ephemeral_keypair.publicKey,
+          );
           const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
 
           const payload = new Uint8Array(64 + appData.length);
@@ -435,7 +452,7 @@ export class Destination extends EventTarget {
             payload: payload,
           });
 
-          await this.interfaceLayer.transport.sendPacket(packet);
+          await activeTransport.sendPacket(packet);
         } catch (e) {
           clearTimeout(timer);
           this.removeEventListener("link_established", onLinkEstablished);
@@ -583,7 +600,9 @@ export class Destination extends EventTarget {
       linkId,
       ephemeralKey,
       initiatorPubBytes,
+      this.interfaceLayer.transport,
     );
+    await link.deriveKeys();
 
     // Register the ephemeral link_id with the router so follow-up packets reach the Link instance
     // transport.localDestinations.set(toHex(linkId), link);

@@ -1,4 +1,6 @@
 // src/transport/link.js
+
+import { Packet } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
 import { Token } from "../crypto/token.js";
 
@@ -37,14 +39,87 @@ export class LinkEncryption {
 }
 
 export class Link extends EventTarget {
-  constructor(destination, linkId, ephemeralKeyPair, peerPubBytes) {
+  /**
+   * @param {any} destination
+   * @param {Uint8Array} linkId
+   * @param {import("../crypto/keys.js").KeyPair} ephemeralKeyPair
+   * @param {Uint8Array} peerPubBytes
+   * @param {import("../transport/transport.js").TransportCore|null} [transport=null]
+   */
+  constructor(
+    destination,
+    linkId,
+    ephemeralKeyPair,
+    peerPubBytes,
+    transport = null,
+  ) {
     super();
     this.destination = destination;
     this.linkId = linkId;
     this.ephemeralKeyPair = ephemeralKeyPair;
     this.peerPubBytes = peerPubBytes;
+    this.transport = transport;
     // Do NOT instantiate the Token here yet
     this.token = null;
+  }
+
+  /**
+   * Encrypts and sends a packet.
+   * @param {import("../core/packet.js").Packet} packet
+   */
+  async send(packet) {
+    if (!this.token) {
+      throw new Error("Link token not available. Did you call deriveKeys()?");
+    }
+    if (!this.transport) {
+      throw new Error("Link transport not available.");
+    }
+
+    const encryptedPayload = await this.token.encrypt(packet.payload);
+
+    const encryptedPacket = new Packet({
+      headerType: packet.headerType,
+      hops: packet.hops,
+      transportType: packet.transportType,
+      destinationType: packet.destinationType,
+      packetType: packet.packetType,
+      contextFlag: packet.contextFlag,
+      destinationHash: packet.destinationHash,
+      contextByte: packet.contextByte,
+      payload: encryptedPayload,
+      transportId: packet.transportId,
+    });
+
+    await this.transport.sendPacket(encryptedPacket);
+  }
+
+  /**
+   * Decrypts an incoming packet and dispatches the plaintext.
+   * @param {import("../core/packet.js").Packet} packet
+   */
+  async receive(packet) {
+    if (!this.token) {
+      throw new Error("Link token not available. Did you call deriveKeys()?");
+    }
+
+    const decryptedPayload = await this.token.decrypt(packet.payload);
+
+    const decryptedPacket = new Packet({
+      headerType: packet.headerType,
+      hops: packet.hops,
+      transportType: packet.transportType,
+      destinationType: packet.destinationType,
+      packetType: packet.packetType,
+      contextFlag: packet.contextFlag,
+      destinationHash: packet.destinationHash,
+      contextByte: packet.contextByte,
+      payload: decryptedPayload,
+      transportId: packet.transportId,
+    });
+
+    this.dispatchEvent(
+      new CustomEvent("data", { detail: { packet: decryptedPacket } }),
+    );
   }
 
   // Call this immediately after instantiation
