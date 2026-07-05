@@ -120,8 +120,8 @@ export class Identity extends EventTarget {
 
     // 2. Perform a hard copy of the bytes, completely detaching
     // them from the underlying TCP packet ArrayBuffer.
-    ed25519PubBytes.set(publicKey.subarray(0, 32), 0);
-    x25519PubBytes.set(publicKey.subarray(32, 64), 0);
+    x25519PubBytes.set(publicKey.subarray(0, 32), 0);
+    ed25519PubBytes.set(publicKey.subarray(32, 64), 0);
 
     const x25519Pub = await crypto.subtle.importKey(
       "raw",
@@ -433,19 +433,25 @@ export class Identity extends EventTarget {
   /**
    * Validates the signature of a signed message.
    * @param {Uint8Array} signature
-   * @param {Uint8Array} message
+   * @param {Uint8Array} messageId
    * @returns {Promise<boolean>}
    */
-  async validate(signature, message) {
+  async validate(signature, messageId) {
     if (!this.ed25519Pub)
       throw new Error(
         "Signature validation failed because identity does not hold a public key",
       );
+    const signatureView = new Uint8Array(
+      signature.buffer,
+      signature.byteOffset,
+      64,
+    );
+    const dataView = new Uint8Array(messageId.buffer, messageId.byteOffset, 32);
     return await crypto.subtle.verify(
       "Ed25519",
       this.ed25519Pub,
-      /** @type {any} */ (signature),
-      /** @type {any} */ (message),
+      /** @type {any} */ (signatureView),
+      /** @type {any} */ (dataView),
     );
   }
 }

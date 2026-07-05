@@ -160,6 +160,8 @@ export class TransportCore extends EventTarget {
     try {
       // The payload contains the full identity block at the start
       const identityBlock = packet.payload.slice(0, 64);
+      // const identityBlock = packet.payload.slice(32, 96); // Skipping the 32-byte header!
+
       // Log the first 32 bytes and the last 32 bytes
       // console.log("Bytes 0-32 (Ed25519?):", identityBlock.slice(0, 32));
       // console.log("Bytes 32-64 (X25519?):", identityBlock.slice(32, 64));

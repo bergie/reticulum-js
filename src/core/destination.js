@@ -254,10 +254,17 @@ export class Destination extends EventTarget {
    * @param {string} name
    * @param {DestinationType} type
    * @param {Identity|null} identity
+   * @param {import("../core/reticulum.js").Reticulum|null} interfaceLayer - An object that manages destinations and dispatches link requests.
    * @returns {Promise<Destination>}
    */
-  static async OUT(name, type, identity = null) {
-    return await Destination.create(name, Direction.OUT, type, identity);
+  static async OUT(name, type, identity = null, interfaceLayer = null) {
+    return await Destination.create(
+      name,
+      Direction.OUT,
+      type,
+      identity,
+      interfaceLayer,
+    );
   }
 
   /**
@@ -658,6 +665,9 @@ export class Destination extends EventTarget {
         const public_key = entry[2];
         const identity = await Identity.fromPublicKey(public_key);
         const identity_hash = await Identity.truncatedHash(identity.publicKey);
+        console.log(
+          `[DEBUG] Comparing ${bufToHex(target_hash)} vs calculated ${bufToHex(identity_hash)}`,
+        );
 
         if (bufToHex(target_hash) === bufToHex(identity_hash)) {
           identity.appData = entry[3];

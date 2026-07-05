@@ -1,7 +1,7 @@
 // src/core/reticulum.js
 import { TransportCore } from "../transport/transport.js";
-import { Packet, HeaderType, DestType, PacketType } from "./packet.js";
 import { toHex } from "../utils/encoding.js";
+import { DestType, HeaderType, Packet, PacketType } from "./packet.js";
 
 /**
  * The primary entry point and orchestrator for the Reticulum Network System.

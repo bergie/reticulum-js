@@ -4,8 +4,8 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, Packet } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
-import { toHex } from "../utils/encoding.js";
 import { Token } from "../crypto/token.js";
+import { toHex } from "../utils/encoding.js";
 
 /**
  * Handles the cryptographic derivation of link keys.
@@ -147,7 +147,9 @@ export class Link extends EventTarget {
     switch (decryptedPacket.contextByte) {
       case 0x00: // Packet.NONE (Standard Data)
         this.dispatchEvent(
-          new CustomEvent("data", { detail: { packet: decryptedPacket, link: this.linkId, } }),
+          new CustomEvent("data", {
+            detail: { packet: decryptedPacket, link: this.linkId },
+          }),
         );
         break;
       case 0x01: // Packet.RESOURCE
@@ -174,7 +176,9 @@ export class Link extends EventTarget {
         console.log("IDENTIFY");
         const peerPublicKey = decryptedPacket.payload; // 64 bytes
         const peerIdentity = await Identity.fromPublicKey(peerPublicKey);
-        const identityHash = await Identity.truncatedHash(peerIdentity.publicKey);
+        const identityHash = await Identity.truncatedHash(
+          peerIdentity.publicKey,
+        );
         const packetHash = await Identity.truncatedHash(packet.raw);
 
         // ONLY store by Identity Hash. Do not store by senderDestHash here.
@@ -182,12 +186,14 @@ export class Link extends EventTarget {
 
         console.log(`[DEBUG] Caching Identity Hash: ${toHex(identityHash)}`);
 
-        this.dispatchEvent(new CustomEvent("identify", {
-          detail: {
-            identity: peerIdentity,
-            link: this.linkId,
-          }
-        }));
+        this.dispatchEvent(
+          new CustomEvent("identify", {
+            detail: {
+              identity: peerIdentity,
+              link: this.linkId,
+            },
+          }),
+        );
         break;
       }
       default:
