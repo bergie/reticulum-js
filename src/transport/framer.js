@@ -140,7 +140,11 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
 
 				try {
 					const unescaped = hdlcUnescape(frameData);
-					const packet = packetClass.deserialize(unescaped, ifacSize);
+					let dataToDeserialize = unescaped;
+					if (ifacSize > 0) {
+						dataToDeserialize = unescaped.slice(2 + ifacSize);
+					}
+					const packet = packetClass.deserialize(dataToDeserialize);
 					controller.enqueue(packet);
 				} catch (e) {
 					console.error("Failed to process HDLC frame:", e);

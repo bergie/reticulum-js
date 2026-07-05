@@ -7,16 +7,6 @@ import { toHex } from "../utils/encoding.js";
 import { RoutingTable } from "./router.js";
 
 /**
- * @param {Uint8Array} buf
- * @returns {string}
- */
-function bufToHex(buf) {
-	return Array.from(buf)
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
-}
-
-/**
  * The central network router for the Reticulum node.
  * Routes packets emitted by Interfaces.
  */
@@ -53,7 +43,7 @@ export class TransportCore extends EventTarget {
 		// 3. Handle graceful teardown
 		iface.addEventListener("closed", () => this.removeInterface(iface));
 		iface.addEventListener("error", (e) =>
-			console.error(`[!] Interface ${iface.name} error:`, e.detail),
+			console.error(`[!] Interface ${iface.name} error:`, e.message),
 		);
 
 		console.log(`[+] Transport bound to interface: ${iface.name}`);
@@ -77,7 +67,7 @@ export class TransportCore extends EventTarget {
 	 * @param {import("./link.js").Link} link
 	 */
 	addLink(destinationHash, link) {
-		const hex = bufToHex(destinationHash);
+		const hex = toHex(destinationHash);
 		console.log(`Registering link ${hex}`);
 		this.activeLinks.set(hex, link);
 	}
@@ -86,11 +76,14 @@ export class TransportCore extends EventTarget {
 	 * @param {Uint8Array} destinationHash
 	 */
 	removeLink(destinationHash) {
-		const hex = bufToHex(destinationHash);
+		const hex = toHex(destinationHash);
 		this.activeLinks.delete(hex);
 		console.log(`[-] Link closed for ${hex}`);
 	}
 
+	/**
+	 * @param {import("../core/destination.js").Destination} destination
+	 */
 	bindLocalDestination(destination) {
 		const destHex = toHex(destination.destinationHash);
 		console.log(`[ROUTER] Binding local destination: ${destHex}`);
@@ -143,7 +136,9 @@ export class TransportCore extends EventTarget {
 		// If you are acting as a router/node, you'd forward it.
 		// But since you are a bot, JUST DROP IT.
 		console.log(`[ROUTER] Packet for ${destHex} is not for us. Dropping.`);
-		console.log(`[ROUTER] Registered local destinations: ${Array.from(this.localDestinations.keys()).join(", ")}`);
+		console.log(
+			`[ROUTER] Registered local destinations: ${Array.from(this.localDestinations.keys()).join(", ")}`,
+		);
 	}
 
 	/**
@@ -190,6 +185,10 @@ export class TransportCore extends EventTarget {
 		}
 	}
 
+	/**
+	 * @param {import("../core/packet.js").Packet} packet
+	 * @param {import("../interfaces/base.js").Interface|null} sourceInterface
+	 */
 	broadcast(packet, sourceInterface = null) {
 		for (const iface of this.interfaces) {
 			if (iface === sourceInterface || !iface._packetWriter) continue;
@@ -201,6 +200,9 @@ export class TransportCore extends EventTarget {
 		}
 	}
 
+	/**
+	 * @param {import("../core/packet.js").Packet} packet
+	 */
 	async sendPacket(packet) {
 		const destHex = Buffer.from(packet.destinationHash).toString("hex");
 		const nextHopInterface =

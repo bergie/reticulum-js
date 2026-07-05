@@ -17,6 +17,8 @@ test("LXMRouter", async (t) => {
 
 	const router = new LXMRouter(identity, interfaceLayer);
 
+	await router.init();
+
 	await new Promise((resolve) => setTimeout(resolve, 50));
 
 	await t.test("initialization", () => {

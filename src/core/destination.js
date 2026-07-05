@@ -207,10 +207,7 @@ export class Destination extends EventTarget {
 			combined.set(this.nameHash, 0);
 			combined.set(this.identity.identityHash, this.nameHash.length);
 
-			const destHashBuffer = await crypto.subtle.digest(
-				"SHA-256",
-				combined,
-			);
+			const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else if (this.type === DestinationType.GROUP && this.identity) {
 			// Same as SINGLE for GROUP
@@ -220,10 +217,7 @@ export class Destination extends EventTarget {
 			combined.set(this.nameHash, 0);
 			combined.set(this.identity.identityHash, this.nameHash.length);
 
-			const destHashBuffer = await crypto.subtle.digest(
-				"SHA-256",
-				combined,
-			);
+			const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else if (this.type === DestinationType.PLAIN) {
 			// destHash = SHA256(nameHash)[:16]
@@ -481,15 +475,10 @@ export class Destination extends EventTarget {
 	/**
 	 * @param {import('./packet.js').Packet} packet
 	 * @param {import('../interfaces/base.js').Interface} transport
+	 * @param {Uint8Array} appData
 	 */
 	async acceptLink(packet, transport, appData = new Uint8Array(0)) {
-		const senderHash = packet.sourceHash;
-		return await this.respondToLinkRequest(
-			transport,
-			packet,
-			senderHash,
-			appData,
-		);
+		return await this.respondToLinkRequest(transport, packet, null, appData);
 	}
 
 	/**
@@ -580,7 +569,6 @@ export class Destination extends EventTarget {
 			contextFlag: true,
 			contextByte: 0xff, // MUST be LRPROOF context
 			destinationHash: linkId, // MUST be addressed to the link_id
-			sourceHash: await Identity.truncatedHash(this.identity.publicKey),
 			payload: responsePayload,
 		});
 
@@ -607,81 +595,6 @@ export class Destination extends EventTarget {
 
 		return link;
 	}
-
-	/**
-	 * Responds to a link request.
-	 * @param {import('../transport/transport.js').Transport} transport
-	 * @param {import('../core/packet.js').Packet} requestPacket
-	 * @param {Uint8Array} senderHash - The destination hash of the requester.
-	 * @param {Uint8Array} appData
-	 * @returns {Promise<import('../transport/link.js').Link>}
-	async respondToLinkRequest(
-		transport,
-		requestPacket,
-		senderHash,
-		appData = new Uint8Array(0),
-	) {
-		const peer_x25519_pub_bytes = requestPacket.payload.slice(0, 32);
-		const peer_ed25519_pub_bytes = requestPacket.payload.slice(32, 64);
-
-		const x25519 = await generateX25519KeyPair();
-		const ed25519 = await generateEd25519KeyPair();
-		const x25519PubBytes = await exportPublicKey(x25519.publicKey);
-		const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
-
-		const peer_x25519_pub = await crypto.subtle.importKey(
-			"raw",
-			peer_x25519_pub_bytes,
-			{ name: "X25519" },
-			true,
-			[],
-		);
-
-		const link_key = await LinkEncryption.deriveLinkKey(
-			x25519.privateKey,
-			peer_x25519_pub,
-			this.getSalt(),
-		);
-
-		const responsePayload = new Uint8Array(64);
-		responsePayload.set(x25519PubBytes, 0);
-		responsePayload.set(ed25519PubBytes, 32);
-
-		const responsePacket = new Packet({
-			headerType: HeaderType.HEADER_1,
-			hops: 1,
-			transportType: 0,
-			destinationType: this.type,
-			packetType: PacketType.LINKRESPONSE,
-			contextFlag: false,
-			destinationHash: senderHash,
-			sourceHash: await Identity.truncatedHash(this.identity.publicKey),
-			contextByte: 0,
-			payload: responsePayload,
-		});
-
-		console.log(`[DEBUG] Responding to ${bufToHex(senderHash)}`);
-		console.log(
-			`[DEBUG] Our Response Hash: ${bufToHex(responsePacket.destinationHash)}`,
-		);
-
-    await this.interfaceLayer.transport.sendPacket(responsePacket);
-
-		const linkHash = await Identity.truncatedHash(link_key);
-		const link = new Link(link_key, senderHash, this.interfaceLayer.transport);
-		// CRITICAL: The daemon is sending future packets to the Link's ephemeral hash,
-		// not your original 'lxmf.delivery' hash.
-		// You need to map the Link's ephemeral hash to the Link instance.
-		this.interfaceLayer.transport.addLink(linkHash, link);
-		this.dispatchEvent(
-			new CustomEvent("link_established", {
-				detail: { link },
-			}),
-		);
-
-		return link;
-	}
-   */
 
 	/**
 	 * Remember a destination.
