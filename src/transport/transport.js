@@ -161,8 +161,8 @@ export class TransportCore extends EventTarget {
       // The payload contains the full identity block at the start
       const identityBlock = packet.payload.slice(0, 64);
       // Log the first 32 bytes and the last 32 bytes
-      console.log("Bytes 0-32 (Ed25519?):", identityBlock.slice(0, 32));
-      console.log("Bytes 32-64 (X25519?):", identityBlock.slice(32, 64));
+      // console.log("Bytes 0-32 (Ed25519?):", identityBlock.slice(0, 32));
+      // console.log("Bytes 32-64 (X25519?):", identityBlock.slice(32, 64));
       const appData = packet.payload.slice(64);
 
       // For ANNOUNCE, the sender hash is actually the hash of the public key

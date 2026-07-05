@@ -33,7 +33,6 @@ export class LXMRouter extends EventTarget {
       this.identity,
       this.rns,
     );
-    console.log(this.deliveryDest);
 
     // Bind it to the central routing table
     this.rns.transport.bindLocalDestination(this.deliveryDest);
@@ -88,7 +87,6 @@ export class LXMRouter extends EventTarget {
    * @private
    */
   async _processIncomingMessage(wireData) {
-    console.log(wireData);
     if (wireData.length < 96) {
       throw new Error("LXMF message too short to contain required headers");
     }
