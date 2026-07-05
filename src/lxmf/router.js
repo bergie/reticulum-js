@@ -27,20 +27,21 @@ export class LXMRouter extends EventTarget {
   async init() {
     // Register the standard LXMF delivery destination.
     // Assumes Destination.IN was updated to accept the rnsCore as the 4th/5th parameter
-    this.deliveryDest = await Destination.IN(
+    const deliveryDest = await Destination.IN(
       "lxmf.delivery",
       DestinationType.SINGLE,
       this.identity,
       this.rns,
     );
+    this.deliveryDest = deliveryDest;
 
     // Bind it to the central routing table
-    this.rns.transport.bindLocalDestination(this.deliveryDest);
+    this.rns.transport.bindLocalDestination(deliveryDest);
 
     this._setupListeners();
 
     this.dispatchEvent(
-      new CustomEvent("ready", { detail: { destination: this.deliveryDest } }),
+      new CustomEvent("ready", { detail: { destination: deliveryDest } }),
     );
   }
 
@@ -50,8 +51,8 @@ export class LXMRouter extends EventTarget {
    */
   _setupListeners() {
     // 1. Listen for standard Single-Packet LXMF Messages
-    this.deliveryDest.addEventListener("data", async (event) => {
-      const { plaintext } = event.detail;
+    /** @type {any} */ (this.deliveryDest).addEventListener("data", async (event) => {
+      const { plaintext } = /** @type {any} */ (event).detail;
       try {
         await this._processIncomingMessage(plaintext);
       } catch (e) {
@@ -60,19 +61,19 @@ export class LXMRouter extends EventTarget {
     });
 
     // 2. Listen for Large LXMF Messages arriving via Links
-    this.deliveryDest.addEventListener("link_request", async (event) => {
+    /** @type {any} */ (this.deliveryDest).addEventListener("link_request", async (event) => {
       console.log("[*] Incoming LXMF Link Request");
 
       try {
         // Use the clean callback we built into Destination.js
-        const link = await this.deliveryDest.acceptLink(
-          event.detail.packet,
-          event.detail.transport,
+        const link = await /** @type {any} */ (this.deliveryDest).acceptLink(
+          /** @type {any} */ (event).detail.packet,
+          /** @type {any} */ (event).detail.transport,
         );
 
         // Listen for data streaming over the established link
         link.addEventListener("data", async (pktEvent) => {
-          await this._processIncomingMessage(pktEvent.detail.packet.raw);
+          await this._processIncomingMessage(/** @type {any} */ (pktEvent).detail.packet.raw);
         });
       } catch (e) {
         console.error("[!] Failed to respond to LXMF link request:", e);
@@ -106,7 +107,7 @@ export class LXMRouter extends EventTarget {
       "SHA-256",
       idBuffer,
     );
-    const messageId = new Uint8Array(messageIdBuffer).subarray(0, 16);
+    const messageId = new Uint8Array(messageIdBuffer);
 
     // 3. CRYPTO FIX: Validate signature against the SENDER'S public key, not ours!
     const senderIdentity = await Destination.recall(sourceHash);
@@ -119,7 +120,11 @@ export class LXMRouter extends EventTarget {
       );
     }
 
-    const isValid = await senderIdentity.validate(signature, messageId);
+    const signedPart = new Uint8Array(idBuffer.length + messageId.length);
+    signedPart.set(idBuffer, 0);
+    signedPart.set(messageId, idBuffer.length);
+
+    const isValid = await senderIdentity.validate(signature, signedPart);
 
     if (!isValid) {
       throw new Error(
@@ -136,18 +141,18 @@ export class LXMRouter extends EventTarget {
       );
     }
 
-    const [timestamp, contentBytes, titleBytes, fields] = decodedPayload;
+    const [timestamp, titleBytes, contentBytes, fields] = decodedPayload;
 
     // MessagePack often yields raw Uint8Arrays for strings in LXMF, decode them:
-    const content =
-      contentBytes instanceof Uint8Array
-        ? new TextDecoder().decode(contentBytes)
-        : contentBytes;
-
     const title =
       titleBytes instanceof Uint8Array
         ? new TextDecoder().decode(titleBytes)
         : titleBytes;
+
+    const content =
+      contentBytes instanceof Uint8Array
+        ? new TextDecoder().decode(contentBytes)
+        : contentBytes;
 
     // 5. Dispatch to the UI layer
     this.dispatchEvent(
