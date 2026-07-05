@@ -4,7 +4,9 @@
  */
 
 import { Destination, DestinationType } from "../core/destination.js";
+import { Identity } from "../core/identity.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import { toHex } from "../utils/encoding.js";
 
 /**
  * Handles LXMF routing and message processing.
@@ -19,6 +21,7 @@ export class LXMRouter extends EventTarget {
     this.identity = identity;
     this.rns = rnsCore;
     this.deliveryDest = null;
+    this.pendingMessages = new Map();
   }
 
   /**
@@ -56,7 +59,7 @@ export class LXMRouter extends EventTarget {
       async (event) => {
         const { plaintext } = /** @type {any} */ (event).detail;
         try {
-          await this._processIncomingMessage(plaintext);
+          await this._processIncomingMessage(plaintext, null);
         } catch (e) {
           console.error("[!] Failed to process single-packet LXMF message:", e);
         }
@@ -80,10 +83,44 @@ export class LXMRouter extends EventTarget {
           link.addEventListener("data", async (pktEvent) => {
             await this._processIncomingMessage(
               /** @type {any} */ (pktEvent).detail.packet.payload,
+              pktEvent.detail.link,
             );
           });
         } catch (e) {
           console.error("[!] Failed to respond to LXMF link request:", e);
+        }
+      },
+    );
+
+    // 2. Listen for IDENTIFY packets so we can process any pending
+    /** @type {any} */ (this.deliveryDest).addEventListener(
+      "identify",
+      async (event) => {
+        try {
+          // 1. Proactively create an OUT destination representing the sender's LXMF inbox
+          // (Adjust the parameters if your Destination.OUT signature differs slightly)
+          const peerDeliveryDest = await Destination.OUT(
+            "lxmf.delivery",
+            DestinationType.SINGLE,
+            peerIdentity,
+            this.rns
+          );
+
+          const lxmfHash = peerDeliveryDest.hash;
+          const lxmfHex = toHex(lxmfHash);
+
+          console.log(`[ROUTER] Derived LXMF Destination ${lxmfHex} from Link Identity.`);
+
+          // 2. Force this LXMF Destination into the known destinations cache!
+          // We use the Identity hash as a pseudo 'packetHash' for the cache entry.
+          const identityHash = await Identity.truncatedHash(peerIdentity.publicKey);
+          await Destination.remember(identityHash, lxmfHash, peerIdentity.publicKey);
+
+          // 3. Now, tell the router to process messages parked for the LXMF Destination Hash!
+          this.processPendingMessages(lxmfHash);
+
+        } catch (e) {
+          console.error("[ROUTER] Failed to derive LXMF destination for peer:", e);
         }
       },
     );
@@ -92,9 +129,10 @@ export class LXMRouter extends EventTarget {
   /**
    * Processes a raw LXMF message wire buffer.
    * @param {Uint8Array} wireData
+   * @param {Uint8Array|null} linkId
    * @private
    */
-  async _processIncomingMessage(wireData) {
+  async _processIncomingMessage(wireData, linkId) {
     if (wireData.length < 96) {
       throw new Error("LXMF message too short to contain required headers");
     }
@@ -102,45 +140,52 @@ export class LXMRouter extends EventTarget {
     // 1. Slice the wireData into Hash, Hash, Sig, and Payload views
     const destinationHash = wireData.slice(0, 16);
     const sourceHash = wireData.slice(16, 32);
+    const sourceHex = toHex(sourceHash);
     const signature = wireData.slice(32, 96);
     const payload = wireData.slice(96);
 
-    // 2. Reconstruct the Message ID
+    console.log(`[DEBUG] Looking for key: ${toHex(sourceHash)}`);
+    console.log(`[DEBUG] Pending keys: ${[...this.pendingMessages.keys()].join(', ')}`);
+    console.log(`[DEBUG] Known keys: ${[...Destination.knownDestinations.keys()].join(', ')}`);
+
+    // 3. Validate signature against the SENDER'S public key
+    const senderIdentity = await Destination.recall(sourceHash);
+
+    if (!senderIdentity) {
+      console.log(`[ROUTER] Identity unknown for ${sourceHex}. Requesting...`);
+      console.log(`[ROUTER] Destination ${toHex(destinationHash)}`);
+
+      // Broadcast an Identity Request over the network
+      await this.rns.requestIdentity(sourceHash);
+
+      // Park the message for a limited time (e.g., 5 seconds)
+      this.pendingMessages.set(sourceHex, wireData);
+
+      return;
+    }
+
+    // If we reach here, we have the identity, clear any pending message
+    this.pendingMessages.delete(sourceHex);
+
+    // Reconstruct the idBuffer (Destination + Source + Payload)
     const idBuffer = new Uint8Array(32 + payload.length);
     idBuffer.set(destinationHash, 0);
     idBuffer.set(sourceHash, 16);
     idBuffer.set(payload, 32);
 
-    const messageIdBuffer = await globalThis.crypto.subtle.digest(
-      "SHA-256",
-      idBuffer,
-    );
+    // Calculate the Message ID (SHA-256 of the idBuffer)
+    const messageIdBuffer = await crypto.subtle.digest("SHA-256", idBuffer);
     const messageId = new Uint8Array(messageIdBuffer);
 
-    // 3. CRYPTO FIX: Validate signature against the SENDER'S public key, not ours!
-    const senderIdentity = await Destination.recall(sourceHash);
-
-    if (!senderIdentity) {
-      // In a full implementation, you might queue an Identity Request here.
-      // For now, we drop it because we can't mathematically prove who sent it.
-      throw new Error(
-        "Cannot verify message: Sender identity unknown (No Announce received).",
-      );
-    }
-
-    const signedPart = new Uint8Array(idBuffer.length + messageId.length);
-    signedPart.set(idBuffer, 0);
-    signedPart.set(messageId, idBuffer.length);
-
-    const isValid = await senderIdentity.validate(signature, signedPart);
+    // CRITICAL FIX: The sender ONLY signed the 32-byte Message ID.
+    // Do not concatenate anything else!
+    const isValid = await senderIdentity.validate(signature, messageId);
 
     if (!isValid) {
-      throw new Error(
-        "Invalid LXMF message signature: Cryptographic proof failed.",
-      );
+      throw new Error("Invalid LXMF message signature: Cryptographic proof failed.");
     }
 
-    // 4. Decode the MessagePack payload
+    // Decode the MessagePack payload
     const decodedPayload = MicroMsgPack.decode(payload);
 
     if (!Array.isArray(decodedPayload) || decodedPayload.length < 4) {
@@ -154,13 +199,13 @@ export class LXMRouter extends EventTarget {
     // MessagePack often yields raw Uint8Arrays for strings in LXMF, decode them:
     const title =
       titleBytes instanceof Uint8Array
-        ? new TextDecoder().decode(titleBytes)
-        : titleBytes;
+      ? new TextDecoder().decode(titleBytes)
+      : titleBytes;
 
     const content =
       contentBytes instanceof Uint8Array
-        ? new TextDecoder().decode(contentBytes)
-        : contentBytes;
+      ? new TextDecoder().decode(contentBytes)
+      : contentBytes;
 
     // 5. Dispatch to the UI layer
     this.dispatchEvent(
@@ -174,5 +219,19 @@ export class LXMRouter extends EventTarget {
         },
       }),
     );
+  }
+
+  /**
+   * Call this when a new Identity is cached (e.g., in your IDENTIFY handler).
+   * It checks if any parked messages are now ready for processing.
+   * @param {Uint8Array} linkId
+   */
+  async processPendingMessages(linkId) {
+    const hashHex = toHex(linkId);
+    if (this.pendingMessages.has(hashHex)) {
+      console.log(`[ROUTER] Identity acquired. Re-processing parked message for ${hashHex}`);
+      const wireData = this.pendingMessages.get(hashHex);
+      await this._processIncomingMessage(wireData, linkId);
+    }
   }
 }

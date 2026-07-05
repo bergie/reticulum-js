@@ -114,32 +114,43 @@ export class Identity extends EventTarget {
    * @returns {Promise<Identity>}
    */
   static async fromPublicKey(publicKey) {
-    const x25519PubBytes = publicKey.slice(0, 32);
-    const ed25519PubBytes = publicKey.slice(32, 64);
+    // 1. Allocate pristine, strictly 32-byte buffers in memory
+    const ed25519PubBytes = new Uint8Array(32);
+    const x25519PubBytes = new Uint8Array(32);
+
+    // 2. Perform a hard copy of the bytes, completely detaching
+    // them from the underlying TCP packet ArrayBuffer.
+    ed25519PubBytes.set(publicKey.subarray(0, 32), 0);
+    x25519PubBytes.set(publicKey.subarray(32, 64), 0);
 
     const x25519Pub = await crypto.subtle.importKey(
       "raw",
-      /** @type {any} */ (x25519PubBytes),
+      x25519PubBytes,
       { name: "X25519" },
       true,
       [],
     );
+
     const ed25519Pub = await crypto.subtle.importKey(
       "raw",
-      /** @type {any} */ (ed25519PubBytes),
+      ed25519PubBytes,
       { name: "Ed25519" },
       true,
-      [],
+      ["verify"],
     );
 
-    const identityHash = await Identity.truncatedHash(publicKey);
+    // Re-slice safely for the identity hash
+    const cleanPublicKey = new Uint8Array(64);
+    cleanPublicKey.set(publicKey.subarray(0, 64), 0);
+
+    const identityHash = await Identity.truncatedHash(cleanPublicKey);
 
     return new Identity(
       null,
       null,
       x25519Pub,
       ed25519Pub,
-      publicKey,
+      cleanPublicKey,
       identityHash,
     );
   }

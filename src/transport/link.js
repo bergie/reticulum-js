@@ -4,6 +4,7 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, Packet } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
+import { toHex } from "../utils/encoding.js";
 import { Token } from "../crypto/token.js";
 
 /**
@@ -63,6 +64,8 @@ export class Link extends EventTarget {
     this.transport = transport;
     // Do NOT instantiate the Token here yet
     this.token = null;
+    // Ensure received packets are processed in order
+    this._rxQueue = Promise.resolve();
   }
 
   /**
@@ -99,7 +102,27 @@ export class Link extends EventTarget {
    * Decrypts an incoming packet and dispatches the plaintext.
    * @param {import("../core/packet.js").Packet} packet
    */
+  /**
+   * Queues an incoming packet for strict sequential processing.
+   * @param {import("../core/packet.js").Packet} packet
+   */
   async receive(packet) {
+    // Chain the new packet onto the queue. It will not execute until
+    // all previous packets have completely finished their async tasks.
+    this._rxQueue = this._rxQueue
+      .then(() => this._processPacket(packet))
+      .catch((err) => {
+        console.error("[LINK] Error processing packet in queue:", err);
+      });
+
+    await this._rxQueue;
+  }
+
+  /**
+   * The actual decryption and multiplexing logic (your previous receive method).
+   * @private
+   */
+  async _processPacket(packet) {
     if (!this.token) {
       throw new Error("Link token not available. Did you call deriveKeys()?");
     }
@@ -124,7 +147,7 @@ export class Link extends EventTarget {
     switch (decryptedPacket.contextByte) {
       case 0x00: // Packet.NONE (Standard Data)
         this.dispatchEvent(
-          new CustomEvent("data", { detail: { packet: decryptedPacket } }),
+          new CustomEvent("data", { detail: { packet: decryptedPacket, link: this.linkId, } }),
         );
         break;
       case 0x01: // Packet.RESOURCE
@@ -148,40 +171,23 @@ export class Link extends EventTarget {
         );
         break;
       case ContextType.IDENTIFY: {
-        console.log(
-          `[LINK] Received IDENTIFY packet. Caching peer identity...`,
-        );
+        console.log("IDENTIFY");
+        const peerPublicKey = decryptedPacket.payload; // 64 bytes
+        const peerIdentity = await Identity.fromPublicKey(peerPublicKey);
+        const identityHash = await Identity.truncatedHash(peerIdentity.publicKey);
+        const packetHash = await Identity.truncatedHash(packet.raw);
 
-        // The decrypted payload contains the 64-byte public key
-        const peerPublicKey = decryptedPacket.payload;
+        // ONLY store by Identity Hash. Do not store by senderDestHash here.
+        await Destination.remember(packetHash, identityHash, peerPublicKey);
 
-        try {
-          // 1. Reconstruct the Identity from the raw public key bytes
-          const peerIdentity = await Identity.fromPublicKey(peerPublicKey);
+        console.log(`[DEBUG] Caching Identity Hash: ${toHex(identityHash)}`);
 
-          // 2. Calculate the Identity Hash (this is what LXMF will use as the sourceHash)
-          const identityHash = await Identity.truncatedHash(
-            peerIdentity.publicKey,
-          );
-
-          // 3. We need a packet hash for the remember() signature.
-          // If your packet object doesn't have its wire hash attached yet, we can
-          // provide a fallback. In the Python reference, this is primarily used
-          // to prevent replay attacks on public Announces, so a zeroed array
-          // or a hash of the decrypted payload is fine for Link Identity caching.
-          const packetHash = await Identity.truncatedHash(packet.raw);
-
-          // 4. Cache it in your local known destinations!
-          await Destination.remember(packetHash, identityHash, peerPublicKey);
-
-          this.dispatchEvent(
-            new CustomEvent("identify", {
-              detail: { identity: peerIdentity },
-            }),
-          );
-        } catch (err) {
-          console.error("[LINK] Failed to process peer identity:", err);
-        }
+        this.dispatchEvent(new CustomEvent("identify", {
+          detail: {
+            identity: peerIdentity,
+            link: this.linkId,
+          }
+        }));
         break;
       }
       default:
