@@ -67,10 +67,8 @@ export class Packet {
 	 * @param {number} options.packetType
 	 * @param {boolean} options.contextFlag
 	 * @param {Uint8Array} options.destinationHash
-	 * @param {Uint8Array} [options.sourceHash]
 	 * @param {number} options.contextByte
 	 * @param {Uint8Array} options.payload
-	 * @param {Uint8Array} [options.ifac]
 	 * @param {Uint8Array} [options.transportId]
 	 * @param {Uint8Array} [options.raw]
 	 */
@@ -82,119 +80,100 @@ export class Packet {
 		this.packetType = options.packetType || PacketType.DATA;
 		this.contextFlag = options.contextFlag || false;
 		this.destinationHash = options.destinationHash;
-		this.sourceHash = options.sourceHash || new Uint8Array(16);
 		this.contextByte = options.contextByte || 0x00;
 		this.payload = options.payload || new Uint8Array(0);
-		this.ifac = options.ifac;
 		this.transportId = options.transportId;
 		this.raw = options.raw || new Uint8Array(0);
 	}
 
 	_buildFlagsByte() {
 		let flags = 0x00;
-		if (this.ifac) flags |= 0x80;
+		// Removed: IFAC flag (0x80) is handled at the interface layer, not here.
 		if (this.headerType === HeaderType.HEADER_2) flags |= 0x40;
 		if (this.contextFlag) flags |= 0x20;
 		if (this.transportType === 1) flags |= 0x10;
-		// Fix: Mask to 2 bits (0x03) before shifting
 		flags |= (this.destinationType & 0x03) << 2;
-		// Fix: Mask to 2 bits (0x03) so it doesn't overwrite destinationType
 		flags |= this.packetType & 0x03;
 		return flags;
 	}
 
 	serialize() {
 		const flags = this._buildFlagsByte();
+		const DST_LEN = 16; // Standard Reticulum truncated hash length
 
-		// Calculate total length conditionally
-		let length = 2; // flags + hops
-		if (this.ifac) length += this.ifac.length;
-		if (this.headerType === HeaderType.HEADER_2) length += 16;
-		length += 16; // destination_hash
-		length += 16; // source_hash
+		// 1. Calculate precise byte length
+		let length = 2; // flags (1) + hops (1)
 
-		// Fix: Only add length for contextByte if flag is TRUE
-		if (this.contextFlag) length += 1;
+		if (this.headerType === HeaderType.HEADER_2) {
+			length += DST_LEN; // transportId
+		}
+		length += DST_LEN; // destinationHash
 
-		length += this.payload.length;
+		length += 1; // contextByte (Always 1 byte, mirroring Python's unconditional append)
 
+		length += this.payload.length; // ciphertext / data
+
+		// 2. Allocate Buffer
 		const buffer = new ArrayBuffer(length);
 		const uint8 = new Uint8Array(buffer);
 
+		// 3. Write Header
 		uint8[0] = flags;
 		uint8[1] = this.hops & 0xff;
 
 		let offset = 2;
-		if (this.ifac) {
-			uint8.set(this.ifac, offset);
-			offset += this.ifac.length;
-		}
 
-		if (this.headerType === HeaderType.HEADER_2 && this.transportId) {
+		if (this.headerType === HeaderType.HEADER_2) {
+			if (!this.transportId)
+				throw new Error("Header type 2 requires a transportId");
 			uint8.set(this.transportId, offset);
-			offset += 16;
+			offset += DST_LEN;
 		}
 
 		uint8.set(this.destinationHash, offset);
-		offset += 16;
+		offset += DST_LEN;
 
-		uint8.set(this.sourceHash, offset);
-		offset += 16;
+		// 4. Write Context (Unconditional)
+		uint8[offset] = this.contextByte || 0x00;
+		offset += 1;
 
-		// Fix: Only write the contextByte if flag is TRUE
-		if (this.contextFlag) {
-			uint8[offset] = this.contextByte;
-			offset += 1;
-		}
-
+		// 5. Write Payload
 		uint8.set(this.payload, offset);
 
 		return uint8;
 	}
 
-	static deserialize(data, ifacSize = 0) {
-		if (data.length < 3) throw new Error("Packet too short");
+	static deserialize(data) {
+		const DST_LEN = 16; // Standard Reticulum truncated hash length (128 bits)
+
+		// Minimum packet length: flags(1) + hops(1) + destHash(16) + context(1) = 19 bytes
+		if (data.length < 19) throw new Error("Packet too short");
 
 		const flags = data[0];
-		console.log(
-			`[FORENSICS] Flags Binary: ${flags.toString(2).padStart(8, "0")}`,
-		);
-		const ifacFlag = (flags & 0x80) !== 0;
-		const headerType =
-			(flags & 0x40) !== 0 ? HeaderType.HEADER_2 : HeaderType.HEADER_1;
+		const hops = data[1];
+
+		// Bitwise extraction matching Python logic
+		const isHeader2 = (flags & 0x40) !== 0;
+		const headerType = isHeader2 ? HeaderType.HEADER_2 : HeaderType.HEADER_1;
 		const contextFlag = (flags & 0x20) !== 0;
 		const transportType = (flags & 0x10) !== 0 ? 1 : 0;
 		const destinationType = (flags & 0x0c) >> 2;
-		// Fix: Mask to 2 bits
 		const packetType = flags & 0x03;
 
-		const hops = data[1];
-
 		let offset = 2;
-		let ifac;
-		if (ifacFlag) {
-			ifac = data.slice(offset, offset + ifacSize);
-			offset += ifacSize;
-		}
 
 		let transportId = null;
-		if (headerType === HeaderType.HEADER_2) {
-			transportId = data.slice(offset, offset + 16);
-			offset += 16;
+		if (isHeader2) {
+			transportId = data.slice(offset, offset + DST_LEN);
+			offset += DST_LEN;
 		}
 
-		const destinationHash = data.slice(offset, offset + 16);
-		offset += 16;
+		const destinationHash = data.slice(offset, offset + DST_LEN);
+		offset += DST_LEN;
 
-		const sourceHash = data.slice(offset, offset + 16);
-		offset += 16;
-
-		// Fix: Only extract contextByte if flag is TRUE
-		let contextByte = 0x00;
-		if (contextFlag) {
-			contextByte = data[offset];
-			offset += 1;
-		}
+		// The context byte is extracted unconditionally, mirroring Python's fixed slicing
+		const contextByte = data[offset];
+		offset += 1;
 
 		const payload = data.slice(offset);
 
@@ -206,10 +185,8 @@ export class Packet {
 			packetType,
 			contextFlag,
 			destinationHash,
-			sourceHash,
 			contextByte,
 			payload,
-			ifac: ifac,
 			transportId: transportId ?? undefined,
 		});
 	}

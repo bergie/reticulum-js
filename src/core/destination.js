@@ -72,7 +72,7 @@ export class Destination extends EventTarget {
 	 * @param {Direction} direction - The direction of this destination.
 	 * @param {DestinationType} type - The type of this destination.
 	 * @param {Identity|null} identity - The identity associated with this destination.
-	 * @param {import("../core/reticulum.js").Reticulum} interfaceLayer - An object that manages destinations and dispatches link requests.
+	 * @param {import("../core/reticulum.js").Reticulum|null} interfaceLayer - An object that manages destinations and dispatches link requests.
 	 */
 	constructor(name, direction, type, identity = null, interfaceLayer = null) {
 		super();
@@ -100,6 +100,14 @@ export class Destination extends EventTarget {
 	async announce() {
 		if (!this.interfaceLayer)
 			throw new Error("Destination not bound to an RNS instance.");
+
+		if (!this.identity) {
+			throw new Error("Destination requires an identity to announce.");
+		}
+
+		if (!this.destinationHash || !this.nameHash) {
+			throw new Error("Destination hashes not computed.");
+		}
 
 		// 1. Generate a 10-byte Random Hash (Required by RNS to prevent replay attacks)
 		const randomHash = new Uint8Array(10);
@@ -158,7 +166,7 @@ export class Destination extends EventTarget {
 	 * @param {Direction} direction
 	 * @param {DestinationType} type
 	 * @param {Identity|null} identity
-	 * @param {import("../core/reticulum.js").Reticulum} interfaceLayer - An object that manages destinations and dispatches link requests.
+	 * @param {import("../core/reticulum.js").Reticulum|null} interfaceLayer - An object that manages destinations and dispatches link requests.
 	 * @returns {Promise<Destination>}
 	 */
 	static async create(
@@ -201,7 +209,7 @@ export class Destination extends EventTarget {
 
 			const destHashBuffer = await crypto.subtle.digest(
 				"SHA-256",
-				/** @type {any} */ (combined),
+				combined,
 			);
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else if (this.type === DestinationType.GROUP && this.identity) {
@@ -214,14 +222,14 @@ export class Destination extends EventTarget {
 
 			const destHashBuffer = await crypto.subtle.digest(
 				"SHA-256",
-				/** @type {any} */ (combined),
+				combined,
 			);
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else if (this.type === DestinationType.PLAIN) {
 			// destHash = SHA256(nameHash)[:16]
 			const destHashBuffer = await crypto.subtle.digest(
 				"SHA-256",
-				/** @type {any} */ (this.nameHash),
+				this.nameHash,
 			);
 			this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
 		} else {
@@ -234,7 +242,7 @@ export class Destination extends EventTarget {
 	 * @param {string} name
 	 * @param {DestinationType} type
 	 * @param {Identity|null} identity
-	 * @param {import("../core/reticulum.js").Reticulum} interfaceLayer - An object that manages destinations and dispatches link requests.
+	 * @param {import("../core/reticulum.js").Reticulum|null} interfaceLayer - An object that manages destinations and dispatches link requests.
 	 * @returns {Promise<Destination>}
 	 */
 	static async IN(name, type, identity = null, interfaceLayer = null) {
@@ -326,6 +334,12 @@ export class Destination extends EventTarget {
 		if (this.direction !== Direction.OUT) {
 			throw new Error("Can only initiate links to OUT destinations.");
 		}
+		if (!this.interfaceLayer) {
+			throw new Error("Destination not bound to an RNS instance.");
+		}
+		if (!this.destinationHash) {
+			throw new Error("Destination hash not computed.");
+		}
 
 		return new Promise((resolve, reject) => {
 			/** @type {CryptoKey | undefined} */
@@ -377,7 +391,7 @@ export class Destination extends EventTarget {
 
 					const link = new Link(
 						link_key,
-						this.destinationHash ?? new Uint8Array(16),
+						this.destinationHash,
 						this.interfaceLayer.transport,
 					);
 					// this.interfaceLayer.transport.addLink(senderHash, link);
@@ -498,8 +512,10 @@ export class Destination extends EventTarget {
 	 * Responds to a link request.
 	 * @param {import('../transport/transport.js').TransportCore} transport
 	 * @param {import('../core/packet.js').Packet} requestPacket
+	 * @param {Uint8Array} senderHash - The destination hash of the requester.
+	 * @param {Uint8Array} appData
 	 */
-	async respondToLinkRequest(transport, requestPacket) {
+	async respondToLinkRequest(transport, requestPacket, senderHash, appData) {
 		// ---------------------------------------------------------
 		// 1. DERIVE THE LINK ID
 		// Spec: link_id = SHA256(hashable_part_of_LINKREQUEST)[:16]
@@ -509,9 +525,9 @@ export class Destination extends EventTarget {
 
 		let hashableLength = 1 + requestPacket.raw.length - n;
 
-		// Strip signalling bytes if payload > 32 bytes (Link.ECPUBSIZE)
-		if (requestPacket.payload.length > 32) {
-			const signallingLength = requestPacket.payload.length - 32;
+		// Strip signalling bytes if payload > 64 bytes (Link.ECPUBSIZE)
+		if (requestPacket.payload.length > 64) {
+			const signallingLength = requestPacket.payload.length - 64;
 			hashableLength -= signallingLength;
 		}
 
@@ -575,9 +591,10 @@ export class Destination extends EventTarget {
 		const initiatorPubBytes = requestPacket.payload.slice(0, 32);
 
 		const link = new Link(
+			this.destinationHash,
+			linkId,
 			ephemeralKey,
 			initiatorPubBytes,
-			this.interfaceLayer.transport,
 		);
 
 		// Register the ephemeral link_id with the router so follow-up packets reach the Link instance

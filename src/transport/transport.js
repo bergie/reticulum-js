@@ -92,7 +92,8 @@ export class TransportCore extends EventTarget {
 	}
 
 	bindLocalDestination(destination) {
-		const destHex = Buffer.from(destination.destinationHash).toString("hex");
+		const destHex = toHex(destination.destinationHash);
+		console.log(`[ROUTER] Binding local destination: ${destHex}`);
 		this.localDestinations.set(destHex, destination);
 	}
 
@@ -142,6 +143,7 @@ export class TransportCore extends EventTarget {
 		// If you are acting as a router/node, you'd forward it.
 		// But since you are a bot, JUST DROP IT.
 		console.log(`[ROUTER] Packet for ${destHex} is not for us. Dropping.`);
+		console.log(`[ROUTER] Registered local destinations: ${Array.from(this.localDestinations.keys()).join(", ")}`);
 	}
 
 	/**
