@@ -51,34 +51,42 @@ export class LXMRouter extends EventTarget {
    */
   _setupListeners() {
     // 1. Listen for standard Single-Packet LXMF Messages
-    /** @type {any} */ (this.deliveryDest).addEventListener("data", async (event) => {
-      const { plaintext } = /** @type {any} */ (event).detail;
-      try {
-        await this._processIncomingMessage(plaintext);
-      } catch (e) {
-        console.error("[!] Failed to process single-packet LXMF message:", e);
-      }
-    });
+    /** @type {any} */ (this.deliveryDest).addEventListener(
+      "data",
+      async (event) => {
+        const { plaintext } = /** @type {any} */ (event).detail;
+        try {
+          await this._processIncomingMessage(plaintext);
+        } catch (e) {
+          console.error("[!] Failed to process single-packet LXMF message:", e);
+        }
+      },
+    );
 
     // 2. Listen for Large LXMF Messages arriving via Links
-    /** @type {any} */ (this.deliveryDest).addEventListener("link_request", async (event) => {
-      console.log("[*] Incoming LXMF Link Request");
+    /** @type {any} */ (this.deliveryDest).addEventListener(
+      "link_request",
+      async (event) => {
+        console.log("[*] Incoming LXMF Link Request");
 
-      try {
-        // Use the clean callback we built into Destination.js
-        const link = await /** @type {any} */ (this.deliveryDest).acceptLink(
-          /** @type {any} */ (event).detail.packet,
-          /** @type {any} */ (event).detail.transport,
-        );
+        try {
+          // Use the clean callback we built into Destination.js
+          const link = await /** @type {any} */ (this.deliveryDest).acceptLink(
+            /** @type {any} */ (event).detail.packet,
+            /** @type {any} */ (event).detail.transport,
+          );
 
-        // Listen for data streaming over the established link
-        link.addEventListener("data", async (pktEvent) => {
-          await this._processIncomingMessage(/** @type {any} */ (pktEvent).detail.packet.raw);
-        });
-      } catch (e) {
-        console.error("[!] Failed to respond to LXMF link request:", e);
-      }
-    });
+          // Listen for data streaming over the established link
+          link.addEventListener("data", async (pktEvent) => {
+            await this._processIncomingMessage(
+              /** @type {any} */ (pktEvent).detail.packet.payload,
+            );
+          });
+        } catch (e) {
+          console.error("[!] Failed to respond to LXMF link request:", e);
+        }
+      },
+    );
   }
 
   /**

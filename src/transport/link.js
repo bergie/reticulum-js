@@ -1,6 +1,8 @@
 // src/transport/link.js
 
-import { Packet } from "../core/packet.js";
+import { Destination } from "../core/destination.js";
+import { Identity } from "../core/identity.js";
+import { ContextType, Packet } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
 import { Token } from "../crypto/token.js";
 
@@ -118,9 +120,75 @@ export class Link extends EventTarget {
       raw: packet.payload,
     });
 
-    this.dispatchEvent(
-      new CustomEvent("data", { detail: { packet: decryptedPacket } }),
-    );
+    // Route based on Reticulum Context Byte
+    switch (decryptedPacket.contextByte) {
+      case 0x00: // Packet.NONE (Standard Data)
+        this.dispatchEvent(
+          new CustomEvent("data", { detail: { packet: decryptedPacket } }),
+        );
+        break;
+      case 0x01: // Packet.RESOURCE
+      case 0x02: // Packet.RESOURCE_ADV
+      case 0x03: // Packet.RESOURCE_REQ
+      case 0x04: // Packet.RESOURCE_HMAC
+      case 0x05: // Packet.RESOURCE_PRF
+        // Dispatch to your future Resource handler
+        this.dispatchEvent(
+          new CustomEvent("resource", { detail: { packet: decryptedPacket } }),
+        );
+        break;
+      case 0x06: // Packet.KEEPALIVE
+        this.dispatchEvent(
+          new CustomEvent("keepalive", { detail: { packet: decryptedPacket } }),
+        );
+        break;
+      case 0x08: // Packet.LRPROOF
+        this.dispatchEvent(
+          new CustomEvent("lrproof", { detail: { packet: decryptedPacket } }),
+        );
+        break;
+      case ContextType.IDENTIFY: {
+        console.log(
+          `[LINK] Received IDENTIFY packet. Caching peer identity...`,
+        );
+
+        // The decrypted payload contains the 64-byte public key
+        const peerPublicKey = decryptedPacket.payload;
+
+        try {
+          // 1. Reconstruct the Identity from the raw public key bytes
+          const peerIdentity = await Identity.fromPublicKey(peerPublicKey);
+
+          // 2. Calculate the Identity Hash (this is what LXMF will use as the sourceHash)
+          const identityHash = await Identity.truncatedHash(
+            peerIdentity.publicKey,
+          );
+
+          // 3. We need a packet hash for the remember() signature.
+          // If your packet object doesn't have its wire hash attached yet, we can
+          // provide a fallback. In the Python reference, this is primarily used
+          // to prevent replay attacks on public Announces, so a zeroed array
+          // or a hash of the decrypted payload is fine for Link Identity caching.
+          const packetHash = await Identity.truncatedHash(packet.raw);
+
+          // 4. Cache it in your local known destinations!
+          await Destination.remember(packetHash, identityHash, peerPublicKey);
+
+          this.dispatchEvent(
+            new CustomEvent("identify", {
+              detail: { identity: peerIdentity },
+            }),
+          );
+        } catch (err) {
+          console.error("[LINK] Failed to process peer identity:", err);
+        }
+        break;
+      }
+      default:
+        console.warn(
+          `[LINK] Ignored packet with unknown context: 0x${decryptedPacket.contextByte.toString(16)}`,
+        );
+    }
   }
 
   // Call this immediately after instantiation
