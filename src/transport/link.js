@@ -115,6 +115,7 @@ export class Link extends EventTarget {
       contextByte: packet.contextByte,
       payload: decryptedPayload,
       transportId: packet.transportId,
+      raw: packet.payload,
     });
 
     this.dispatchEvent(

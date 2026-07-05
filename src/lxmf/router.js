@@ -71,9 +71,8 @@ export class LXMRouter extends EventTarget {
         );
 
         // Listen for data streaming over the established link
-        link.addEventListener("packet", async (pktEvent) => {
-          const rawWireData = pktEvent.detail.payload;
-          await this._processIncomingMessage(rawWireData);
+        link.addEventListener("data", async (pktEvent) => {
+          await this._processIncomingMessage(pktEvent.detail.packet.raw);
         });
       } catch (e) {
         console.error("[!] Failed to respond to LXMF link request:", e);
