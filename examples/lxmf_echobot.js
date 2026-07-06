@@ -42,8 +42,9 @@ async function startEchoBot() {
     `Bot Identity Hash: ${Buffer.from(botIdentity.identityHash).toString("hex")}`,
   );
 
-  // Provide identity
-  botIdentity.appData = "JS Echo Bot (1.0.0)";
+  // Tell who we are
+  const { default: data } = await import("../package.json", { with: { type: "json" }});
+  botIdentity.setAppData(`JS echo bot (${data.version})`);
 
   // Bind the LXMF Router to our Identity and Network Core
   // This automatically registers the 'lxmf.delivery' destination
@@ -59,25 +60,24 @@ async function startEchoBot() {
 
   // Handle Incoming Messages
   lxmf.addEventListener("message", async (event) => {
-    const { source, title, content } = event.detail;
-
-    const senderHashHex = Buffer.from(source).toString("hex");
-    const textContent = content;
+    console.log('MESSAGE', event);
+    const message = event.detail;
+    const senderHashHex = Buffer.from(message.sourceHash).toString("hex");
 
     console.log(`\n[+] Received message from ${senderHashHex}`);
-    if (title) {
-      console.log(`    Title: ${title}`);
+    if (message.title) {
+      console.log(`    Title: ${message.title}`);
     }
-    console.log(`    Body:  ${textContent}`);
+    console.log(`    Body:  ${message.content}`);
 
     // 6. Construct and Send the Echo Reply
     try {
-      const replyText = `Echo: ${textContent}`;
+      const replyText = `Echo: ${message.content}`;
       const replyBytes = new TextEncoder().encode(replyText);
-      const replyTitle = title.startsWith("Re:") ? title : `Re: ${title}`;
+      const replyTitle = message.title.startsWith("Re:") ? message.title : `Re: ${message.title}`;
 
       // Send the message back to the sender's destination hash
-      await lxmf.send(source.hash, replyBytes, replyTitle);
+      await lxmf.send(message.sourceHash, replyBytes, replyTitle);
 
       console.log(`[->] Echo sent back successfully.`);
     } catch (error) {

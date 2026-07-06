@@ -7,6 +7,7 @@ import { Destination, DestinationType } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { toHex } from "../utils/encoding.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import { Message } from "./message.js";
 
 /**
  * Handles LXMF routing and message processing.
@@ -28,6 +29,7 @@ export class LXMRouter extends EventTarget {
    * Initializes the router and registers the LXMF delivery destination.
    */
   async init() {
+    console.log("[ROUTER] Initializing...");
     // Register the standard LXMF delivery destination.
     // Assumes Destination.IN was updated to accept the rnsCore as the 4th/5th parameter
     const deliveryDest = await Destination.IN(
@@ -36,6 +38,7 @@ export class LXMRouter extends EventTarget {
       this.identity,
       this.rns,
     );
+    console.log("[ROUTER] deliveryDest set:", deliveryDest.name);
     this.deliveryDest = deliveryDest;
 
     // Bind it to the central routing table
@@ -46,6 +49,7 @@ export class LXMRouter extends EventTarget {
     this.dispatchEvent(
       new CustomEvent("ready", { detail: { destination: deliveryDest } }),
     );
+    console.log("[ROUTER] init complete.");
   }
 
   /**
@@ -74,10 +78,7 @@ export class LXMRouter extends EventTarget {
 
         try {
           // Use the clean callback we built into Destination.js
-          const link = await /** @type {any} */ (this.deliveryDest).acceptLink(
-            /** @type {any} */ (event).detail.packet,
-            /** @type {any} */ (event).detail.transport,
-          );
+          const link = await /** @type {any} */ (this.deliveryDest).acceptLink(event.detail.packet);
 
           // Listen for data streaming over the established link
           link.addEventListener("data", async (pktEvent) => {
@@ -128,7 +129,7 @@ export class LXMRouter extends EventTarget {
 
           // Now, when processIncomingMessage(wireData) calls recall(sourceHash),
           // it will find the link between the 178b9... hash and the 6c8f... identity key!
-          this.processPendingMessages(peerDeliveryDest.destinationHash);
+          this.processPendingMessages(identityHash);
         } catch (e) {
           console.error(
             "[ROUTER] Failed to derive LXMF destination for peer:",
@@ -150,29 +151,17 @@ export class LXMRouter extends EventTarget {
       throw new Error("LXMF message too short to contain required headers");
     }
 
-    // Slice the wireData into Hash, Hash, Sig, and Payload views
-    const destinationHash = wireData.slice(0, 16);
-    const sourceHash = wireData.slice(16, 32);
-    const sourceHex = toHex(sourceHash);
-    const signature = wireData.slice(32, 96);
-    const payload = wireData.slice(96);
+    // 1. Deserialize the message immediately
+    const message = await Message.deserialize(wireData);
 
-    console.log(`[DEBUG] Looking for key: ${toHex(sourceHash)}`);
-    console.log(
-      `[DEBUG] Pending keys: ${[...this.pendingMessages.keys()].join(", ")}`,
-    );
-    console.log(
-      `[DEBUG] Known keys: ${[...Destination.knownDestinations.keys()].join(", ")}`,
-    );
+    const sourceHex = toHex(message.senderHash);
 
-    // Validate signature against the SENDER'S public key
-    const senderIdentity = await Destination.recall(sourceHash);
+    // 2. Validate signature against the SENDER'S public key
+    const senderIdentity = await Destination.recall(message.senderHash);
 
     if (!senderIdentity) {
       console.log(`[ROUTER] Identity unknown for ${sourceHex}. Requesting...`);
-      console.log(`[ROUTER] Destination ${toHex(destinationHash)}`);
-
-      // TODO: Broadcast a path request over Reticulum to try to find the sender identity
+      // TODO: Send path request
 
       // Park the message for a limited time (e.g., 5 seconds)
       this.pendingMessages.set(sourceHex, wireData);
@@ -183,69 +172,15 @@ export class LXMRouter extends EventTarget {
     // If we reach here, we have the identity, clear any pending message
     this.pendingMessages.delete(sourceHex);
 
-    const identityHash = await Identity.truncatedHash(senderIdentity.publicKey);
-
-    // Calculate the Message ID exactly as LXMF expects
-    // SHA-256 of: Dest (16) + Source (16) + Payload (N)
-    const idBuffer = new Uint8Array(16 + 16 + payload.length);
-    idBuffer.set(destinationHash, 0);
-    idBuffer.set(sourceHash, 16);
-    idBuffer.set(payload, 32);
-    const messageId = new Uint8Array(await crypto.subtle.digest("SHA-256", idBuffer));
-
-    // Construct the actual buffer that was signed by the sender
-    // Dest (16) + Source (16) + Payload (N) + MessageID (32)
-    const signedPart = new Uint8Array(16 + 16 + payload.length + 32);
-    signedPart.set(destinationHash, 0);
-    signedPart.set(sourceHash, 16);
-    signedPart.set(payload, 32);
-    signedPart.set(messageId, 16 + 16 + payload.length);
-
-    // Verify using pure WebCrypto
-    // Your senderIdentity.ed25519Pub is already correctly sized at 32 bytes
-    const isValid = await crypto.subtle.verify(
-      "Ed25519",
-      senderIdentity.ed25519Pub,
-      signature,
-      signedPart
-    );
-
-    if (!isValid) {
+    // 3. Verify using the identity helper method
+    if (!await senderIdentity.validate(message.signature, message.signedPart)) {
       throw new Error("Invalid LXMF message signature: Cryptographic proof failed.");
     }
 
-    // Decode the MessagePack payload
-    const decodedPayload = MicroMsgPack.decode(payload);
-
-    if (!Array.isArray(decodedPayload) || decodedPayload.length < 4) {
-      throw new Error(
-        "Invalid LXMF payload format: Expected 4-element MessagePack array",
-      );
-    }
-
-    const [timestamp, titleBytes, contentBytes, fields] = decodedPayload;
-
-    // MessagePack often yields raw Uint8Arrays for strings in LXMF, decode them:
-    const title =
-      titleBytes instanceof Uint8Array
-        ? new TextDecoder().decode(titleBytes)
-        : titleBytes;
-
-    const content =
-      contentBytes instanceof Uint8Array
-        ? new TextDecoder().decode(contentBytes)
-        : contentBytes;
-
-    // 5. Dispatch to the UI layer
+    // 4. Dispatch to the UI layer
     this.dispatchEvent(
       new CustomEvent("message", {
-        detail: {
-          source: sourceHash,
-          title,
-          content,
-          timestamp,
-          fields,
-        },
+        detail: message,
       }),
     );
   }

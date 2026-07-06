@@ -4,7 +4,7 @@ import { test } from "node:test";
 import { Destination, DestinationType } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import { PacketType } from "../../src/core/packet.js";
-import { LXMessage } from "../../src/lxmf/message.js";
+import { Message } from "../../src/lxmf/message.js";
 import { LXMRouter } from "../../src/lxmf/router.js";
 
 test("LXMRouter", async (t) => {
@@ -20,34 +20,33 @@ test("LXMRouter", async (t) => {
     },
   };
 
-  const router = new LXMRouter(identity, interfaceLayer);
-
-  await router.init();
-
-  await new Promise((resolve) => setTimeout(resolve, 50));
-
-  await t.test("initialization", () => {
-    assert.ok(router.deliveryDest instanceof Destination);
-    assert.strictEqual(interfaceLayer.lastRegisteredDest, router.deliveryDest);
+  await t.test("initialization", async () => {
+    const router = new LXMRouter(identity, interfaceLayer);
+    await router.init();
+    console.log("[TEST] router.deliveryDest:", router.deliveryDest);
+    assert.ok(router.deliveryDest, "router.deliveryDest should be truthy");
     assert.strictEqual(router.deliveryDest.name, "lxmf.delivery");
+    assert.strictEqual(interfaceLayer.lastRegisteredDest, router.deliveryDest);
   });
 
   await t.test("processing incoming messages", async () => {
+    const router = new LXMRouter(identity, interfaceLayer);
+    await router.init();
+
     const senderIdentity = await Identity.generate();
     const senderHash = senderIdentity.identityHash;
     const destHash = router.deliveryDest.destinationHash;
 
-    const content = new Uint8Array([1, 2, 3, 4]);
+    // Register sender as known to the router
+    await Destination.remember(senderHash, senderHash, senderIdentity.publicKey);
+
+    const content = "Hello World";
     const title = "Hello";
     const fields = { foo: "bar" };
+    const timestamp = Date.now() / 1000.0;
 
-    const { messageId, wireData } = await LXMessage.serialize(
-      senderIdentity,
-      destHash,
-      content,
-      title,
-      fields,
-    );
+    const msg = new Message(senderHash, destHash, timestamp, title, content, fields);
+    const { messageId, wireData } = await msg.serialize(senderIdentity);
 
     console.log("Generated messageId:", messageId);
     console.log("Generated wireData length:", wireData.length);
@@ -68,15 +67,15 @@ test("LXMRouter", async (t) => {
     };
 
     let messageReceived = null;
-    router.addEventListener("message", (event) => {
+    router.addEventListener("Message", (event) => {
       messageReceived = event.detail;
     });
 
     router.deliveryDest.dispatchEvent(
-      new CustomEvent("linkrequest", {
+      new CustomEvent("link_request", {
         detail: {
+          packet: requestPacket,
           transport,
-          requestPacket,
           senderHash,
           appData: new Uint8Array(0),
         },
@@ -86,9 +85,12 @@ test("LXMRouter", async (t) => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     link.dispatchEvent(
-      new CustomEvent("packet", {
+      new CustomEvent("data", {
         detail: {
-          payload: wireData,
+          packet: {
+            payload: wireData,
+          },
+          link: link,
         },
       }),
     );
@@ -97,15 +99,17 @@ test("LXMRouter", async (t) => {
 
     console.log("Message received:", messageReceived);
     if (messageReceived) {
-      console.log("Message received source:", messageReceived.source);
+      console.log("Message received source:", messageReceived.sourceHash);
       console.log("Message received title:", messageReceived.title);
     }
 
     assert.ok(messageReceived, "Message event should have been dispatched");
-    assert.deepStrictEqual(messageReceived.source, senderHash);
+    assert.ok(messageReceived instanceof Message);
+    assert.deepStrictEqual(messageReceived.sourceHash, senderHash);
+    assert.deepStrictEqual(messageReceived.destinationHash, destHash);
     assert.strictEqual(messageReceived.title, title);
-    assert.deepStrictEqual(messageReceived.content, content);
-    assert.ok(typeof messageReceived.timestamp === "number");
+    assert.strictEqual(messageReceived.content, content);
+    assert.strictEqual(messageReceived.timestamp, timestamp);
     assert.deepStrictEqual(messageReceived.fields, fields);
 
     router.deliveryDest.respondToLinkRequest = originalRespond;
