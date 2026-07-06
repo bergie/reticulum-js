@@ -9,17 +9,17 @@ import { MicroMsgPack } from "../utils/msgpack.js";
  * Represents an LXMF message.
  */
 export class Message {
-/**
- * @param {Object} options
- * @param {Uint8Array} options.sourceHash
- * @param {Uint8Array} options.destinationHash
- * @param {number} [options.timestamp]
- * @param {string} [options.title]
- * @param {string} [options.content]
- * @param {Record<string, any>} [options.fields]
- * @param {Uint8Array} [options.signature]
- * @param {Uint8Array} [options.signedPart]
- */
+  /**
+   * @param {Object} options
+   * @param {Uint8Array} options.sourceHash
+   * @param {Uint8Array} options.destinationHash
+   * @param {number} [options.timestamp]
+   * @param {string} [options.title]
+   * @param {string} [options.content]
+   * @param {Record<string, any>} [options.fields]
+   * @param {Uint8Array} [options.signature]
+   * @param {Uint8Array} [options.signedPart]
+   */
   constructor({
     sourceHash,
     destinationHash,
@@ -33,12 +33,49 @@ export class Message {
     this.sourceHash = sourceHash;
     this.senderHash = sourceHash;
     this.destinationHash = destinationHash;
-    this.timestamp = timestamp || new Date().getTime(),
-    this.title = title;
+    (this.timestamp = timestamp || Date.now() / 1000), (this.title = title);
     this.content = content;
     this.fields = fields;
     this.signature = signature;
     this.signedPart = signedPart;
+  }
+
+  /**
+   * Serializes the Message into the wire format.
+   * @param {import("../core/identity.js").Identity} sourceIdentity
+   * @returns {Promise<{messageId: Uint8Array, wireData: Uint8Array}>}
+   */
+  async serialize(sourceIdentity) {
+    const sourceHash = sourceIdentity.identityHash;
+
+    // 1. Construct the MessagePack payload
+    const payloadData = [this.timestamp, this.content, this.title, this.fields];
+    const msgpackPayload = MicroMsgPack.encode(payloadData);
+
+    // 2. Generate the Message ID (SHA-256 of Dest + Source + Payload)
+    const idBuffer = new Uint8Array(32 + msgpackPayload.length);
+    idBuffer.set(this.destinationHash, 0);
+    idBuffer.set(sourceHash, 16);
+    idBuffer.set(msgpackPayload, 32);
+
+    const messageIdBuffer = await crypto.subtle.digest("SHA-256", idBuffer);
+    const messageId = new Uint8Array(messageIdBuffer);
+
+    // 3. Cryptographically sign the 32-byte Message ID
+    // (This corrects the previous hallucination!)
+    const signature = await sourceIdentity.sign(messageId);
+
+    // 4. Assemble the final LXMF wire-format byte array
+    const wireData = new Uint8Array(96 + msgpackPayload.length);
+    wireData.set(this.destinationHash, 0);
+    wireData.set(sourceHash, 16);
+    wireData.set(signature, 32);
+    wireData.set(msgpackPayload, 96);
+
+    return {
+      messageId,
+      wireData,
+    };
   }
 
   /**
@@ -107,53 +144,5 @@ export class Message {
       signature,
       signedPart,
     });
-  }
-
-  /**
-   * Serializes the Message into the wire format.
-   * @param {import("../core/identity.js").Identity} sourceIdentity
-   * @returns {Promise<{messageId: Uint8Array, wireData: Uint8Array}>}
-   */
-  async serialize(sourceIdentity) {
-    const sourceHash = sourceIdentity.identityHash;
-
-    // 1. Construct the MessagePack payload
-    // LXMF enforces this exact array order: [Timestamp, Content, Title, Fields]
-    const payloadData = [this.timestamp, this.content, this.title, this.fields];
-    const msgpackPayload = MicroMsgPack.encode(payloadData);
-
-    // 2. Generate the Message ID (SHA-256 of Dest + Source + Payload)
-    const idBuffer = new Uint8Array(32 + msgpackPayload.length);
-    idBuffer.set(this.destinationHash, 0);
-    idBuffer.set(sourceHash, 16);
-    idBuffer.set(msgpackPayload, 32);
-
-    const messageIdBuffer = await globalThis.crypto.subtle.digest(
-      "SHA-256",
-      idBuffer,
-    );
-    const messageId = new Uint8Array(messageIdBuffer);
-
-    // 3. Cryptographically sign the ACTUAL buffer that LXMF expects
-    // Dest (16) + Source (16) + Payload (N) + MessageID (32)
-    const signedPart = new Uint8Array(16 + 16 + msgpackPayload.length + 32);
-    signedPart.set(this.destinationHash, 0);
-    signedPart.set(sourceHash, 16);
-    signedPart.set(msgpackPayload, 32);
-    signedPart.set(messageId, 16 + 16 + msgpackPayload.length);
-
-    const signature = await sourceIdentity.sign(signedPart);
-
-    // 4. Assemble the final LXMF wire-format byte array
-    const wireData = new Uint8Array(96 + msgpackPayload.length);
-    wireData.set(this.destinationHash, 0);
-    wireData.set(sourceHash, 16);
-    wireData.set(signature, 32);
-    wireData.set(msgpackPayload, 96);
-
-    return {
-      messageId,
-      wireData,
-    };
   }
 }

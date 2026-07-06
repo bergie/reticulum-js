@@ -88,7 +88,7 @@ export class Link extends EventTarget {
       destinationType: packet.destinationType,
       packetType: packet.packetType,
       contextFlag: packet.contextFlag,
-      destinationHash: packet.destinationHash,
+      destinationHash: this.linkId,
       contextByte: packet.contextByte,
       payload: encryptedPayload,
       transportId: packet.transportId,

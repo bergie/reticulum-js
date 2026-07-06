@@ -5,9 +5,9 @@
 
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
+import { DestType, Packet, PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
 import { Message } from "./message.js";
-import { Packet, PacketType, DestType } from "../core/packet.js";
 
 /**
  * Handles LXMF routing and message processing.
@@ -84,7 +84,7 @@ export class LXMRouter extends EventTarget {
 
           // Listen for data streaming over the established link
           link.addEventListener("data", async (pktEvent) => {
-            console.log('RECV', pktEvent.detail.packet, pktEvent.detail.link);
+            console.log("RECV", pktEvent.detail.packet, pktEvent.detail.link);
             await this._processIncomingMessage(
               /** @type {any} */ (pktEvent).detail.packet.payload,
               pktEvent.detail.link,
@@ -224,7 +224,7 @@ export class LXMRouter extends EventTarget {
       destinationType: linkId ? DestType.LINK : DestType.SINGLE,
       payload: wireData,
     });
-    console.log('SEND', packet, linkId);
+    console.log("SEND", packet, linkId);
     await this.rns.transport.sendPacket(packet, linkId);
   }
 }

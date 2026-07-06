@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   Identity,
-  LXMRouter,
   LXMessage,
+  LXMRouter,
   Reticulum,
   TCPClientInterface,
 } from "../src/index.js";
@@ -77,10 +77,12 @@ async function startEchoBot() {
     // Construct and Send the Echo Reply
     try {
       const reply = new LXMessage({
-        sourceHash: message.destinationHash,
+        sourceHash: lxmf.deliveryDest.destinationHash,
         destinationHash: message.sourceHash,
         content: `Echo: ${message.content}`,
-        title: message.title.startsWith("Re:") ? message.title : `Re: ${message.title}`,
+        title: message.title.startsWith("Re:")
+          ? message.title
+          : `Re: ${message.title}`,
       });
 
       // Send the message back to the sender's destination hash
