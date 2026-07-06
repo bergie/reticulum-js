@@ -22,7 +22,7 @@ import { Token } from "../crypto/token.js";
 export class Identity extends EventTarget {
   static TRUNCATED_HASHLENGTH = 128;
 
-  _appData = new Uint8Array();
+  appData = new Uint8Array();
 
   /**
    * @param {CryptoKey|null} x25519Priv
@@ -52,14 +52,15 @@ export class Identity extends EventTarget {
   /**
    * @param {string} data
    */
-  set appData(data) {
-    this._appData = new TextEncoder().encode(data);
+  setAppData(data) {
+    this.appData = new TextEncoder().encode(data);
   }
 
   /**
    * @returns {string}
-  get appData() {
-    return new TextDecoder().decode(this._appData);
+   */
+  getAppData() {
+    return new TextDecoder().decode(this.appData);
   }
 
   /**
@@ -451,16 +452,12 @@ export class Identity extends EventTarget {
    * @returns {Promise<boolean>}
    */
   async validate(signature, messageId) {
-    if (!this.ed25519Pub)
-      throw new Error(
-        "Signature validation failed because identity does not hold a public key",
-      );
     const signatureView = new Uint8Array(
       signature.buffer,
       signature.byteOffset,
       64,
     );
-    const dataView = new Uint8Array(messageId.buffer, messageId.byteOffset, 32);
+    const dataView = new Uint8Array(messageId.buffer, messageId.byteOffset, messageId.byteLength);
     const keyData = await crypto.subtle.exportKey("raw", this.ed25519Pub);
 
     return await crypto.subtle.verify("Ed25519", this.ed25519Pub, signatureView, dataView);

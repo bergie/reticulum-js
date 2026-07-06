@@ -448,7 +448,7 @@ export class Destination extends EventTarget {
   /**
    * Handles incoming packets routed to this destination.
    * @param {import('./packet.js').Packet} packet
-   * @param {Object} receivingInterface
+   * @param {import("../interfaces/base.js").Interface} receivingInterface
    */
   async receive(packet, receivingInterface) {
     console.log(
@@ -473,11 +473,9 @@ export class Destination extends EventTarget {
 
   /**
    * @param {import('./packet.js').Packet} packet
-   * @param {import('../interfaces/base.js').Interface} transport
-   * @param {Uint8Array} appData
    */
-  async acceptLink(packet, transport, appData = new Uint8Array(0)) {
-    return await this.respondToLinkRequest(transport, packet, null, appData);
+  async acceptLink(packet) {
+    return await this.respondToLinkRequest(packet);
   }
 
   /**
@@ -498,12 +496,10 @@ export class Destination extends EventTarget {
 
   /**
    * Responds to a link request.
-   * @param {import('../transport/transport.js').TransportCore} transport
    * @param {import('../core/packet.js').Packet} requestPacket
-   * @param {Uint8Array} senderHash - The destination hash of the requester.
-   * @param {Uint8Array} appData
+   * @returns {Promise<import('../transport/link.js').Link>} Resolves when the secure tunnel is established
    */
-  async respondToLinkRequest(transport, requestPacket, senderHash, appData) {
+  async respondToLinkRequest(requestPacket) {
     // ---------------------------------------------------------
     // 1. DERIVE THE LINK ID
     // Spec: link_id = SHA256(hashable_part_of_LINKREQUEST)[:16]

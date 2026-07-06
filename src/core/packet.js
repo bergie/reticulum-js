@@ -13,6 +13,7 @@ export const PacketType = {
   LINKREQUEST: 0x02,
   LINKRESPONSE: 0x04,
   PROOF: 0x03,
+
 };
 
 /**
@@ -62,15 +63,15 @@ export const DestType = {
 export class Packet {
   /**
    * @param {Object} options
-   * @param {number} options.headerType
-   * @param {number} options.hops
-   * @param {number} options.transportType
-   * @param {number} options.destinationType
-   * @param {number} options.packetType
-   * @param {boolean} options.contextFlag
+   * @param {HeaderType} [options.headerType]
+   * @param {number} [options.hops]
+   * @param {number} [options.transportType]
+   * @param {DestType} [options.destinationType]
+   * @param {PacketType} options.packetType
+   * @param {boolean} [options.contextFlag]
    * @param {Uint8Array} options.destinationHash
-   * @param {number} options.contextByte
-   * @param {Uint8Array} options.payload
+   * @param {number} [options.contextByte]
+   * @param {Uint8Array} [options.payload]
    * @param {Uint8Array} [options.transportId]
    * @param {Uint8Array} [options.raw]
    */

@@ -196,6 +196,12 @@ export class Link extends EventTarget {
         );
         break;
       }
+      case ContextType.LINKCLOSE: {
+        this.dispatchEvent(
+          new CustomEvent("close", { detail: { packet: decryptedPacket } }),
+        );
+        break;
+      }
       default:
         console.warn(
           `[LINK] Ignored packet with unknown context: 0x${decryptedPacket.contextByte.toString(16)}`,
