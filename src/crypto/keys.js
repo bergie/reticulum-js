@@ -4,8 +4,14 @@
  */
 
 /**
+ * @typedef KeyPair
+ * @property {CryptoKey} privateKey
+ * @property {CryptoKey} publicKey
+ */
+
+/**
  * Generates an Ed25519 key pair.
- * @returns {Promise<{privateKey: CryptoKey, publicKey: CryptoKey}>}
+ * @returns {Promise<KeyPair>}
  */
 export async function generateEd25519KeyPair() {
   return await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
@@ -16,7 +22,7 @@ export async function generateEd25519KeyPair() {
 
 /**
  * Generates an X25519 key pair.
- * @returns {Promise<{privateKey: CryptoKey, publicKey: CryptoKey}>}
+ * @returns {Promise<{KeyPair}>}
  */
 export async function generateX25519KeyPair() {
   return await crypto.subtle.generateKey({ name: "X25519" }, true, [

@@ -11,7 +11,7 @@ import {
 import { Link, LinkEncryption } from "../transport/link.js";
 import { toHex } from "../utils/encoding.js";
 import { Identity } from "./identity.js";
-import { DestType, HeaderType, Packet, PacketType } from "./packet.js";
+import { ContextType, DestType, HeaderType, Packet, PacketType } from "./packet.js";
 
 /**
  * @enum {number}
@@ -534,9 +534,9 @@ export class Destination extends EventTarget {
       hops: 0, // Outgoing packets start at 0
       transportType: 0,
       destinationType: DestType.LINK,
-      packetType: PacketType.PROOF, // MUST be 3
+      packetType: PacketType.PROOF,
       contextFlag: true,
-      contextByte: 0xff, // MUST be LRPROOF context
+      contextByte: ContextType.LRPROOF,
       destinationHash: linkId, // MUST be addressed to the link_id
       payload: responsePayload,
     });
@@ -548,7 +548,7 @@ export class Destination extends EventTarget {
     const initiatorPubBytes = requestPacket.payload.slice(0, 32);
 
     const link = new Link(
-      this.destinationHash,
+      this,
       linkId,
       ephemeralKey,
       initiatorPubBytes,

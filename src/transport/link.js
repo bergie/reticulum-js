@@ -2,7 +2,7 @@
 
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
-import { ContextType, Packet } from "../core/packet.js";
+import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
 import { Token } from "../crypto/token.js";
 
@@ -42,7 +42,7 @@ export class LinkEncryption {
 
 export class Link extends EventTarget {
   /**
-   * @param {any} destination
+   * @param {import("../core/destination.js").Destination} destination
    * @param {Uint8Array} linkId
    * @param {import("../crypto/keys.js").KeyPair} ephemeralKeyPair
    * @param {Uint8Array} peerPubBytes
@@ -69,7 +69,7 @@ export class Link extends EventTarget {
 
   /**
    * Encrypts and sends a packet.
-   * @param {import("../core/packet.js").Packet} packet
+   * @param {Packet} packet
    */
   async send(packet) {
     if (!this.token) {
@@ -98,12 +98,26 @@ export class Link extends EventTarget {
   }
 
   /**
-   * Decrypts an incoming packet and dispatches the plaintext.
-   * @param {import("../core/packet.js").Packet} packet
+   * @param {Packet} packet
    */
+  async provePacket(packet) {
+    const packetHash = await packet.getHash();
+    const signature = await this.destination.identity.sign(packetHash);
+    const proofPayload = new Uint8Array(96);
+    proofPayload.set(packetHash, 0);
+    proofPayload.set(signature, 32);
+    const proofPacket = new Packet({
+      packetType: PacketType.PROOF,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      payload: proofPayload,
+    });
+    await this.send(proofPacket);
+  }
+
   /**
-   * Queues an incoming packet for strict sequential processing.
-   * @param {import("../core/packet.js").Packet} packet
+   * Decrypts an incoming packet and dispatches the plaintext.
+   * @param {Packet} packet
    */
   async receive(packet) {
     // Chain the new packet onto the queue. It will not execute until

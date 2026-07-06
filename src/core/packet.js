@@ -89,6 +89,21 @@ export class Packet {
     this.raw = options.raw || new Uint8Array(0);
   }
 
+  /**
+   * @returns {Promise<Uint8Array>}
+   */
+  async getHash() {
+    // 1. Get the serialized wire-format bytes
+    const serialized = this.serialize();
+
+    // 2. Compute SHA-256 digest
+    const hashBuffer = await crypto.subtle.digest(
+      "SHA-256",
+      serialized,
+    );
+    return new Uint8Array(hashBuffer);
+  }
+
   _buildFlagsByte() {
     let flags = 0x00;
     // Removed: IFAC flag (0x80) is handled at the interface layer, not here.
