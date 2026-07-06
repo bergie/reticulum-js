@@ -13,7 +13,6 @@ export const PacketType = {
   LINKREQUEST: 0x02,
   LINKRESPONSE: 0x04,
   PROOF: 0x03,
-
 };
 
 /**
@@ -42,7 +41,7 @@ export const ContextType = {
   RESOURCE_PRF: 0x09,
   KEEPALIVE: 0x0a, // Often used in Links
   IDENTIFY: 0xfe, // 254: Link identity proof
-  LINKCLOSE: 0xFC,
+  LINKCLOSE: 0xfc,
   LRPROOF: 0xff, // 255: Link request proof
 };
 

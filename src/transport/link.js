@@ -156,7 +156,6 @@ export class Link extends EventTarget {
       case ContextType.RESOURCE_ADV:
       case ContextType.RESOURCE_REQ:
       case ContextType.RESOURCE_HMU:
-      case ContextType.RESOURCE_HMU:
       case ContextType.RESOURCE_ICL:
       case ContextType.RESOURCE_RCL:
       case ContextType.RESOURCE_PRF:

@@ -38,14 +38,25 @@ test("LXMRouter", async (t) => {
     const destHash = router.deliveryDest.destinationHash;
 
     // Register sender as known to the router
-    await Destination.remember(senderHash, senderHash, senderIdentity.publicKey);
+    await Destination.remember(
+      senderHash,
+      senderHash,
+      senderIdentity.publicKey,
+    );
 
     const content = "Hello World";
     const title = "Hello";
     const fields = { foo: "bar" };
     const timestamp = Date.now() / 1000.0;
 
-    const msg = new Message(senderHash, destHash, timestamp, title, content, fields);
+    const msg = new Message(
+      senderHash,
+      destHash,
+      timestamp,
+      title,
+      content,
+      fields,
+    );
     const { messageId, wireData } = await msg.serialize(senderIdentity);
 
     console.log("Generated messageId:", messageId);
@@ -67,7 +78,7 @@ test("LXMRouter", async (t) => {
     };
 
     let messageReceived = null;
-    router.addEventListener("Message", (event) => {
+    router.addEventListener("message", (event) => {
       messageReceived = event.detail;
     });
 

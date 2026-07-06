@@ -78,7 +78,9 @@ export class LXMRouter extends EventTarget {
 
         try {
           // Use the clean callback we built into Destination.js
-          const link = await /** @type {any} */ (this.deliveryDest).acceptLink(event.detail.packet);
+          const link = await /** @type {any} */ (this.deliveryDest).acceptLink(
+            event.detail.packet,
+          );
 
           // Listen for data streaming over the established link
           link.addEventListener("data", async (pktEvent) => {
@@ -173,8 +175,12 @@ export class LXMRouter extends EventTarget {
     this.pendingMessages.delete(sourceHex);
 
     // 3. Verify using the identity helper method
-    if (!await senderIdentity.validate(message.signature, message.signedPart)) {
-      throw new Error("Invalid LXMF message signature: Cryptographic proof failed.");
+    if (
+      !(await senderIdentity.validate(message.signature, message.signedPart))
+    ) {
+      throw new Error(
+        "Invalid LXMF message signature: Cryptographic proof failed.",
+      );
     }
 
     // 4. Dispatch to the UI layer

@@ -43,7 +43,9 @@ async function startEchoBot() {
   );
 
   // Tell who we are
-  const { default: data } = await import("../package.json", { with: { type: "json" }});
+  const { default: data } = await import("../package.json", {
+    with: { type: "json" },
+  });
   botIdentity.setAppData(`JS echo bot (${data.version})`);
 
   // Bind the LXMF Router to our Identity and Network Core
@@ -60,7 +62,7 @@ async function startEchoBot() {
 
   // Handle Incoming Messages
   lxmf.addEventListener("message", async (event) => {
-    console.log('MESSAGE', event);
+    console.log("MESSAGE", event);
     const message = event.detail;
     const senderHashHex = Buffer.from(message.sourceHash).toString("hex");
 
@@ -74,7 +76,9 @@ async function startEchoBot() {
     try {
       const replyText = `Echo: ${message.content}`;
       const replyBytes = new TextEncoder().encode(replyText);
-      const replyTitle = message.title.startsWith("Re:") ? message.title : `Re: ${message.title}`;
+      const replyTitle = message.title.startsWith("Re:")
+        ? message.title
+        : `Re: ${message.title}`;
 
       // Send the message back to the sender's destination hash
       await lxmf.send(message.sourceHash, replyBytes, replyTitle);

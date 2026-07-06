@@ -19,7 +19,16 @@ export class Message {
    * @param {Uint8Array} signature
    * @param {Uint8Array} signedPart
    */
-  constructor(sourceHash, destinationHash, timestamp, title, content, fields, signature, signedPart) {
+  constructor(
+    sourceHash,
+    destinationHash,
+    timestamp,
+    title,
+    content,
+    fields,
+    signature,
+    signedPart,
+  ) {
     this.sourceHash = sourceHash;
     this.senderHash = sourceHash;
     this.destinationHash = destinationHash;
@@ -53,7 +62,9 @@ export class Message {
     idBuffer.set(destinationHash, 0);
     idBuffer.set(sourceHash, 16);
     idBuffer.set(payload, 32);
-    const messageId = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", idBuffer));
+    const messageId = new Uint8Array(
+      await globalThis.crypto.subtle.digest("SHA-256", idBuffer),
+    );
 
     // Construct the actual buffer that was signed by the sender
     // Dest (16) + Source (16) + Payload (N) + MessageID (32)
@@ -85,7 +96,16 @@ export class Message {
         ? new TextDecoder().decode(titleBytes)
         : titleBytes;
 
-    return new Message(sourceHash, destinationHash, timestamp, title, content, fields, signature, signedPart);
+    return new Message(
+      sourceHash,
+      destinationHash,
+      timestamp,
+      title,
+      content,
+      fields,
+      signature,
+      signedPart,
+    );
   }
 
   /**
