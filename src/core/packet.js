@@ -3,8 +3,6 @@
  * @description Binary serialization/deserialization for Reticulum packets
  */
 
-import { toHex } from "../utils/encoding.js";
-
 /**
  * Packet types.
  * @enum {number}

@@ -33,31 +33,6 @@ export const DestinationType = {
 };
 
 /**
- * Helper functions for encoding/decoding buffers.
- */
-/**
- * @param {Uint8Array} buf
- * @returns {string}
- */
-function bufToHex(buf) {
-  return Array.from(buf)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-/**
- * @param {string} hex
- * @returns {Uint8Array}
- */
-function hexToBuf(hex) {
-  const buf = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < buf.length; i++) {
-    buf[i] = parseInt(hex.substring(i * 2, i * 2 + 2), 16);
-  }
-  return buf;
-}
-
-/**
  * Represents a Reticulum destination.
  */
 export class Destination extends EventTarget {
@@ -117,7 +92,7 @@ export class Destination extends EventTarget {
     const pubKey = await this.identity.getPublicKey();
 
     // 3. Prepare App Data (The human-readable name or metadata)
-    const appData = this.identity.appData || new Uint8Array(0);
+    const appData = this.identity.appData;
 
     // 4. Construct the Data to be Signed
     // Reticulum requires the signature to cover these specific fields in order:
@@ -635,7 +610,7 @@ export class Destination extends EventTarget {
     public_key,
     appData = null,
   ) {
-    const key = bufToHex(destination_hash);
+    const key = toHex(destination_hash);
     const entry = Destination.knownDestinations.get(key);
     if (entry) {
       entry[0] = Date.now() / 1000; // time.time() in seconds
@@ -661,22 +636,22 @@ export class Destination extends EventTarget {
    */
   static async recall(target_hash, from_identity_hash = false) {
     if (from_identity_hash) {
-      for (const [key, entry] of Destination.knownDestinations.entries()) {
+      for (const [_key, entry] of Destination.knownDestinations.entries()) {
         const public_key = entry[2];
         const identity = await Identity.fromPublicKey(public_key);
         const identity_hash = await Identity.truncatedHash(identity.publicKey);
         console.log(
-          `[DEBUG] Comparing ${bufToHex(target_hash)} vs calculated ${bufToHex(identity_hash)}`,
+          `[DEBUG] Comparing ${toHex(target_hash)} vs calculated ${toHex(identity_hash)}`,
         );
 
-        if (bufToHex(target_hash) === bufToHex(identity_hash)) {
+        if (toHex(target_hash) === toHex(identity_hash)) {
           identity.appData = entry[3];
           return identity;
         }
       }
       return null;
     } else {
-      const key = bufToHex(target_hash);
+      const key = toHex(target_hash);
       const entry = Destination.knownDestinations.get(key);
       if (entry) {
         const identity = await Identity.fromPublicKey(entry[2]);
