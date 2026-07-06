@@ -22,6 +22,8 @@ import { Token } from "../crypto/token.js";
 export class Identity extends EventTarget {
   static TRUNCATED_HASHLENGTH = 128;
 
+  _appData = new Uint8Array();
+
   /**
    * @param {CryptoKey|null} x25519Priv
    * @param {CryptoKey|null} ed25519Priv
@@ -45,7 +47,19 @@ export class Identity extends EventTarget {
     this.ed25519Pub = ed25519Pub;
     this.publicKey = publicKey;
     this.identityHash = identityHash;
-    this.appData = null;
+  }
+
+  /**
+   * @param {string} data
+   */
+  set appData(data) {
+    this._appData = new TextEncoder().encode(data);
+  }
+
+  /**
+   * @returns {string}
+  get appData() {
+    return new TextDecoder().decode(this._appData);
   }
 
   /**

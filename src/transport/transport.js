@@ -148,7 +148,6 @@ export class TransportCore extends EventTarget {
     // 1. The payload of an ANNOUNCE packet contains the public key
     //    and metadata required to build an Identity.
     // 2. We use Destination.remember to store this peer
-    console.log(`[DEBUG] Announce payload length: ${packet.payload.length}`);
 
     // In Reticulum, the identity key is at the very beginning of the payload.
     // If it's less than 32 bytes, the packet is corrupted.

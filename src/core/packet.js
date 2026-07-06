@@ -43,6 +43,7 @@ export const ContextType = {
   RESOURCE_PRF: 0x09,
   KEEPALIVE: 0x0a, // Often used in Links
   IDENTIFY: 0xfe, // 254: Link identity proof
+  LINKCLOSE: 0xFC,
   LRPROOF: 0xff, // 255: Link request proof
 };
 

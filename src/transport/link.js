@@ -145,35 +145,37 @@ export class Link extends EventTarget {
 
     // Route based on Reticulum Context Byte
     switch (decryptedPacket.contextByte) {
-      case 0x00: // Packet.NONE (Standard Data)
+      case ContextType.NONE: // Standard Data
         this.dispatchEvent(
           new CustomEvent("data", {
             detail: { packet: decryptedPacket, link: this.linkId },
           }),
         );
         break;
-      case 0x01: // Packet.RESOURCE
-      case 0x02: // Packet.RESOURCE_ADV
-      case 0x03: // Packet.RESOURCE_REQ
-      case 0x04: // Packet.RESOURCE_HMAC
-      case 0x05: // Packet.RESOURCE_PRF
+      case ContextType.RESOURCE:
+      case ContextType.RESOURCE_ADV:
+      case ContextType.RESOURCE_REQ:
+      case ContextType.RESOURCE_HMU:
+      case ContextType.RESOURCE_HMU:
+      case ContextType.RESOURCE_ICL:
+      case ContextType.RESOURCE_RCL:
+      case ContextType.RESOURCE_PRF:
         // Dispatch to your future Resource handler
         this.dispatchEvent(
           new CustomEvent("resource", { detail: { packet: decryptedPacket } }),
         );
         break;
-      case 0x06: // Packet.KEEPALIVE
+      case ContextType.KEEPALIVE: // Packet.KEEPALIVE
         this.dispatchEvent(
           new CustomEvent("keepalive", { detail: { packet: decryptedPacket } }),
         );
         break;
-      case 0x08: // Packet.LRPROOF
+      case ContextType.LPROOF: // Packet.LRPROOF
         this.dispatchEvent(
           new CustomEvent("lrproof", { detail: { packet: decryptedPacket } }),
         );
         break;
       case ContextType.IDENTIFY: {
-        console.log("IDENTIFY");
         const peerPublicKey = decryptedPacket.payload; // 64 bytes
         const peerIdentity = await Identity.fromPublicKey(peerPublicKey);
         const identityHash = await Identity.truncatedHash(
@@ -183,8 +185,6 @@ export class Link extends EventTarget {
 
         // ONLY store by Identity Hash. Do not store by senderDestHash here.
         await Destination.remember(packetHash, identityHash, peerPublicKey);
-
-        console.log(`[DEBUG] Caching Identity Hash: ${toHex(identityHash)}`);
 
         this.dispatchEvent(
           new CustomEvent("identify", {

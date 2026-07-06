@@ -75,7 +75,7 @@ export function createRNSFramerStream(packetClass) {
      * @param {TransformStreamDefaultController} controller
      */
     transform(packet, controller) {
-      console.log("Framer transform called");
+      // console.log("Framer transform called");
       const raw = packet.serialize();
       const escaped = hdlcEscape(raw);
 
@@ -84,7 +84,7 @@ export function createRNSFramerStream(packetClass) {
       frame.set(escaped, 1);
       frame[frame.length - 1] = FLAG;
 
-      console.log("Framer enqueuing frame", frame);
+      // console.log("Framer enqueuing frame", frame);
       controller.enqueue(frame);
     },
   });
@@ -105,7 +105,7 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
      * @param {TransformStreamDefaultController} controller
      */
     transform(chunk, controller) {
-      console.log(`[DEBUG] Received ${chunk.length} bytes from TCP socket`);
+      // console.log(`[DEBUG] Received ${chunk.length} bytes from TCP socket`);
       const combined = new Uint8Array(buffer.length + chunk.length);
       combined.set(buffer);
       combined.set(chunk, buffer.length);
