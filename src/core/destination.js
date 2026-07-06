@@ -22,17 +22,6 @@ export const Direction = {
 };
 
 /**
- * Types of destinations.
- * @enum {number}
- */
-export const DestinationType = {
-  SINGLE: 0x00,
-  GROUP: 0x01,
-  PLAIN: 0x02,
-  LINK: 0x03,
-};
-
-/**
  * Represents a Reticulum destination.
  */
 export class Destination extends EventTarget {
@@ -45,7 +34,7 @@ export class Destination extends EventTarget {
   /**
    * @param {string} name - The application name.
    * @param {Direction} direction - The direction of this destination.
-   * @param {DestinationType} type - The type of this destination.
+   * @param {DestType} type - The type of this destination.
    * @param {Identity|null} identity - The identity associated with this destination.
    * @param {import("../core/reticulum.js").Reticulum|null} interfaceLayer - An object that manages destinations and dispatches link requests.
    */
@@ -139,7 +128,7 @@ export class Destination extends EventTarget {
    * Static factory for creating a destination.
    * @param {string} name
    * @param {Direction} direction
-   * @param {DestinationType} type
+   * @param {DestType} type
    * @param {Identity|null} identity
    * @param {import("../core/reticulum.js").Reticulum|null} interfaceLayer - An object that manages destinations and dispatches link requests.
    * @returns {Promise<Destination>}
@@ -174,7 +163,7 @@ export class Destination extends EventTarget {
     const nameHashBuffer = await crypto.subtle.digest("SHA-256", nameBytes);
     this.nameHash = new Uint8Array(nameHashBuffer.slice(0, 10));
 
-    if (this.type === DestinationType.SINGLE && this.identity) {
+    if (this.type === DestType.SINGLE && this.identity) {
       // destHash = SHA256(nameHash || identityHash)[:16]
       const combined = new Uint8Array(
         this.nameHash.length + this.identity.identityHash.length,
@@ -184,7 +173,7 @@ export class Destination extends EventTarget {
 
       const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
       this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
-    } else if (this.type === DestinationType.GROUP && this.identity) {
+    } else if (this.type === DestType.GROUP && this.identity) {
       // Same as SINGLE for GROUP
       const combined = new Uint8Array(
         this.nameHash.length + this.identity.identityHash.length,
@@ -194,7 +183,7 @@ export class Destination extends EventTarget {
 
       const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
       this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
-    } else if (this.type === DestinationType.PLAIN) {
+    } else if (this.type === DestType.PLAIN) {
       // destHash = SHA256(nameHash)[:16]
       const destHashBuffer = await crypto.subtle.digest(
         "SHA-256",
@@ -209,7 +198,7 @@ export class Destination extends EventTarget {
   /**
    * Creates an IN destination.
    * @param {string} name
-   * @param {DestinationType} type
+   * @param {DestType} type
    * @param {Identity|null} identity
    * @param {import("../core/reticulum.js").Reticulum|null} interfaceLayer - An object that manages destinations and dispatches link requests.
    * @returns {Promise<Destination>}
@@ -227,7 +216,7 @@ export class Destination extends EventTarget {
   /**
    * Creates an OUT destination.
    * @param {string} name
-   * @param {DestinationType} type
+   * @param {DestType} type
    * @param {Identity|null} identity
    * @param {import("../core/reticulum.js").Reticulum|null} interfaceLayer - An object that manages destinations and dispatches link requests.
    * @returns {Promise<Destination>}
@@ -253,7 +242,7 @@ export class Destination extends EventTarget {
     return await Destination.create(
       name,
       direction,
-      DestinationType.SINGLE,
+      DestType.SINGLE,
       identity,
     );
   }
@@ -269,7 +258,7 @@ export class Destination extends EventTarget {
     return await Destination.create(
       name,
       direction,
-      DestinationType.GROUP,
+      DestType.GROUP,
       identity,
     );
   }
@@ -284,7 +273,7 @@ export class Destination extends EventTarget {
     return await Destination.create(
       name,
       direction,
-      DestinationType.PLAIN,
+      DestType.PLAIN,
       null,
     );
   }
@@ -483,7 +472,7 @@ export class Destination extends EventTarget {
    */
   async _handleData(packet) {
     let plaintext = null;
-    if (this.type === DestinationType.SINGLE && this.identity) {
+    if (this.type === DestType.SINGLE && this.identity) {
       plaintext = await this.identity.decrypt(packet.payload);
     } else {
       plaintext = packet.payload;

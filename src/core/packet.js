@@ -128,11 +128,11 @@ export class Packet {
     if (this.headerType === HeaderType.HEADER_2) {
       if (!this.transportId)
         throw new Error("Header type 2 requires a transportId");
-      uint8.set(this.transportId, offset);
+      uint8.set(this.transportId.subarray(0, 16), offset);
       offset += DST_LEN;
     }
 
-    uint8.set(this.destinationHash, offset);
+    uint8.set(this.destinationHash.subarray(0, 16), offset);
     offset += DST_LEN;
 
     // 4. Write Context (Unconditional)

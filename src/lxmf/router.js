@@ -3,11 +3,11 @@
  * @description LXMF Router for managing incoming and outgoing messages
  */
 
-import { Destination, DestinationType } from "../core/destination.js";
+import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { toHex } from "../utils/encoding.js";
-import { MicroMsgPack } from "../utils/msgpack.js";
 import { Message } from "./message.js";
+import { Packet, PacketType, DestType } from "../core/packet.js";
 
 /**
  * Handles LXMF routing and message processing.
@@ -34,7 +34,7 @@ export class LXMRouter extends EventTarget {
     // Assumes Destination.IN was updated to accept the rnsCore as the 4th/5th parameter
     const deliveryDest = await Destination.IN(
       "lxmf.delivery",
-      DestinationType.SINGLE,
+      DestType.SINGLE,
       this.identity,
       this.rns,
     );
@@ -84,6 +84,7 @@ export class LXMRouter extends EventTarget {
 
           // Listen for data streaming over the established link
           link.addEventListener("data", async (pktEvent) => {
+            console.log('RECV', pktEvent.detail.packet, pktEvent.detail.link);
             await this._processIncomingMessage(
               /** @type {any} */ (pktEvent).detail.packet.payload,
               pktEvent.detail.link,
@@ -117,7 +118,7 @@ export class LXMRouter extends EventTarget {
           // This binds the "Author" to their "Inbox"
           const peerDeliveryDest = await Destination.OUT(
             "lxmf.delivery",
-            DestinationType.SINGLE,
+            DestType.SINGLE,
             peerIdentity,
             this.rns,
           );
@@ -186,7 +187,10 @@ export class LXMRouter extends EventTarget {
     // 4. Dispatch to the UI layer
     this.dispatchEvent(
       new CustomEvent("message", {
-        detail: message,
+        detail: {
+          message,
+          link: linkId,
+        },
       }),
     );
   }
@@ -205,5 +209,22 @@ export class LXMRouter extends EventTarget {
       const wireData = this.pendingMessages.get(hashHex);
       await this._processIncomingMessage(wireData, linkId);
     }
+  }
+
+  /**
+   * @param {Message} message
+   * @param {Identity} senderIdentity
+   * @param {Uint8Array|null} linkId
+   */
+  async send(message, senderIdentity, linkId) {
+    const { wireData } = await message.serialize(senderIdentity);
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      destinationHash: message.destinationHash,
+      destinationType: linkId ? DestType.LINK : DestType.SINGLE,
+      payload: wireData,
+    });
+    console.log('SEND', packet, linkId);
+    await this.rns.transport.sendPacket(packet, linkId);
   }
 }

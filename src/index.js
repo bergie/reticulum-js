@@ -15,7 +15,7 @@ export { Reticulum } from "./core/reticulum.js";
 // --- 3. Network Interfaces ---
 // The physical and virtual pathways into the mesh.
 export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
-export { Message } from "./lxmf/message.js";
+export { Message as LXMessage } from "./lxmf/message.js";
 
 // --- 5. LXMF (Lightweight Extensible Message Format) ---
 // Asynchronous, store-and-forward messaging primitives.

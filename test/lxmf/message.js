@@ -11,14 +11,14 @@ test("Message serialization and deserialization", async (t) => {
   const fields = { test: "field" };
   const timestamp = Date.now() / 1000.0;
 
-  const msg = new Message(
-    identity.identityHash,
-    destHash,
+  const msg = new Message({
+    sourceHash: identity.identityHash,
+    destinationHash: destHash,
     timestamp,
     title,
     content,
     fields,
-  );
+  });
   const { messageId, wireData } = await msg.serialize(identity);
 
   await t.test("serialization produces valid wireData", async () => {

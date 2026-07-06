@@ -5,7 +5,6 @@ import { Identity } from "../core/identity.js";
 import { ContextType, Packet } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
 import { Token } from "../crypto/token.js";
-import { toHex } from "../utils/encoding.js";
 
 /**
  * Handles the cryptographic derivation of link keys.

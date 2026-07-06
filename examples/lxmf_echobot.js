@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   Identity,
   LXMRouter,
+  LXMessage,
   Reticulum,
   TCPClientInterface,
 } from "../src/index.js";
@@ -63,7 +64,8 @@ async function startEchoBot() {
   // Handle Incoming Messages
   lxmf.addEventListener("message", async (event) => {
     console.log("MESSAGE", event);
-    const message = event.detail;
+    const message = event.detail.message;
+    const link = event.detail.link;
     const senderHashHex = Buffer.from(message.sourceHash).toString("hex");
 
     console.log(`\n[+] Received message from ${senderHashHex}`);
@@ -72,17 +74,17 @@ async function startEchoBot() {
     }
     console.log(`    Body:  ${message.content}`);
 
-    // 6. Construct and Send the Echo Reply
+    // Construct and Send the Echo Reply
     try {
-      const replyText = `Echo: ${message.content}`;
-      const replyBytes = new TextEncoder().encode(replyText);
-      const replyTitle = message.title.startsWith("Re:")
-        ? message.title
-        : `Re: ${message.title}`;
+      const reply = new LXMessage({
+        sourceHash: message.destinationHash,
+        destinationHash: message.sourceHash,
+        content: `Echo: ${message.content}`,
+        title: message.title.startsWith("Re:") ? message.title : `Re: ${message.title}`,
+      });
 
       // Send the message back to the sender's destination hash
-      await lxmf.send(message.sourceHash, replyBytes, replyTitle);
-
+      await lxmf.send(reply, botIdentity, link);
       console.log(`[->] Echo sent back successfully.`);
     } catch (error) {
       console.error(`[!] Failed to route echo reply:`, error);

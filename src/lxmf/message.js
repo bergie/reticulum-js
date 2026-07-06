@@ -9,17 +9,18 @@ import { MicroMsgPack } from "../utils/msgpack.js";
  * Represents an LXMF message.
  */
 export class Message {
-  /**
-   * @param {Uint8Array} sourceHash
-   * @param {Uint8Array} destinationHash
-   * @param {number} timestamp
-   * @param {string} title
-   * @param {string} content
-   * @param {Record<string, any>} fields
-   * @param {Uint8Array} signature
-   * @param {Uint8Array} signedPart
-   */
-  constructor(
+/**
+ * @param {Object} options
+ * @param {Uint8Array} options.sourceHash
+ * @param {Uint8Array} options.destinationHash
+ * @param {number} [options.timestamp]
+ * @param {string} [options.title]
+ * @param {string} [options.content]
+ * @param {Record<string, any>} [options.fields]
+ * @param {Uint8Array} [options.signature]
+ * @param {Uint8Array} [options.signedPart]
+ */
+  constructor({
     sourceHash,
     destinationHash,
     timestamp,
@@ -28,11 +29,11 @@ export class Message {
     fields,
     signature,
     signedPart,
-  ) {
+  } = {}) {
     this.sourceHash = sourceHash;
     this.senderHash = sourceHash;
     this.destinationHash = destinationHash;
-    this.timestamp = timestamp;
+    this.timestamp = timestamp || new Date().getTime(),
     this.title = title;
     this.content = content;
     this.fields = fields;
@@ -96,7 +97,7 @@ export class Message {
         ? new TextDecoder().decode(titleBytes)
         : titleBytes;
 
-    return new Message(
+    return new Message({
       sourceHash,
       destinationHash,
       timestamp,
@@ -105,7 +106,7 @@ export class Message {
       fields,
       signature,
       signedPart,
-    );
+    });
   }
 
   /**
@@ -150,6 +151,9 @@ export class Message {
     wireData.set(signature, 32);
     wireData.set(msgpackPayload, 96);
 
-    return { messageId, wireData };
+    return {
+      messageId,
+      wireData,
+    };
   }
 }

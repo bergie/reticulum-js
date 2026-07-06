@@ -203,9 +203,21 @@ export class TransportCore extends EventTarget {
 
   /**
    * @param {import("../core/packet.js").Packet} packet
+   * @param {Uint8Array|null} linkId
    */
-  async sendPacket(packet) {
+  async sendPacket(packet, linkId = null) {
     const destHex = Buffer.from(packet.destinationHash).toString("hex");
+
+    if (linkId) {
+      const linkHex = toHex(linkId);
+      const link = this.activeLinks.get(linkHex);
+      if (!link) {
+        throw new Error(`Link ${linkHex} is not available`);
+      }
+      await link.send(packet);
+      return;
+    }
+
     const nextHopInterface =
       this.routingTable.getRoute(packet.destinationHash)?.interface ||
       this.defaultInterface;
