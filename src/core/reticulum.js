@@ -45,31 +45,6 @@ export class Reticulum {
   }
 
   /**
-   * Requests the identity and path for a given destination hash.
-   * @param {Uint8Array} targetHash - The 16-byte destination/identity hash
-   */
-  async requestIdentity(targetHash) {
-    // 1. Construct the Identity Request Packet
-    // Reticulum uses PacketType.LINKREQUEST (0x02) or specific Announce
-    // management flags depending on the protocol version.
-    const requestPacket = new Packet({
-      headerType: HeaderType.HEADER_1,
-      hops: 0,
-      transportType: 0, // Broadcast/propagation
-      destinationType: DestType.PLAIN,
-      packetType: PacketType.ANNOUNCE, // Announce-related management
-      contextFlag: true,
-      contextByte: 0xfd, // Packet.ID_REQUEST
-      destinationHash: targetHash,
-      payload: new Uint8Array(0), // No payload needed, the hash is in the header
-    });
-
-    // 2. Broadcast the request to the network
-    console.log(`[RNS] Broadcasting Identity Request for ${toHex(targetHash)}`);
-    await this.transport.sendPacket(requestPacket);
-  }
-
-  /**
    * Binds an application-level Destination to the network.
    * When your web components spin up and instantiate a Yjs provider,
    * this is where they register their collaborative endpoints to receive traffic.

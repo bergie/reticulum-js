@@ -172,8 +172,7 @@ export class LXMRouter extends EventTarget {
       console.log(`[ROUTER] Identity unknown for ${sourceHex}. Requesting...`);
       console.log(`[ROUTER] Destination ${toHex(destinationHash)}`);
 
-      // Broadcast an Identity Request over the network
-      await this.rns.requestIdentity(sourceHash);
+      // TODO: Broadcast a path request over Reticulum to try to find the sender identity
 
       // Park the message for a limited time (e.g., 5 seconds)
       this.pendingMessages.set(sourceHex, wireData);
