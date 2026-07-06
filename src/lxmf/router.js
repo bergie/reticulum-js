@@ -150,7 +150,7 @@ export class LXMRouter extends EventTarget {
       throw new Error("LXMF message too short to contain required headers");
     }
 
-    // 1. Slice the wireData into Hash, Hash, Sig, and Payload views
+    // Slice the wireData into Hash, Hash, Sig, and Payload views
     const destinationHash = wireData.slice(0, 16);
     const sourceHash = wireData.slice(16, 32);
     const sourceHex = toHex(sourceHash);
@@ -165,7 +165,7 @@ export class LXMRouter extends EventTarget {
       `[DEBUG] Known keys: ${[...Destination.knownDestinations.keys()].join(", ")}`,
     );
 
-    // 3. Validate signature against the SENDER'S public key
+    // Validate signature against the SENDER'S public key
     const senderIdentity = await Destination.recall(sourceHash);
 
     if (!senderIdentity) {
@@ -184,44 +184,35 @@ export class LXMRouter extends EventTarget {
     // If we reach here, we have the identity, clear any pending message
     this.pendingMessages.delete(sourceHex);
 
-    // Reconstruct the idBuffer (Destination + Source + Payload)
-    const idBuffer = new Uint8Array(32 + payload.length);
+    const identityHash = await Identity.truncatedHash(senderIdentity.publicKey);
+
+    // Calculate the Message ID exactly as LXMF expects
+    // SHA-256 of: Dest (16) + Source (16) + Payload (N)
+    const idBuffer = new Uint8Array(16 + 16 + payload.length);
     idBuffer.set(destinationHash, 0);
     idBuffer.set(sourceHash, 16);
     idBuffer.set(payload, 32);
+    const messageId = new Uint8Array(await crypto.subtle.digest("SHA-256", idBuffer));
 
-    // Calculate the Message ID (SHA-256 of the idBuffer)
-    const messageIdBuffer = await crypto.subtle.digest("SHA-256", idBuffer);
-    const messageId = new Uint8Array(messageIdBuffer);
-
-    // The signed part: DEST + SOURCE + PAYLOAD + ID
-    // Some implementations require the inclusion of the destinationHash in the signature
+    // Construct the actual buffer that was signed by the sender
+    // Dest (16) + Source (16) + Payload (N) + MessageID (32)
     const signedPart = new Uint8Array(16 + 16 + payload.length + 32);
-    signedPart.set(destinationHash, 0); // 16 bytes
-    signedPart.set(sourceHash, 16);     // 16 bytes
-    signedPart.set(payload, 32);        // N bytes
-    signedPart.set(messageId, 32 + payload.length); // 32 bytes
-    console.log("SignedPart Length:", signedPart.byteLength);
+    signedPart.set(destinationHash, 0);
+    signedPart.set(sourceHash, 16);
+    signedPart.set(payload, 32);
+    signedPart.set(messageId, 16 + 16 + payload.length);
 
-    // CRITICAL FIX: The sender ONLY signed the 32-byte Message ID.
-    // Do not concatenate anything else!
-    console.log(
-      `[DEBUG] Validating with key: ${toHex(senderIdentity.publicKey)}`,
+    // Verify using pure WebCrypto
+    // Your senderIdentity.ed25519Pub is already correctly sized at 32 bytes
+    const isValid = await crypto.subtle.verify(
+      "Ed25519",
+      senderIdentity.ed25519Pub,
+      signature,
+      signedPart
     );
-    console.log(`[DEBUG] Signature: ${toHex(signature)}`);
-    console.log(`[DEBUG] Data being signed: ${toHex(signedPart)}`);
-    console.log(`[DEBUG] Signature byte length: ${signature.byteLength}`); // Should be 64
-    if (signature.byteLength !== 64) {
-      throw new Error(
-        `Signature length error! Expected 64, got ${signature.byteLength}`,
-      );
-    }
-    const isValid = await senderIdentity.validate(signature, signedPart);
 
     if (!isValid) {
-      throw new Error(
-        "Invalid LXMF message signature: Cryptographic proof failed.",
-      );
+      throw new Error("Invalid LXMF message signature: Cryptographic proof failed.");
     }
 
     // Decode the MessagePack payload

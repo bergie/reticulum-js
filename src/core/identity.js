@@ -447,11 +447,8 @@ export class Identity extends EventTarget {
       64,
     );
     const dataView = new Uint8Array(messageId.buffer, messageId.byteOffset, 32);
-    return await crypto.subtle.verify(
-      "Ed25519",
-      this.ed25519Pub,
-      /** @type {any} */ (signatureView),
-      /** @type {any} */ (dataView),
-    );
+    const keyData = await crypto.subtle.exportKey("raw", this.ed25519Pub);
+
+    return await crypto.subtle.verify("Ed25519", this.ed25519Pub, signatureView, dataView);
   }
 }

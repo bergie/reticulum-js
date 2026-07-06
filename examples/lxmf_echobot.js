@@ -72,8 +72,8 @@ async function startEchoBot() {
   lxmf.addEventListener("message", async (event) => {
     const { source, title, content } = event.detail;
 
-    const senderHashHex = Buffer.from(source.hash).toString("hex");
-    const textContent = new TextDecoder().decode(content);
+    const senderHashHex = Buffer.from(source).toString("hex");
+    const textContent = content;
 
     console.log(`\n[+] Received message from ${senderHashHex}`);
     console.log(`    Title: ${title}`);
