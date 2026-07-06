@@ -5,7 +5,7 @@
 
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
-import { DestType, Packet, PacketType } from "../core/packet.js";
+import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
 import { Message } from "./message.js";
 
@@ -222,6 +222,8 @@ export class LXMRouter extends EventTarget {
       packetType: PacketType.DATA,
       destinationHash: message.destinationHash,
       destinationType: linkId ? DestType.LINK : DestType.SINGLE,
+      contextByte: linkId ? ContextType.CHANNEL : ContextType.NONE,
+      contextFlag: linkId ? true : false,
       payload: wireData,
     });
     console.log("SEND", packet, linkId);
