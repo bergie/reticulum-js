@@ -99,6 +99,9 @@ export class Packet {
     return flags;
   }
 
+  /**
+   * @returns {Uint8Array}
+   */
   serialize() {
     const flags = this._buildFlagsByte();
     const DST_LEN = 16; // Standard Reticulum truncated hash length
@@ -145,6 +148,10 @@ export class Packet {
     return uint8;
   }
 
+  /**
+   * @param {Uint8Array} data
+   * @returns {Packet}
+   */
   static deserialize(data) {
     const DST_LEN = 16; // Standard Reticulum truncated hash length (128 bits)
 

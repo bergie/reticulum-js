@@ -239,12 +239,7 @@ export class Destination extends EventTarget {
    * @returns {Promise<Destination>}
    */
   static async SINGLE(name, direction, identity = null) {
-    return await Destination.create(
-      name,
-      direction,
-      DestType.SINGLE,
-      identity,
-    );
+    return await Destination.create(name, direction, DestType.SINGLE, identity);
   }
 
   /**
@@ -255,12 +250,7 @@ export class Destination extends EventTarget {
    * @returns {Promise<Destination>}
    */
   static async GROUP(name, direction, identity = null) {
-    return await Destination.create(
-      name,
-      direction,
-      DestType.GROUP,
-      identity,
-    );
+    return await Destination.create(name, direction, DestType.GROUP, identity);
   }
 
   /**
@@ -270,12 +260,7 @@ export class Destination extends EventTarget {
    * @returns {Promise<Destination>}
    */
   static async PLAIN(name, direction) {
-    return await Destination.create(
-      name,
-      direction,
-      DestType.PLAIN,
-      null,
-    );
+    return await Destination.create(name, direction, DestType.PLAIN, null);
   }
 
   /**
