@@ -11,7 +11,7 @@ Some principles:
 
 ## Status
 
-Currently just a sketch.
+Early stages, but we are able to receive LXMF messages.
 
 ## License
 
