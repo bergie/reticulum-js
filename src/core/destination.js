@@ -345,6 +345,8 @@ export class Destination extends EventTarget {
             linkId,
             local_ephemeral_keypair,
             peer_x25519_pub_bytes,
+            null,
+            null,
             this.interfaceLayer.transport,
           );
           await link.deriveKeys();
@@ -546,6 +548,8 @@ export class Destination extends EventTarget {
       linkId,
       ephemeralKey,
       initiatorPubBytes,
+      null,
+      null,
       this.interfaceLayer.transport,
     );
     await link.deriveKeys();

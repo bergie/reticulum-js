@@ -41,19 +41,25 @@ export const HeaderType = {
 export const ContextType = {
   NONE: 0x00,
   RESOURCE: 0x01,
-  REQUEST: 0x02,
-  RESPONSE: 0x03,
-  RESOURCE_ADV: 0x04,
-  RESOURCE_REQ: 0x05,
-  RESOURCE_HMU: 0x06,
-  RESOURCE_ICL: 0x07,
-  RESOURCE_RCL: 0x08,
-  RESOURCE_PRF: 0x09,
-  KEEPALIVE: 0x0a, // Often used in Links
-  IDENTIFY: 0xfe, // 254: Link identity proof
-  CHANNEL: 0x0e,
-  LINKCLOSE: 0xfc,
-  LRPROOF: 0xff, // 255: Link request proof
+  RESOURCE_ADV: 0x02,
+  RESOURCE_REQ: 0x03,
+  RESOURCE_HMU: 0x04,
+  RESOURCE_PRF: 0x05,
+  RESOURCE_ICL: 0x06,
+  RESOURCE_RCL: 0x07,
+  CACHE_REQUEST: 0x08,
+  REQUEST: 0x09,
+  RESPONSE: 0x0A,
+  PATH_RESPONSE: 0x0B,
+  COMMAND: 0x0C,
+  COMMAND_STATUS: 0x0D,
+  CHANNEL: 0x0E,
+  KEEPALIVE: 0xFA,
+  LINKIDENTIFY: 0xFB,
+  LINKCLOSE: 0xFC,
+  LINKPROOF: 0xFD,
+  LRRTT: 0xFE,
+  LRPROOF: 0xFF,
 };
 
 /**

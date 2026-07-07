@@ -5,6 +5,8 @@ import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
 import { Token } from "../crypto/token.js";
+import { exportPublicKey } from "../crypto/keys.js";
+import { toHex } from "../utils/encoding.js";
 
 /**
  * Handles the cryptographic derivation of link keys.
@@ -188,7 +190,8 @@ export class Link extends EventTarget {
       payload: proofPayload,
     });
 
-    await this.send(proofPacket);
+    // Proof packets are not encrypted
+    await this.transport.sendPacket(proofPacket);
   }
 
   /**
@@ -277,7 +280,12 @@ export class Link extends EventTarget {
       throw new Error("Link token not available. Did you call deriveKeys()?");
     }
 
-    const decryptedPayload = await /** @type {any} */ (this.token).decrypt(packet.payload);
+    let decryptedPayload;
+    if (packet.packetType === PacketType.PROOF && packet.contextByte === ContextType.LRPROOF) {
+      decryptedPayload = packet.payload;
+    } else {
+      decryptedPayload = await /** @type {any} */ (this.token).decrypt(packet.payload);
+    }
 
     const decryptedPacket = new Packet({
       headerType: packet.headerType,

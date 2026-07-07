@@ -1,9 +1,9 @@
 import assert from "node:assert";
 import {
   Destination,
-  DestinationType,
   Direction,
 } from "../../src/core/destination.js";
+import { DestType } from "../../src/core/packet.js";
 import { Identity } from "../../src/core/identity.js";
 
 async function testDestination() {
@@ -17,7 +17,7 @@ async function testDestination() {
     Direction.OUT,
     myIdentity,
   );
-  assert.strictEqual(singleDest.type, DestinationType.SINGLE);
+  assert.strictEqual(singleDest.type, DestType.SINGLE);
   assert.strictEqual(singleDest.direction, Direction.OUT);
   assert.ok(singleDest.destinationHash);
   assert.strictEqual(singleDest.nameHash.length, 10);
@@ -25,7 +25,7 @@ async function testDestination() {
 
   // Test PLAIN destination
   const plainDest = await Destination.PLAIN("someapp", Direction.IN);
-  assert.strictEqual(plainDest.type, DestinationType.PLAIN);
+  assert.strictEqual(plainDest.type, DestType.PLAIN);
   assert.strictEqual(plainDest.direction, Direction.IN);
   assert.ok(plainDest.destinationHash);
   assert.strictEqual(plainDest.destinationHash.length, 16);
@@ -36,7 +36,7 @@ async function testDestination() {
     Direction.OUT,
     myIdentity,
   );
-  assert.strictEqual(groupDest.type, DestinationType.GROUP);
+  assert.strictEqual(groupDest.type, DestType.GROUP);
   assert.strictEqual(groupDest.direction, Direction.OUT);
   assert.ok(groupDest.destinationHash);
   assert.strictEqual(groupDest.destinationHash.length, 16);
@@ -44,7 +44,7 @@ async function testDestination() {
   // Test IN/OUT helpers
   const inDest = await Destination.IN(
     "myapp",
-    DestinationType.SINGLE,
+    DestType.SINGLE,
     myIdentity,
   );
   assert.strictEqual(inDest.direction, Direction.IN);
@@ -52,7 +52,7 @@ async function testDestination() {
 
   const outDest = await Destination.OUT(
     "myapp",
-    DestinationType.SINGLE,
+    DestType.SINGLE,
     myIdentity,
   );
   assert.strictEqual(outDest.direction, Direction.OUT);
