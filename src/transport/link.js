@@ -281,7 +281,7 @@ export class Link extends EventTarget {
     }
 
     let decryptedPayload;
-    if (packet.packetType === PacketType.PROOF && packet.contextByte === ContextType.LRPROOF) {
+    if (packet.packetType === PacketType.PROOF) {
       decryptedPayload = packet.payload;
     } else {
       decryptedPayload = await /** @type {any} */ (this.token).decrypt(packet.payload);
@@ -303,14 +303,16 @@ export class Link extends EventTarget {
 
     switch (decryptedPacket.contextByte) {
       case ContextType.NONE:
-        if (this.transport) {
-          await this.provePacket(packet);
+        if (this.transport && decryptedPacket.packetType !== PacketType.PROOF) {
+          await this.provePacket(decryptedPacket);
         }
-        this.dispatchEvent(
-          new CustomEvent("data", {
-            detail: { packet: decryptedPacket, link: this.linkId },
-          }),
-        );
+        if (decryptedPacket.packetType !== PacketType.PROOF) {
+          this.dispatchEvent(
+            new CustomEvent("data", {
+              detail: { packet: decryptedPacket, link: this.linkId },
+            }),
+          );
+        }
         break;
 
       case ContextType.RESOURCE_REQ: {

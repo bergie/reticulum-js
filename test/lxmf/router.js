@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { EventEmitter } from "node:events";
 import { test } from "node:test";
-import { Destination, DestType } from "../../src/core/destination.js";
+import { Destination } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import { PacketType } from "../../src/core/packet.js";
 import { Message } from "../../src/lxmf/message.js";

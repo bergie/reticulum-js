@@ -63,7 +63,6 @@ async function startEchoBot() {
 
   // Handle Incoming Messages
   lxmf.addEventListener("message", async (event) => {
-    console.log("MESSAGE", event);
     const message = event.detail.message;
     const link = event.detail.link;
     const senderHashHex = Buffer.from(message.sourceHash).toString("hex");
