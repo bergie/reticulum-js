@@ -106,17 +106,48 @@ export class Packet {
   }
 
   /**
+   * @returns {Uint8Array}
+   */
+  getHashablePart() {
+    if (!this.raw) {
+      this.raw = this.serialize();
+    }
+    // 1. Get flags byte and mask it (0x0F)
+    const flags = this.raw[0] & 0x0F;
+
+    // 2. Determine offset based on header_type
+    // HEADER_2 (Type 2) is 32 bytes (16 dest + 16 transport)
+    // HEADER_1 (Type 1) is 16 bytes (16 dest)
+    // Note: The indexing logic depends on your framing.
+    // In Python, it looks like it assumes a specific starting point.
+
+    let sliceOffset;
+    if (this.headerType === 0x02) {
+        // TRUNCATED_HASHLENGTH is 256 bits / 8 = 32 bytes?
+        // No, in Reticulum, truncated is 16 bytes (128 bits).
+        // 16 bytes + 2 (header flags + hops) = 18.
+        sliceOffset = 18;
+    } else {
+        // HEADER_1: 2 bytes (flags/hops) + 16 bytes dest = 18?
+        // Your Python snippet uses [2:], let's follow that.
+        sliceOffset = 2;
+    }
+
+    const payloadPart = this.raw.slice(sliceOffset);
+
+    const hashablePart = new Uint8Array(1 + payloadPart.length);
+    hashablePart[0] = flags;
+    hashablePart.set(payloadPart, 1);
+
+    return hashablePart;
+  }
+
+  /**
    * @returns {Promise<Uint8Array>}
    */
   async getHash() {
-    // 1. Get the serialized wire-format bytes
-    const serialized = this.serialize();
-
-    // 2. Compute SHA-256 digest
-    const hashBuffer = await crypto.subtle.digest(
-      "SHA-256",
-      /** @type {any} */ (serialized),
-    );
+    const hashablePart = this.getHashablePart();
+    const hashBuffer = await crypto.subtle.digest("SHA-256", hashablePart);
     return new Uint8Array(hashBuffer);
   }
 

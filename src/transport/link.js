@@ -222,22 +222,17 @@ export class Link extends EventTarget {
    * @return {Promise<Uint8Array>}
    */
   async sign(data) {
-    if (!this.derivedKey) {
-      throw new Error("Cannot sign payload: Link key not derived.");
+    if (!this.sigPrv || !this.sigPubBytes) {
+      throw new Error("Link proof requires a signing key.");
     }
-    const hmacKey = await crypto.subtle.importKey(
-      "raw",
-      this.derivedKey,
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"]
-    );
-    const signatureBuffer = await crypto.subtle.sign(
-      "HMAC",
-      hmacKey,
-      data,
-    );
-    return new Uint8Array(signatureBuffer);
+    if (this.sigPrv) {
+      const signature = await crypto.subtle.sign(
+        "Ed25519",
+        this.sigPrv,
+        /** @type {any} */ (data),
+      );
+      return new Uint8Array(signature);
+    }
   }
 
   /**
