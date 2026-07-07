@@ -39,6 +39,9 @@ export class LinkEncryption {
 }
 
 export class Link extends EventTarget {
+  /** @type {number} */
+  mode = 0;
+
   /**
    * @param {Destination} destination
    * @param {Uint8Array} linkId
@@ -95,7 +98,7 @@ export class Link extends EventTarget {
       throw new Error("Link transport not available.");
     }
 
-    const encryptedPayload = await this.token.encrypt(packet.payload);
+    const encryptedPayload = await this.encrypt(packet.payload);
 
     // FIX: Regardless of what the application requested, if this packet
     // goes over a Link, the outer transport frame MUST be addressed to the Link.
@@ -201,6 +204,14 @@ export class Link extends EventTarget {
     const view = new DataView(buffer);
     view.setUint32(0, signallingValue, false);
     return new Uint8Array(buffer.slice(1));
+  }
+
+  /**
+   * @param {Uint8Array} data
+   * @return {Promise<Uint8Array>}
+   */
+  async encrypt(data) {
+    return await this.token.encrypt(data);
   }
 
   /**

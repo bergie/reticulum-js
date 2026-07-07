@@ -222,14 +222,15 @@ export class LXMRouter extends EventTarget {
       packetType: PacketType.DATA,
       destinationHash: message.destinationHash,
       // destinationType: linkId ? DestType.LINK : DestType.SINGLE,
-      transportType: 1,
+      transportType: 0,
       destinationType: DestType.SINGLE,
       payload: wireData,
     });
     console.log(`DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
     console.log(`DEBUG: Sending to ${toHex(message.destinationHash)}`);
+    // await this.deliveryDest.send(packet);
     // console.log("SEND", packet, linkId);
-    //await this.rns.transport.sendPacket(packet, linkId);
     await this.rns.transport.sendPacket(packet, linkId);
+    //await this.rns.transport.sendPacket(packet, linkId);
   }
 }

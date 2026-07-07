@@ -43,7 +43,7 @@ export class TransportCore extends EventTarget {
     // 3. Handle graceful teardown
     iface.addEventListener("closed", () => this.removeInterface(iface));
     iface.addEventListener("error", (e) =>
-      console.error(`[!] Interface ${iface.name} error:`, e.message),
+      console.error(`[!] Interface ${iface.name} error:`, e.detail.message),
     );
 
     console.log(`[+] Transport bound to interface: ${iface.name}`);
@@ -81,9 +81,6 @@ export class TransportCore extends EventTarget {
     console.log(`[-] Link closed for ${hex}`);
   }
 
-  /**
-   * @param {import("../core/destination.js").Destination} destination
-   */
   /**
    * @param {import("../core/destination.js").Destination} destination
    */

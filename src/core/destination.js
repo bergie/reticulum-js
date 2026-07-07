@@ -395,7 +395,7 @@ export class Destination extends EventTarget {
             payload: payload,
           });
 
-          await activeTransport.sendPacket(packet);
+          await this.interfaceLayer.transport.sendPacket(packet);
         } catch (e) {
           clearTimeout(timer);
           this.removeEventListener("link_established", onLinkEstablished);
@@ -624,5 +624,34 @@ export class Destination extends EventTarget {
       }
       return null;
     }
+  }
+
+  /**
+   * @param {Uint8Array} data
+   * @return {Promise<Uint8Array>}
+   */
+  async encrypt(data) {
+    return await this.identity.encrypt(data);
+  }
+
+  /**
+   * @param {Packet} packet
+   */
+  async send(packet) {
+    const encryptedPayload = await this.encrypt(packet.payload);
+    const encryptedPacket = new Packet({
+      headerType: packet.headerType,
+      hops: packet.hops,
+      transportType: packet.transportType,
+      destinationType: packet.destinationType,
+      destinationHash: packet.destinationHash,
+      packetType: packet.packetType,
+      contextFlag: packet.contextFlag,
+      contextByte: packet.contextByte,
+      payload: encryptedPayload,
+      transportId: packet.transportId,
+    });
+
+    await this.interfaceLayer.transport.sendPacket(encryptedPacket);
   }
 }
