@@ -61,14 +61,26 @@ export class Link extends EventTarget {
     this.ephemeralKeyPair = ephemeralKeyPair;
     this.peerPubBytes = peerPubBytes;
     this.transport = transport;
-    // Do NOT instantiate the Token here yet
+    this.mtu = 1024;
     this.token = null;
-    // Ensure received packets are processed in order
     this._rxQueue = Promise.resolve();
+
+    // Store pending resources waiting for a RESOURCE_REQ from NomadNet
+    this.pendingResources = new Map();
+  }
+
+  register_incoming_resource(resource) {
+    this.addEventListener("resource", (event) => {
+      const { packet } = /** @type {any} */ (event).detail;
+      if (resource.link && toHex(packet.destinationHash) === toHex(resource.link.linkId)) {
+        resource.receivePart(packet);
+      }
+    });
   }
 
   /**
    * Encrypts and sends a packet.
+   * CRITICAL FIX: Forces link-layer routing.
    * @param {Packet} packet
    */
   async send(packet) {
@@ -81,20 +93,60 @@ export class Link extends EventTarget {
 
     const encryptedPayload = await this.token.encrypt(packet.payload);
 
+    // FIX: Regardless of what the application requested, if this packet
+    // goes over a Link, the outer transport frame MUST be addressed to the Link.
+    // This prevents the "Ratchet HMAC" error on the receiving end.
     const encryptedPacket = new Packet({
       headerType: packet.headerType,
       hops: packet.hops,
       transportType: packet.transportType,
-      destinationType: packet.destinationType,
+
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+
       packetType: packet.packetType,
       contextFlag: packet.contextFlag,
-      destinationHash: this.linkId,
       contextByte: packet.contextByte,
       payload: encryptedPayload,
       transportId: packet.transportId,
     });
 
     await this.transport.sendPacket(encryptedPacket);
+  }
+
+  /**
+   * Initiates a Resource transfer over the link.
+   * LXMF strictly requires all link-based payloads to be wrapped as Resources.
+   * @param {Uint8Array} msgpackData - The serialized LXMF message buffer
+   * @returns {Promise<Uint8Array>} The 32-byte resource hash
+   */
+  async sendResourceAdvertisement(msgpackData) {
+    // 1. Calculate SHA-256 hash of the payload
+    const dataHash = new Uint8Array(await crypto.subtle.digest("SHA-256", msgpackData));
+
+    // 2. Pack the payload size as a 64-bit big-endian integer (8 bytes)
+    const sizeBuffer = new ArrayBuffer(8);
+    const sizeView = new DataView(sizeBuffer);
+    sizeView.setBigUint64(0, BigInt(msgpackData.length), false);
+
+    // 3. Construct Reticulum RESOURCE_ADV payload: [32-byte hash][8-byte size]
+    const advPayload = new Uint8Array(40);
+    advPayload.set(dataHash, 0);
+    advPayload.set(new Uint8Array(sizeBuffer), 32);
+
+    // 4. Save the payload in memory to respond when NomadNet requests it
+    this.pendingResources.set(toHex(dataHash), msgpackData);
+
+    // 5. Send the Advertisement packet over the link
+    const advPacket = new Packet({
+      packetType: PacketType.DATA,
+      contextByte: ContextType.RESOURCE_ADV,
+      payload: advPayload,
+    });
+
+    await this.send(advPacket);
+
+    return dataHash;
   }
 
   /**
@@ -116,31 +168,26 @@ export class Link extends EventTarget {
   }
 
   /**
-   * Decrypts an incoming packet and dispatches the plaintext.
    * @param {Packet} packet
    */
   async receive(packet) {
-    // Chain the new packet onto the queue. It will not execute until
-    // all previous packets have completely finished their async tasks.
     this._rxQueue = this._rxQueue
       .then(() => this._processPacket(packet))
       .catch((err) => {
         console.error("[LINK] Error processing packet in queue:", err);
       });
-
     await this._rxQueue;
   }
 
   /**
-   * The actual decryption and multiplexing logic (your previous receive method).
-   * @private
+   * @param {Packet} packet
    */
   async _processPacket(packet) {
     if (!this.token) {
       throw new Error("Link token not available. Did you call deriveKeys()?");
     }
 
-    const decryptedPayload = await this.token.decrypt(packet.payload);
+    const decryptedPayload = await /** @type {any} */ (this.token).decrypt(packet.payload);
 
     const decryptedPacket = new Packet({
       headerType: packet.headerType,
@@ -156,46 +203,59 @@ export class Link extends EventTarget {
       raw: packet.payload,
     });
 
-    // Route based on Reticulum Context Byte
     switch (decryptedPacket.contextByte) {
-      case ContextType.NONE: // Standard Data
+      case ContextType.NONE:
+        await this.provePacket(packet);
         this.dispatchEvent(
           new CustomEvent("data", {
             detail: { packet: decryptedPacket, link: this.linkId },
           }),
         );
         break;
+
+      case ContextType.RESOURCE_REQ: {
+        // When NomadNet receives your ADV, it responds here.
+        // Extract the requested hash and begin sending MTU-sized chunks.
+        const requestedHashHex = toHex(decryptedPacket.payload);
+        const resourceData = this.pendingResources.get(requestedHashHex);
+        if (resourceData) {
+           console.log(`[LINK] Remote requested resource ${requestedHashHex}, starting transfer...`);
+           // TODO: Implement the chunking loop using ContextType.RESOURCE
+        }
+        break;
+      }
+
       case ContextType.RESOURCE:
       case ContextType.RESOURCE_ADV:
-      case ContextType.RESOURCE_REQ:
       case ContextType.RESOURCE_HMU:
       case ContextType.RESOURCE_ICL:
       case ContextType.RESOURCE_RCL:
       case ContextType.RESOURCE_PRF:
-        // Dispatch to your future Resource handler
         this.dispatchEvent(
           new CustomEvent("resource", { detail: { packet: decryptedPacket } }),
         );
         break;
-      case ContextType.KEEPALIVE: // Packet.KEEPALIVE
+
+      case ContextType.KEEPALIVE:
         this.dispatchEvent(
           new CustomEvent("keepalive", { detail: { packet: decryptedPacket } }),
         );
         break;
-      case ContextType.LPROOF: // Packet.LRPROOF
+
+      case ContextType.LRPROOF:
         this.dispatchEvent(
           new CustomEvent("lrproof", { detail: { packet: decryptedPacket } }),
         );
         break;
+
       case ContextType.IDENTIFY: {
-        const peerPublicKey = decryptedPacket.payload; // 64 bytes
+        const peerPublicKey = decryptedPacket.payload;
         const peerIdentity = await Identity.fromPublicKey(peerPublicKey);
         const identityHash = await Identity.truncatedHash(
           peerIdentity.publicKey,
         );
         const packetHash = await Identity.truncatedHash(packet.raw);
 
-        // ONLY store by Identity Hash. Do not store by senderDestHash here.
         await Destination.remember(packetHash, identityHash, peerPublicKey);
 
         this.dispatchEvent(
@@ -208,12 +268,14 @@ export class Link extends EventTarget {
         );
         break;
       }
+
       case ContextType.LINKCLOSE: {
         this.dispatchEvent(
           new CustomEvent("close", { detail: { packet: decryptedPacket } }),
         );
         break;
       }
+
       default:
         console.warn(
           `[LINK] Ignored packet with unknown context: 0x${decryptedPacket.contextByte.toString(16)}`,
@@ -221,9 +283,7 @@ export class Link extends EventTarget {
     }
   }
 
-  // Call this immediately after instantiation
   async deriveKeys() {
-    // 1. Import the peer's X25519 public key
     const peerPub = await crypto.subtle.importKey(
       "raw",
       this.peerPubBytes,
@@ -232,27 +292,23 @@ export class Link extends EventTarget {
       [],
     );
 
-    // 2. Perform ECDH to get the 32-byte shared secret
     const sharedBits = await crypto.subtle.deriveBits(
       {
         name: "X25519",
         public: peerPub,
       },
       this.ephemeralKeyPair.privateKey,
-      256, // 32 bytes
+      256,
     );
     const sharedSecret = new Uint8Array(sharedBits);
 
-    // 3. Expand the 32-byte secret to 64 bytes using HKDF
-    // In Reticulum links, the linkId is used as the salt.
     const derivedKey = await hkdf(
       sharedSecret,
-      this.linkId, // Salt
-      new Uint8Array(0), // Context (usually empty for Links unless specified)
-      64, // We need 64 bytes for the Token
+      /** @type {any} */ (this.linkId),
+      new Uint8Array(0),
+      64,
     );
 
-    // 4. NOW instantiate the token
     this.token = new Token(derivedKey);
   }
 }

@@ -65,7 +65,7 @@ export class Identity extends EventTarget {
 
   /**
    * Attempts to load an identity from a storage adapter, or generates and saves a new one.
-   * @param {Object} [storageAdapter] - Must implement async loadKey() and async saveKey(bytes)
+   * @param {any} [storageAdapter] - Must implement async loadKey() and async saveKey(bytes)
    * @returns {Promise<Identity>}
    */
   static async loadOrGenerate(storageAdapter) {
@@ -467,8 +467,8 @@ export class Identity extends EventTarget {
     return await crypto.subtle.verify(
       "Ed25519",
       this.ed25519Pub,
-      signatureView,
-      dataView,
+      /** @type {any} */ (signatureView),
+      /** @type {any} */ (dataView),
     );
   }
 }

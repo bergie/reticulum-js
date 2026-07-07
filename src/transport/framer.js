@@ -65,10 +65,9 @@ export function hdlcUnescape(data) {
 
 /**
  * Creates a TransformStream for HDLC framing (Packets -> Bytes).
- * @param {typeof import('../core/packet.js').Packet} packetClass
  * @returns {TransformStream}
  */
-export function createRNSFramerStream(packetClass) {
+export function createRNSFramerStream() {
   return new TransformStream({
     /**
      * @param {import('../core/packet.js').Packet} packet
@@ -84,7 +83,7 @@ export function createRNSFramerStream(packetClass) {
       frame.set(escaped, 1);
       frame[frame.length - 1] = FLAG;
 
-      // console.log("Framer enqueuing frame", frame);
+      console.log("Framer enqueuing frame", frame);
       controller.enqueue(frame);
     },
   });

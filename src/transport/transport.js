@@ -84,10 +84,22 @@ export class TransportCore extends EventTarget {
   /**
    * @param {import("../core/destination.js").Destination} destination
    */
+  /**
+   * @param {import("../core/destination.js").Destination} destination
+   */
   bindLocalDestination(destination) {
     const destHex = toHex(destination.destinationHash);
     console.log(`[ROUTER] Binding local destination: ${destHex}`);
     this.localDestinations.set(destHex, destination);
+  }
+
+  /**
+   * @param {import("../core/destination.js").Destination} destination
+   */
+  unbindLocalDestination(destination) {
+    const destHex = toHex(destination.destinationHash);
+    this.localDestinations.delete(destHex);
+    console.log(`[-] Unbinding local destination: ${destHex}`);
   }
 
   /**

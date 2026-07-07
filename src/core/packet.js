@@ -16,6 +16,16 @@ export const PacketType = {
 };
 
 /**
+ * Transport types
+ * @enum {number}
+ */
+export const TransportType = {
+  BROADCAST: 0x00,
+  TRANSPORT: 0x01,
+  RELAY: 0x02,
+}
+
+/**
  * Header types.
  * @enum {number}
  */
@@ -83,7 +93,7 @@ export class Packet {
     this.packetType = options.packetType || PacketType.DATA;
     this.contextFlag = options.contextFlag || false;
     this.destinationHash = options.destinationHash;
-    this.contextByte = options.contextByte || 0x00;
+    this.contextByte = options.contextByte || ContextType.NONE;
     this.payload = options.payload || new Uint8Array(0);
     this.transportId = options.transportId;
     this.raw = options.raw || new Uint8Array(0);
@@ -99,7 +109,7 @@ export class Packet {
     // 2. Compute SHA-256 digest
     const hashBuffer = await crypto.subtle.digest(
       "SHA-256",
-      serialized,
+      /** @type {any} */ (serialized),
     );
     return new Uint8Array(hashBuffer);
   }

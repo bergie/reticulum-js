@@ -16,7 +16,7 @@ export class Message {
    * @param {number} [options.timestamp]
    * @param {string} [options.title]
    * @param {string} [options.content]
-   * @param {Record<string, any>} [options.fields]
+   * @param {Map<string, any>} [options.fields]
    * @param {Uint8Array} [options.signature]
    * @param {Uint8Array} [options.signedPart]
    */
@@ -29,13 +29,13 @@ export class Message {
     fields,
     signature,
     signedPart,
-  } = {}) {
+  }) {
     this.sourceHash = sourceHash;
     this.senderHash = sourceHash;
     this.destinationHash = destinationHash;
     (this.timestamp = timestamp || Date.now() / 1000), (this.title = title);
     this.content = content;
-    this.fields = fields;
+    this.fields = fields || new Map();
     this.signature = signature;
     this.signedPart = signedPart;
   }
@@ -47,35 +47,35 @@ export class Message {
    */
   async serialize(sourceIdentity) {
     const sourceHash = sourceIdentity.identityHash;
+    const msgpackPayload = MicroMsgPack.encode([this.timestamp, this.title, this.content, this.fields]);
 
-    // 1. Construct the MessagePack payload
-    const payloadData = [this.timestamp, this.content, this.title, this.fields];
-    const msgpackPayload = MicroMsgPack.encode(payloadData);
+    // 1. Construct the 'hashed_part' (Dest + Source + Payload)
+    const hashedPart = new Uint8Array(16 + 16 + msgpackPayload.length);
+    hashedPart.set(this.destinationHash, 0);
+    hashedPart.set(sourceHash, 16);
+    hashedPart.set(msgpackPayload, 32);
 
-    // 2. Generate the Message ID (SHA-256 of Dest + Source + Payload)
-    const idBuffer = new Uint8Array(32 + msgpackPayload.length);
-    idBuffer.set(this.destinationHash, 0);
-    idBuffer.set(sourceHash, 16);
-    idBuffer.set(msgpackPayload, 32);
-
-    const messageIdBuffer = await crypto.subtle.digest("SHA-256", idBuffer);
+    // 2. Generate Message ID (SHA-256 of hashedPart)
+    const messageIdBuffer = await crypto.subtle.digest("SHA-256", hashedPart);
     const messageId = new Uint8Array(messageIdBuffer);
 
-    // 3. Cryptographically sign the 32-byte Message ID
-    // (This corrects the previous hallucination!)
-    const signature = await sourceIdentity.sign(messageId);
+    // 3. Construct the 'signed_part'
+    // Python signs (hashedPart + messageId)
+    const signedPart = new Uint8Array(hashedPart.length + messageId.length);
+    signedPart.set(hashedPart, 0);
+    signedPart.set(messageId, hashedPart.length);
 
-    // 4. Assemble the final LXMF wire-format byte array
-    const wireData = new Uint8Array(96 + msgpackPayload.length);
+    // 4. SIGN THE signedPart
+    const signature = await sourceIdentity.sign(signedPart);
+
+    // 5. Assemble wireData
+    const wireData = new Uint8Array(16 + 16 + 64 + msgpackPayload.length);
     wireData.set(this.destinationHash, 0);
     wireData.set(sourceHash, 16);
     wireData.set(signature, 32);
     wireData.set(msgpackPayload, 96);
 
-    return {
-      messageId,
-      wireData,
-    };
+    return { messageId, wireData };
   }
 
   /**

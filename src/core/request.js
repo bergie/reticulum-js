@@ -88,14 +88,12 @@ export class RequestManager {
       packetType: 0, // DATA
       contextFlag: true,
       contextByte: ContextType.REQUEST,
-      destinationHash: this.link.destinationHash,
+      destinationHash: this.link.linkId,
       payload: payload,
     });
 
     try {
-      const writer = this.link.writable.getWriter();
-      await writer.write(packet);
-      writer.releaseLock();
+      await this.link.send(packet);
     } catch (e) {
       this.pendingRequests.delete(requestIdKey);
       throw e;

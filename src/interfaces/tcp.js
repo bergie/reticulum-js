@@ -87,7 +87,7 @@ export class TCPClientInterface extends Interface {
           resolve();
         },
       );
-      this.socket.on("error", (err) => {
+      this.socket.on("error", (/** @type {any} */ err) => {
         this.online = false;
         this.dispatchEvent(
           new CustomEvent("disconnected", {
@@ -133,7 +133,7 @@ export class TCPClientInterface extends Interface {
       write(chunk, encoding, callback) {
         socket.write(chunk, encoding, callback);
       },
-      flush(callback) {
+      flush(/** @type {any} */ callback) {
         callback();
       },
     });
@@ -146,7 +146,7 @@ export class TCPClientInterface extends Interface {
     // IMPORTANT: Create the writer ONCE here and store it
     this._packetWriter = framer.writable.getWriter();
 
-    framer.readable.pipeTo(Writable.toWeb(nodeWritable)).catch((err) => {
+    framer.readable.pipeTo(Writable.toWeb(nodeWritable)).catch((/** @type {any} */ err) => {
       console.error("Framer pipeTo error:", err);
     });
     this._writable = framer.writable;
@@ -172,13 +172,13 @@ export class TCPClientInterface extends Interface {
         this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
       }
     } catch (e) {
-      if (e.name === "AbortError" || e.code === "ABORT_ERR") {
+      if (/** @type {any} */ (e).name === "AbortError" || /** @type {any} */ (e).code === "ABORT_ERR") {
         if (!this._closed) {
           this._closed = true;
           this.dispatchEvent(new CustomEvent("closed"));
         }
       } else {
-        this.dispatchEvent(new CustomEvent("error", { detail: e }));
+        this.dispatchEvent(new CustomEvent("error", { detail: /** @type {any} */ (e) }));
       }
     } finally {
       reader.releaseLock();

@@ -11,7 +11,7 @@ import {
 import { Link, LinkEncryption } from "../transport/link.js";
 import { toHex } from "../utils/encoding.js";
 import { Identity } from "./identity.js";
-import { ContextType, DestType, HeaderType, Packet, PacketType } from "./packet.js";
+import { ContextType, DestType, HeaderType, Packet, PacketType, TransportType } from "./packet.js";
 
 /**
  * @enum {number}
@@ -110,6 +110,7 @@ export class Destination extends EventTarget {
       packetType: PacketType.ANNOUNCE,
       destinationType: this.type,
       destinationHash: this.destinationHash,
+      transportType: TransportType.BROADCAST,
       payload: payload,
     });
 
@@ -160,7 +161,7 @@ export class Destination extends EventTarget {
     const nameBytes = encoder.encode(this.name);
 
     // nameHash = SHA256(full_app_name_string)[:10]
-    const nameHashBuffer = await crypto.subtle.digest("SHA-256", nameBytes);
+    const nameHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (nameBytes));
     this.nameHash = new Uint8Array(nameHashBuffer.slice(0, 10));
 
     if (this.type === DestType.SINGLE && this.identity) {
@@ -171,7 +172,7 @@ export class Destination extends EventTarget {
       combined.set(this.nameHash, 0);
       combined.set(this.identity.identityHash, this.nameHash.length);
 
-      const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
+      const destHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (combined));
       this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
     } else if (this.type === DestType.GROUP && this.identity) {
       // Same as SINGLE for GROUP
@@ -181,13 +182,13 @@ export class Destination extends EventTarget {
       combined.set(this.nameHash, 0);
       combined.set(this.identity.identityHash, this.nameHash.length);
 
-      const destHashBuffer = await crypto.subtle.digest("SHA-256", combined);
+      const destHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (combined));
       this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
     } else if (this.type === DestType.PLAIN) {
       // destHash = SHA256(nameHash)[:16]
       const destHashBuffer = await crypto.subtle.digest(
         "SHA-256",
-        this.nameHash,
+        /** @type {any} */ (this.nameHash),
       );
       this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
     } else {
@@ -275,7 +276,7 @@ export class Destination extends EventTarget {
 
   /**
    * Requests an encrypted link to this remote destination.
-   * @param {import('../interfaces/base.js').Interface} transport - The transport interface to use.
+   * @param {import('../transport/transport.js').TransportCore} [transport] - The transport to use.
    * @param {Uint8Array} appData - Optional contextual data (e.g., Graph ID, Auth Token)
    * @param {number} timeoutMs - How long to wait for the remote node to accept
    * @returns {Promise<import('../transport/link.js').Link>} Resolves when the secure tunnel is established
@@ -296,10 +297,13 @@ export class Destination extends EventTarget {
       throw new Error("No transport available to create link.");
     }
 
+    // 1. Generate ephemeral keys first
+    /** @type {{privateKey: CryptoKey, publicKey: CryptoKey}} */
+    const local_ephemeral_keypair = await generateX25519KeyPair();
+    /** @type {CryptoKey} */
+    const local_x25519_priv = local_ephemeral_keypair.privateKey;
+
     return new Promise((resolve, reject) => {
-      /** @type {CryptoKey | undefined} */
-      let local_x25519_priv;
-      let local_ephemeral_keypair;
       const timer = setTimeout(() => {
         this.removeEventListener("link_established", onLinkEstablished);
         this.removeEventListener("link_response", onLinkResponse);
@@ -326,12 +330,7 @@ export class Destination extends EventTarget {
 
           const linkId = packet.destinationHash;
           const peer_x25519_pub_bytes = packet.payload.slice(64, 96);
-          const peer_ed25519_pub_bytes = packet.payload.slice(32, 64); // Wait, signature is 64 bytes.
-          // Let's re-examine responsePayload in respondToLinkRequest.
-          // responsePayload.set(signature, 0); // 64 bytes
-          // responsePayload.set(ephemeralPubBytes, 64); // 32 bytes
-          // Total 96 bytes.
-          // So peer_x25519_pub_bytes is at offset 64.
+          const peer_ed25519_pub_bytes = packet.payload.slice(32, 64);
 
           const peer_x25519_pub = await crypto.subtle.importKey(
             "raw",
@@ -382,8 +381,6 @@ export class Destination extends EventTarget {
 
       (async () => {
         try {
-          local_ephemeral_keypair = await generateX25519KeyPair();
-          local_x25519_priv = local_ephemeral_keypair.privateKey;
           const ed25519 = await generateEd25519KeyPair();
           const x25519PubBytes = await exportPublicKey(
             local_ephemeral_keypair.publicKey,
@@ -408,7 +405,11 @@ export class Destination extends EventTarget {
             payload: payload,
           });
 
-          await activeTransport.sendPacket(packet);
+          if (typeof (/** @type {any} */ (activeTransport)).sendPacket === 'function') {
+            await /** @type {any} */ (activeTransport).sendPacket(packet);
+          } else {
+            await /** @type {any} */ (activeTransport).send(packet);
+          }
         } catch (e) {
           clearTimeout(timer);
           this.removeEventListener("link_established", onLinkEstablished);
@@ -506,6 +507,9 @@ export class Destination extends EventTarget {
     // Spec: link_id || responder_X25519_pub || responder_long_term_Ed25519_pub
     // ---------------------------------------------------------
     // Exporting directly to avoid any previous byte-order slicing issues
+    if (!this.identity) {
+      throw new Error("Destination requires an identity to respond to a link request.");
+    }
     const ed25519PubBytes = await exportPublicKey(this.identity.ed25519Pub);
 
     const signedData = new Uint8Array(16 + 32 + 32);
@@ -546,6 +550,10 @@ export class Destination extends EventTarget {
     // ---------------------------------------------------------
     // The initiator's X25519 pubkey is the first 32 bytes of the LINKREQUEST payload
     const initiatorPubBytes = requestPacket.payload.slice(0, 32);
+
+    if (!this.interfaceLayer || !this.interfaceLayer.transport) {
+      throw new Error("Destination not bound to an RNS instance with a transport.");
+    }
 
     const link = new Link(
       this,

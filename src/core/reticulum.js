@@ -28,7 +28,7 @@ export class Reticulum {
 
   /**
    * Attaches a physical or virtual network interface to the router.
-   * @param {import("../interfaces/base.js").Interface} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
+   * @param {any} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
    * @param {boolean} isDefault - If true, unroutable packets fallback to this interface
    */
   addInterface(rnsInterface, isDefault = false) {
@@ -38,6 +38,7 @@ export class Reticulum {
 
   /**
    * Removes an interface and purges its routes from the TransportCore.
+   * @param {any} rnsInterface
    */
   removeInterface(rnsInterface) {
     this.transport.removeInterface(rnsInterface);
@@ -51,7 +52,10 @@ export class Reticulum {
    * @param {import("../core/destination.js").Destination} destination
    */
   registerDestination(destination) {
-    const hashHex = Buffer.from(destination.destinationHash).toString("hex");
+    if (!destination.destinationHash) {
+      throw new Error("Destination hash must be computed before registration.");
+    }
+    const hashHex = toHex(destination.destinationHash);
 
     if (this.localDestinations.has(hashHex)) {
       throw new Error(`Destination ${destination.name} is already registered.`);
@@ -65,15 +69,24 @@ export class Reticulum {
     // this.transport.bindLocalDestination(destination);
 
     // 3. Inject the compression provider if the destination needs to handle Resources
-    const appData = new TextDecoder().decode(destination.identity.appData);
-    console.log(`[+] Destination registered: ${destination.name} (${appData})`);
+    // and log the app data if an identity is present.
+    if (destination.identity) {
+      const appData = new TextDecoder().decode(destination.identity.appData);
+      console.log(`[+] Destination registered: ${destination.name} (${appData})`);
+    } else {
+      console.log(`[+] Destination registered: ${destination.name}`);
+    }
   }
 
   /**
    * Removes a local destination, ceasing all incoming traffic to that application endpoint.
+   * @param {import("../core/destination.js").Destination} destination
    */
   deregisterDestination(destination) {
-    const hashHex = Buffer.from(destination.hash).toString("hex");
+    if (!destination.destinationHash) {
+      throw new Error("Destination hash must be computed before deregistration.");
+    }
+    const hashHex = toHex(destination.destinationHash);
     this.localDestinations.delete(hashHex);
     this.transport.unbindLocalDestination(destination);
   }

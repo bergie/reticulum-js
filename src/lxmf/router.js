@@ -60,7 +60,7 @@ export class LXMRouter extends EventTarget {
     // 1. Listen for standard Single-Packet LXMF Messages
     /** @type {any} */ (this.deliveryDest).addEventListener(
       "data",
-      async (event) => {
+      async (/** @type {any} */ event) => {
         const { plaintext } = /** @type {any} */ (event).detail;
         try {
           await this._processIncomingMessage(plaintext, null);
@@ -73,7 +73,7 @@ export class LXMRouter extends EventTarget {
     // 2. Listen for Large LXMF Messages arriving via Links
     /** @type {any} */ (this.deliveryDest).addEventListener(
       "link_request",
-      async (event) => {
+      async (/** @type {any} */ event) => {
         console.log("[*] Incoming LXMF Link Request");
 
         try {
@@ -83,8 +83,8 @@ export class LXMRouter extends EventTarget {
           );
 
           // Listen for data streaming over the established link
-          link.addEventListener("data", async (pktEvent) => {
-            console.log("RECV", pktEvent.detail.packet, pktEvent.detail.link);
+          link.addEventListener("data", async (/** @type {any} */ pktEvent) => {
+            //console.log("RECV", pktEvent.detail.packet, pktEvent.detail.link);
             await this._processIncomingMessage(
               /** @type {any} */ (pktEvent).detail.packet.payload,
               pktEvent.detail.link,
@@ -99,7 +99,7 @@ export class LXMRouter extends EventTarget {
     // 2. Listen for IDENTIFY packets so we can process any pending
     /** @type {any} */ (this.deliveryDest).addEventListener(
       "identify",
-      async (event) => {
+      async (/** @type {any} */ event) => {
         try {
           // Inside your link.addEventListener("identify", ...)
           const peerIdentity = event.detail.identity;
@@ -217,16 +217,19 @@ export class LXMRouter extends EventTarget {
    * @param {Uint8Array|null} linkId
    */
   async send(message, senderIdentity, linkId) {
-    const { wireData } = await message.serialize(senderIdentity);
+    const { messageId, wireData } = await message.serialize(senderIdentity);
     const packet = new Packet({
       packetType: PacketType.DATA,
       destinationHash: message.destinationHash,
-      destinationType: linkId ? DestType.LINK : DestType.SINGLE,
-      contextByte: linkId ? ContextType.CHANNEL : ContextType.NONE,
-      contextFlag: linkId ? true : false,
+      // destinationType: linkId ? DestType.LINK : DestType.SINGLE,
+      transportType: 1,
+      destinationType: DestType.SINGLE,
       payload: wireData,
     });
-    console.log("SEND", packet, linkId);
+    console.log(`DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
+    console.log(`DEBUG: Sending to ${toHex(message.destinationHash)}`);
+    // console.log("SEND", packet, linkId);
+    //await this.rns.transport.sendPacket(packet, linkId);
     await this.rns.transport.sendPacket(packet, linkId);
   }
 }
