@@ -34,25 +34,27 @@ export class LinkEncryption {
       ["deriveKey"],
     );
 
-    // 3. Derive 64-byte key for Token (AES_256_CBC mode)
-    // We use HKDF to expand the shared secret into a 64-byte key.
     return await hkdf(hkdfMasterKey, salt, new Uint8Array(0), 64);
   }
 }
 
 export class Link extends EventTarget {
   /**
-   * @param {import("../core/destination.js").Destination} destination
+   * @param {Destination} destination
    * @param {Uint8Array} linkId
    * @param {import("../crypto/keys.js").KeyPair} ephemeralKeyPair
    * @param {Uint8Array} peerPubBytes
-   * @param {import("../transport/transport.js").TransportCore|null} [transport=null]
+   * @param {CryptoKey} [sigPrv] - The Ed25519 private key for identity proofing.
+   * @param {Uint8Array} [sigPubBytes] - The Ed25519 public key for identity proofing.
+   * @param {import("../transport/transport.js").TransportCore} [transport=null]
    */
   constructor(
     destination,
     linkId,
     ephemeralKeyPair,
     peerPubBytes,
+    sigPrv = null,
+    sigPubBytes = null,
     transport = null,
   ) {
     super();
@@ -60,6 +62,8 @@ export class Link extends EventTarget {
     this.linkId = linkId;
     this.ephemeralKeyPair = ephemeralKeyPair;
     this.peerPubBytes = peerPubBytes;
+    this.sigPrv = sigPrv;
+    this.sigPubBytes = sigPubBytes;
     this.transport = transport;
     this.mtu = 1024;
     this.token = null;
@@ -150,11 +154,85 @@ export class Link extends EventTarget {
   }
 
   /**
+   * Proves the identity of this link.
+   */
+  async prove() {
+    if (!this.sigPrv || !this.sigPubBytes || !this.destination || !this.destination.identity) {
+      throw new Error("Link identity proof requires an identity's signing key.");
+    }
+
+    const signallingBytes = this.signallingBytes(this.mtu, this.mode);
+    const pubBytes = await exportPublicKey(this.ephemeralKeyPair.publicKey);
+
+    const signedData = new Uint8Array(this.linkId.length + pubBytes.length + this.sigPubBytes.length + signallingBytes.length);
+    signedData.set(this.linkId, 0);
+    signedData.set(pubBytes, this.linkId.length);
+    signedData.set(this.sigPubBytes, this.linkId.length + pubBytes.length);
+    signedData.set(signallingBytes, this.linkId.length + pubBytes.length + this.sigPubBytes.length);
+
+    const signature = await this.destination.identity.sign(signedData);
+
+    const proofPayload = new Uint8Array(signature.length + pubBytes.length + signallingBytes.length);
+    proofPayload.set(signature, 0);
+    proofPayload.set(pubBytes, signature.length);
+    proofPayload.set(signallingBytes, signature.length + pubBytes.length);
+
+    const proofPacket = new Packet({
+      packetType: PacketType.PROOF,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.LRPROOF,
+      payload: proofPayload,
+    });
+
+    await this.send(proofPacket);
+  }
+
+  /**
+   * @param {number} mtu
+   * @param {number} mode
+   * @returns {Uint8Array}
+   */
+  signallingBytes(mtu, mode) {
+    const MTU_BYTEMASK = 0x1FFFFF;
+    const MODE_BYTEMASK = 0xE0;
+    const signallingValue = (mtu & MTU_BYTEMASK) + (((mode << 5) & MODE_BYTEMASK) << 16);
+    const buffer = new ArrayBuffer(4);
+    const view = new DataView(buffer);
+    view.setUint32(0, signallingValue, false);
+    return new Uint8Array(buffer.slice(1));
+  }
+
+  /**
+   * @param {Uint8Array} data
+   * @return {Promise<Uint8Array>}
+   */
+  async sign(data) {
+    if (!this.derivedKey) {
+      throw new Error("Cannot sign payload: Link key not derived.");
+    }
+    const hmacKey = await crypto.subtle.importKey(
+      "raw",
+      this.derivedKey,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const signatureBuffer = await crypto.subtle.sign(
+      "HMAC",
+      hmacKey,
+      data,
+    );
+    return new Uint8Array(signatureBuffer);
+  }
+
+  /**
    * @param {Packet} packet
    */
   async provePacket(packet) {
     const packetHash = await packet.getHash();
-    const signature = await this.destination.identity.sign(packetHash);
+    const signature = await this.sign(packetHash);
+
     const proofPayload = new Uint8Array(96);
     proofPayload.set(packetHash, 0);
     proofPayload.set(signature, 32);
@@ -164,7 +242,8 @@ export class Link extends EventTarget {
       destinationHash: this.linkId,
       payload: proofPayload,
     });
-    await this.send(proofPacket);
+    // Proof packets are not encryped
+    await this.transport.sendPacket(proofPacket);
   }
 
   /**
@@ -205,7 +284,9 @@ export class Link extends EventTarget {
 
     switch (decryptedPacket.contextByte) {
       case ContextType.NONE:
-        await this.provePacket(packet);
+        if (this.transport) {
+          await this.provePacket(packet);
+        }
         this.dispatchEvent(
           new CustomEvent("data", {
             detail: { packet: decryptedPacket, link: this.linkId },
@@ -309,6 +390,7 @@ export class Link extends EventTarget {
       64,
     );
 
+    this.derivedKey = derivedKey;
     this.token = new Token(derivedKey);
   }
 }

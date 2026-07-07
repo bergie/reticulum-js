@@ -196,14 +196,12 @@ export class Resource extends EventTarget {
       packetType: 0, // DATA
       contextFlag: true,
       contextByte: ContextType.RESOURCE_ADV,
-      destinationHash: this.link.destinationHash,
+      destinationHash: this.link.linkId,
       payload: advPayload,
     });
 
     try {
-      const writer = this.link.writable.getWriter();
-      await writer.write(packet);
-      writer.releaseLock();
+      await this.link.send(packet);
       this.status = ResourceStatus.ADVERTISED;
     } catch (e) {
       this.status = ResourceStatus.FAILED;

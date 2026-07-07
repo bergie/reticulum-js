@@ -218,7 +218,9 @@ export class TransportCore extends EventTarget {
    * @param {Uint8Array|null} linkId
    */
   async sendPacket(packet, linkId = null) {
-    const destHex = Buffer.from(packet.destinationHash).toString("hex");
+    const destHex = toHex(packet.destinationHash);
+    const packetHex = toHex(await packet.getHash());
+    console.log(`Send ${packetHex} to ${destHex}`);
 
     if (linkId) {
       const linkHex = toHex(linkId);

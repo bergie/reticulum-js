@@ -276,12 +276,11 @@ export class Destination extends EventTarget {
 
   /**
    * Requests an encrypted link to this remote destination.
-   * @param {import('../transport/transport.js').TransportCore} [transport] - The transport to use.
    * @param {Uint8Array} appData - Optional contextual data (e.g., Graph ID, Auth Token)
    * @param {number} timeoutMs - How long to wait for the remote node to accept
    * @returns {Promise<import('../transport/link.js').Link>} Resolves when the secure tunnel is established
    */
-  async createLink(transport, appData = new Uint8Array(0), timeoutMs = 15000) {
+  async createLink(appData = new Uint8Array(0), timeoutMs = 15000) {
     if (this.direction !== Direction.OUT) {
       throw new Error("Can only initiate links to OUT destinations.");
     }
@@ -290,11 +289,6 @@ export class Destination extends EventTarget {
     }
     if (!this.destinationHash) {
       throw new Error("Destination hash not computed.");
-    }
-
-    const activeTransport = transport || this.interfaceLayer.transport;
-    if (!activeTransport) {
-      throw new Error("No transport available to create link.");
     }
 
     // 1. Generate ephemeral keys first
@@ -340,10 +334,6 @@ export class Destination extends EventTarget {
             [],
           );
 
-          if (!local_x25519_priv) {
-            throw new Error("Local private key not yet generated");
-          }
-
           const link_key = await LinkEncryption.deriveLinkKey(
             local_x25519_priv,
             peer_x25519_pub,
@@ -355,7 +345,7 @@ export class Destination extends EventTarget {
             linkId,
             local_ephemeral_keypair,
             peer_x25519_pub_bytes,
-            activeTransport,
+            this.interfaceLayer.transport,
           );
           await link.deriveKeys();
 
@@ -405,11 +395,7 @@ export class Destination extends EventTarget {
             payload: payload,
           });
 
-          if (typeof (/** @type {any} */ (activeTransport)).sendPacket === 'function') {
-            await /** @type {any} */ (activeTransport).sendPacket(packet);
-          } else {
-            await /** @type {any} */ (activeTransport).send(packet);
-          }
+          await activeTransport.sendPacket(packet);
         } catch (e) {
           clearTimeout(timer);
           this.removeEventListener("link_established", onLinkEstablished);
