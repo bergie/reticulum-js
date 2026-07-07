@@ -162,7 +162,7 @@ export class Link extends EventTarget {
    * Proves the identity of this link.
    */
   async prove() {
-    if (!this.sigPrv || !this.sigPubBytes || !this.destination || !this.destination.identity) {
+    if ((!this.sigPrv && !this.sigPubBytes) || !this.destination?.identity) {
       throw new Error("Link identity proof requires an identity's signing key.");
     }
 

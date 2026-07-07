@@ -296,6 +296,9 @@ export class Destination extends EventTarget {
     const local_ephemeral_keypair = await generateX25519KeyPair();
     /** @type {CryptoKey} */
     const local_x25519_priv = local_ephemeral_keypair.privateKey;
+    // We also need signing key
+    const local_signing_keypair = await generateEd25519KeyPair();
+    const local_signing_pub = await exportPublicKey(local_signing_keypair.publicKey);
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -345,8 +348,8 @@ export class Destination extends EventTarget {
             linkId,
             local_ephemeral_keypair,
             peer_x25519_pub_bytes,
-            null,
-            null,
+            local_signing_keypair.privateKey,
+            local_signing_pub,
             this.interfaceLayer.transport,
           );
           await link.deriveKeys();
@@ -548,8 +551,8 @@ export class Destination extends EventTarget {
       linkId,
       ephemeralKey,
       initiatorPubBytes,
-      null,
-      null,
+      this.identity.ed25519Priv,
+      await exportPublicKey(this.identity.ed25519Pub),
       this.interfaceLayer.transport,
     );
     await link.deriveKeys();
