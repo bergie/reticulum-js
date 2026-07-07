@@ -100,7 +100,7 @@ test("Packet proof over link", async (t) => {
     dataReceivedByB = true;
   });
 
-  linkA.addEventListener("lrproof", (event) => {
+  linkA.addEventListener("proof", (event) => {
     proofReceivedByA = true;
   });
 

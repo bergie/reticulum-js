@@ -312,6 +312,10 @@ export class Link extends EventTarget {
               detail: { packet: decryptedPacket, link: this.linkId },
             }),
           );
+        } else {
+          this.dispatchEvent(
+            new CustomEvent("proof", { detail: { packet: decryptedPacket } }),
+          );
         }
         break;
 
