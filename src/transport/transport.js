@@ -106,7 +106,7 @@ export class TransportCore extends EventTarget {
   async _routeIncomingPacket(packet, receivingInterface) {
     // 1. Log arrival
     console.log(
-      `[ROUTER] Processing packet type ${packet.packetType} for ${toHex(packet.destinationHash)}`,
+      `[ROUTER] Processing packet type ${packet.packetType} (ctx ${packet.contextByte}) for ${toHex(packet.destinationHash)}`,
     );
 
     // Force a dump if it's a LINKREQUEST so we can see why it's not triggering

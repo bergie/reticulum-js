@@ -275,8 +275,22 @@ export class Link extends EventTarget {
       throw new Error("Link token not available. Did you call deriveKeys()?");
     }
 
+    const unencryptedContexts = new Set([
+      ContextType.RESOURCE,
+      ContextType.RESOURCE_ADV,
+      ContextType.RESOURCE_HMU,
+      ContextType.RESOURCE_ICL,
+      ContextType.RESOURCE_RCL,
+      ContextType.RESOURCE_PRF,
+      ContextType.KEEPALIVE,
+      ContextType.LINKIDENTIFY,
+      ContextType.LINKCLOSE,
+      ContextType.LRRTT,
+      ContextType.LRPROOF,
+    ]);
+
     let decryptedPayload;
-    if (packet.packetType === PacketType.PROOF) {
+    if (packet.packetType === PacketType.PROOF || unencryptedContexts.has(packet.contextByte)) {
       decryptedPayload = packet.payload;
     } else {
       decryptedPayload = await /** @type {any} */ (this.token).decrypt(packet.payload);
@@ -293,7 +307,7 @@ export class Link extends EventTarget {
       contextByte: packet.contextByte,
       payload: decryptedPayload,
       transportId: packet.transportId,
-      raw: packet.payload,
+      raw: packet.raw,
     });
 
     switch (decryptedPacket.contextByte) {
@@ -349,7 +363,7 @@ export class Link extends EventTarget {
         );
         break;
 
-      case ContextType.IDENTIFY: {
+      case ContextType.LINKIDENTIFY: {
         const peerPublicKey = decryptedPacket.payload;
         const peerIdentity = await Identity.fromPublicKey(peerPublicKey);
         const identityHash = await Identity.truncatedHash(
