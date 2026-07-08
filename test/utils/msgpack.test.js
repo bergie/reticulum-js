@@ -13,6 +13,7 @@ describe("MicroMsgPack implementation", () => {
       foo: "bar",
       baz: 42,
       foobar: 42.7,
+      barbaz: new Map(),
     };
     assert.equal(
       base64(MicroMsgPack.encode(content)),
@@ -24,6 +25,9 @@ describe("MicroMsgPack implementation", () => {
       foo: "bar",
       baz: 42,
       foobar: 42.7,
+      barbaz: {
+        '15': true,
+      },
     };
     const serialized = msgpack.encode(content);
     assert.deepEqual(MicroMsgPack.decode(serialized), content);
