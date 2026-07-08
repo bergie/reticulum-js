@@ -251,7 +251,7 @@ export class Link extends EventTarget {
       destinationHash: this.linkId,
       payload: proofPayload,
     });
-    // Proof packets are not encryped
+    // Packet PROOFs are not encrypted
     await this.transport.sendPacket(proofPacket);
   }
 
@@ -299,7 +299,7 @@ export class Link extends EventTarget {
     switch (decryptedPacket.contextByte) {
       case ContextType.NONE:
         if (this.transport && decryptedPacket.packetType !== PacketType.PROOF) {
-          await this.provePacket(decryptedPacket);
+          await this.provePacket(packet);
         }
         if (decryptedPacket.packetType !== PacketType.PROOF) {
           this.dispatchEvent(
