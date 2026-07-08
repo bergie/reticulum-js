@@ -122,10 +122,7 @@ export class Packet {
     // In Python, it looks like it assumes a specific starting point.
 
     let sliceOffset;
-    if (this.headerType === 0x02) {
-        // TRUNCATED_HASHLENGTH is 256 bits / 8 = 32 bytes?
-        // No, in Reticulum, truncated is 16 bytes (128 bits).
-        // 16 bytes + 2 (header flags + hops) = 18.
+    if (this.headerType === HeaderType.HEADER_2) {
         sliceOffset = 18;
     } else {
         // HEADER_1: 2 bytes (flags/hops) + 16 bytes dest = 18?
@@ -156,13 +153,15 @@ export class Packet {
 
     if (this.headerType === HeaderType.HEADER_2) flags |= 0x40;
 
-    // Use the object's contextFlag property directly, just like deserialize reads it.
-    // (Ensure your Announce creation leaves this false, and DATA leaves it true)
     if (this.contextFlag) flags |= 0x20;
 
     if (this.transportType === 1) flags |= 0x10;
 
-    flags |= (this.destinationType & 0x03) << 2;
+    if (this.contextByte === ContextType.LRPROOF) {
+      flags |= (DestType.LINK << 2);
+    } else {
+      flags |= (this.destinationType & 0x03) << 2;
+    }
     flags |= this.packetType & 0x03;
 
     return flags;
