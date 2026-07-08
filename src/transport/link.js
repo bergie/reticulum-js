@@ -44,6 +44,21 @@ export class Link extends EventTarget {
   /** @type {number} */
   mode = 0;
 
+  /** @type {Set<number>} */
+  static UNENCRYPTED_CONTEXTS = new Set([
+    ContextType.RESOURCE,
+    ContextType.RESOURCE_ADV,
+    ContextType.RESOURCE_HMU,
+    ContextType.RESOURCE_ICL,
+    ContextType.RESOURCE_RCL,
+    ContextType.RESOURCE_PRF,
+    ContextType.KEEPALIVE,
+    ContextType.LINKIDENTIFY,
+    ContextType.LINKCLOSE,
+    ContextType.LRRTT,
+    ContextType.LRPROOF,
+  ]);
+
   /**
    * @param {Destination} destination
    * @param {Uint8Array} linkId
@@ -100,7 +115,11 @@ export class Link extends EventTarget {
       throw new Error("Link transport not available.");
     }
 
-    const encryptedPayload = await this.encrypt(packet.payload);
+    let payload = packet.payload;
+    if (packet.packetType !== PacketType.PROOF && !Link.UNENCRYPTED_CONTEXTS.has(packet.contextByte)) {
+      console.log('Encrypting packet');
+      payload = await this.encrypt(packet.payload);
+    }
 
     // FIX: Regardless of what the application requested, if this packet
     // goes over a Link, the outer transport frame MUST be addressed to the Link.
@@ -109,14 +128,12 @@ export class Link extends EventTarget {
       headerType: packet.headerType,
       hops: packet.hops,
       transportType: packet.transportType,
-
       destinationType: DestType.LINK,
       destinationHash: this.linkId,
-
       packetType: packet.packetType,
       contextFlag: packet.contextFlag,
       contextByte: packet.contextByte,
-      payload: encryptedPayload,
+      payload: payload,
       transportId: packet.transportId,
     });
 
@@ -352,6 +369,16 @@ export class Link extends EventTarget {
         break;
 
       case ContextType.KEEPALIVE:
+        if (!this.initiator && decryptedPacket.payload.length === 1 && decryptedPacket.payload[0] === 0xFF) {
+          const pongPacket = new Packet({
+            packetType: PacketType.DATA,
+            destinationType: DestType.LINK,
+            destinationHash: this.linkId,
+            contextByte: ContextType.KEEPALIVE,
+            payload: new Uint8Array([0xFE]),
+          });
+          await this.send(pongPacket);
+        }
         this.dispatchEvent(
           new CustomEvent("keepalive", { detail: { packet: decryptedPacket } }),
         );

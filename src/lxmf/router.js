@@ -220,10 +220,11 @@ export class LXMRouter extends EventTarget {
     const { messageId, wireData } = await message.serialize(senderIdentity);
     const packet = new Packet({
       packetType: PacketType.DATA,
+      contextFlag: true,
+      contextByte: ContextType.NONE,
       destinationHash: message.destinationHash,
-      // destinationType: linkId ? DestType.LINK : DestType.SINGLE,
-      transportType: 0,
       destinationType: DestType.SINGLE,
+      transportType: 0,
       payload: wireData,
     });
     console.log(`DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
