@@ -153,21 +153,28 @@ export class Packet {
 
   _buildFlagsByte() {
     let flags = 0x00;
-    // Removed: IFAC flag (0x80) is handled at the interface layer, not here.
+
     if (this.headerType === HeaderType.HEADER_2) flags |= 0x40;
+
+    // Use the object's contextFlag property directly, just like deserialize reads it.
+    // (Ensure your Announce creation leaves this false, and DATA leaves it true)
     if (this.contextFlag) flags |= 0x20;
+
     if (this.transportType === 1) flags |= 0x10;
+
     flags |= (this.destinationType & 0x03) << 2;
     flags |= this.packetType & 0x03;
+
     return flags;
   }
 
   /**
+   * Serializes the Packet into the exact Reticulum wire format.
    * @returns {Uint8Array}
    */
   serialize() {
+    const DST_LEN = 16;
     const flags = this._buildFlagsByte();
-    const DST_LEN = 16; // Standard Reticulum truncated hash length
 
     // 1. Calculate precise byte length
     let length = 2; // flags (1) + hops (1)
@@ -175,15 +182,16 @@ export class Packet {
     if (this.headerType === HeaderType.HEADER_2) {
       length += DST_LEN; // transportId
     }
+
     length += DST_LEN; // destinationHash
 
-    length += 1; // contextByte (Always 1 byte, mirroring Python's unconditional append)
+    // UNCONDITIONAL CONTEXT BYTE (Mirroring deserialize)
+    length += 1;
 
-    length += this.payload.length; // ciphertext / data
+    length += this.payload.length;
 
     // 2. Allocate Buffer
-    const buffer = new ArrayBuffer(length);
-    const uint8 = new Uint8Array(buffer);
+    const uint8 = new Uint8Array(length);
 
     // 3. Write Header
     uint8[0] = flags;
@@ -192,8 +200,7 @@ export class Packet {
     let offset = 2;
 
     if (this.headerType === HeaderType.HEADER_2) {
-      if (!this.transportId)
-        throw new Error("Header type 2 requires a transportId");
+      if (!this.transportId) throw new Error("Header type 2 requires a transportId");
       uint8.set(this.transportId.subarray(0, 16), offset);
       offset += DST_LEN;
     }

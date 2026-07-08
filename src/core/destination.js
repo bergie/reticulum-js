@@ -73,6 +73,11 @@ export class Destination extends EventTarget {
       throw new Error("Destination hashes not computed.");
     }
 
+    // Verify this in your code:
+    if (this.nameHash.length !== 10) {
+      throw new Error("nameHash must be 10 bytes");
+    }
+
     // 1. Generate a 10-byte Random Hash (Required by RNS to prevent replay attacks)
     const randomHash = new Uint8Array(10);
     crypto.getRandomValues(randomHash);
