@@ -47,6 +47,8 @@ export class Message {
    */
   async serialize(sourceIdentity) {
     const sourceHash = sourceIdentity.identityHash;
+
+    // LXMF Standard: [timestamp, title, content, fields]
     const msgpackPayload = MicroMsgPack.encode([this.timestamp, this.title, this.content, this.fields]);
 
     // 1. Construct the 'hashed_part' (Dest + Source + Payload)
@@ -121,7 +123,7 @@ export class Message {
       );
     }
 
-    const [timestamp, contentBytes, titleBytes, fields] = decodedPayload;
+    const [timestamp, titleBytes, contentBytes, fields] = decodedPayload;
 
     // MessagePack often yields raw Uint8Arrays for strings in LXMF, decode them:
     const content =

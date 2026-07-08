@@ -109,7 +109,7 @@ export class Packet {
    * @returns {Uint8Array}
    */
   getHashablePart() {
-    if (!this.raw) {
+    if (!this.raw || this.raw.length === 0) {
       this.raw = this.serialize();
     }
     // 1. Get flags byte and mask it (0x0F)
