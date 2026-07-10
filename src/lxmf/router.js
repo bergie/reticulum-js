@@ -43,6 +43,7 @@ export class LXMRouter extends EventTarget {
 
     // Bind it to the central routing table
     this.rns.transport.bindLocalDestination(deliveryDest);
+    this.rns.registerDestination(deliveryDest);
 
     this._setupListeners();
 

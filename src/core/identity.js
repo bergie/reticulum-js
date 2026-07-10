@@ -339,7 +339,7 @@ export class Identity extends EventTarget {
 
   /**
    * Decrypt information for the identity.
-   * @param {Uint8Array} ciphertext_token
+   * @param {Uint8Array} ciphertextToken
    * @param {Array<Uint8Array>|null} ratchets
    * @returns {Promise<Uint8Array|null>}
    */

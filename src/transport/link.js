@@ -1,3 +1,19 @@
+/** @enum {number} */
+export const LinkStatus = {
+  PENDING: 0,
+  HANDSHAKE: 1,
+  ACTIVE: 2,
+  STALE: 3,
+  CLOSED: 4,
+};
+
+/** @enum {number} */
+export const LinkTeardownReason = {
+  TIMEOUT: 0x01,
+  INITIATOR_CLOSED: 0x02,
+  DESTINATION_CLOSED: 0x03,
+};
+
 // src/transport/link.js
 
 import { Destination } from "../core/destination.js";
@@ -42,7 +58,7 @@ export class LinkEncryption {
 
 export class Link extends EventTarget {
   /** @type {number} */
-  mode = 0;
+  mode = 0x01; // Default to AES_256_CBC
 
   /** @type {Set<number>} */
   static UNENCRYPTED_CONTEXTS = new Set([
@@ -62,7 +78,7 @@ export class Link extends EventTarget {
   /**
    * @param {Destination} destination
    * @param {Uint8Array} linkId
-   * @param {import("../crypto/keys.js").KeyPair} ephemeralKeyPair
+   * @param {import("../crypto/keys.js").KeyPair} ephemeralKeyPair - The ephemeral X25519 keypair.
    * @param {Uint8Array} peerPubBytes
    * @param {CryptoKey} [sigPrv] - The Ed25519 private key for identity proofing.
    * @param {Uint8Array} [sigPubBytes] - The Ed25519 public key for identity proofing.
@@ -86,11 +102,39 @@ export class Link extends EventTarget {
     this.sigPubBytes = sigPubBytes;
     this.transport = transport;
     this.mtu = 1024;
+    this._status = LinkStatus.PENDING;
+    this.teardownReason = null;
     this.token = null;
     this._rxQueue = Promise.resolve();
 
     // Store pending resources waiting for a RESOURCE_REQ from NomadNet
     this.pendingResources = new Map();
+  }
+
+  /**
+   * @returns {LinkStatus}
+   */
+  get status() {
+    return this._status;
+  }
+
+  /**
+   * @param {LinkStatus} newStatus
+   */
+  set status(newStatus) {
+    const oldStatus = this._status;
+    this._status = newStatus;
+    if (oldStatus !== newStatus) {
+      this.dispatchEvent(
+        new CustomEvent("statuschange", {
+          detail: { status: newStatus, oldStatus },
+        }),
+      );
+
+      if (newStatus === LinkStatus.CLOSED && this.transport) {
+        this.transport.removeLink(this.linkId);
+      }
+    }
   }
 
   registerIncomingResource(resource) {
