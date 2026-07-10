@@ -293,12 +293,12 @@ export class Identity extends EventTarget {
         "Encryption failed because identity does not hold a public key",
       );
 
-    const ephemeral_key = await generateX25519KeyPair();
-    const ephemeral_pub_bytes = await exportPublicKey(ephemeral_key.publicKey);
+    const ephemeralKey = await generateX25519KeyPair();
+    const ephemeralPubBytes = await exportPublicKey(ephemeralKey.publicKey);
 
-    let target_public_key;
+    let targetPublicKey;
     if (ratchet) {
-      target_public_key = await crypto.subtle.importKey(
+      targetPublicKey = await crypto.subtle.importKey(
         "raw",
         /** @type {any} */ (ratchet),
         { name: "X25519" },
@@ -306,33 +306,33 @@ export class Identity extends EventTarget {
         [],
       );
     } else {
-      target_public_key = this.x25519Pub;
+      targetPublicKey = this.x25519Pub;
     }
 
-    const shared_key_buffer = await crypto.subtle.deriveBits(
+    const sharedKeyBuffer = await crypto.subtle.deriveBits(
       {
         name: "X25519",
-        public: target_public_key,
+        public: targetPublicKey,
       },
-      /** @type {any} */ (ephemeral_key.privateKey),
+      /** @type {any} */ (ephemeralKey.privateKey),
       256,
     );
-    const shared_key = new Uint8Array(shared_key_buffer);
-    const derived_key = await hkdf(
-      shared_key,
+    const sharedKey = new Uint8Array(sharedKeyBuffer);
+    const derivedKey = await hkdf(
+      sharedKey,
       this.getSalt(),
       this.getContext() || new Uint8Array(0),
       64,
     );
 
-    const token = new Token(derived_key);
+    const token = new Token(derivedKey);
     const ciphertext = await token.encrypt(/** @type {any} */ (plaintext));
 
     const result = new Uint8Array(
-      ephemeral_pub_bytes.length + ciphertext.length,
+      ephemeralPubBytes.length + ciphertext.length,
     );
-    result.set(ephemeral_pub_bytes, 0);
-    result.set(ciphertext, ephemeral_pub_bytes.length);
+    result.set(ephemeralPubBytes, 0);
+    result.set(ciphertext, ephemeralPubBytes.length);
 
     return result;
   }
@@ -343,18 +343,18 @@ export class Identity extends EventTarget {
    * @param {Array<Uint8Array>|null} ratchets
    * @returns {Promise<Uint8Array|null>}
    */
-  async decrypt(ciphertext_token, ratchets = null) {
+  async decrypt(ciphertextToken, ratchets = null) {
     if (!this.ed25519Priv)
       throw new Error(
         "Decryption failed because identity does not hold a private key",
       );
 
-    if (ciphertext_token.length > 32) {
-      const peer_pub_bytes = ciphertext_token.slice(0, 32);
-      const ciphertext = ciphertext_token.slice(32);
-      const peer_pub = await crypto.subtle.importKey(
+    if (ciphertextToken.length > 32) {
+      const peerPubBytes = ciphertextToken.slice(0, 32);
+      const ciphertext = ciphertextToken.slice(32);
+      const peerPub = await crypto.subtle.importKey(
         "raw",
-        /** @type {any} */ (peer_pub_bytes),
+        /** @type {any} */ (peerPubBytes),
         { name: "X25519" },
         true,
         [],
@@ -365,23 +365,23 @@ export class Identity extends EventTarget {
       if (ratchets) {
         for (const ratchet of ratchets) {
           try {
-            const ratchet_prv = await importRawX25519PrivateKey(ratchet);
-            const shared_key_buffer = await crypto.subtle.deriveBits(
+            const ratchetPrv = await importRawX25519PrivateKey(ratchet);
+            const sharedKeyBuffer = await crypto.subtle.deriveBits(
               {
                 name: "X25519",
-                public: peer_pub,
+                public: peerPub,
               },
-              /** @type {any} */ (ratchet_prv),
+              /** @type {any} */ (ratchetPrv),
               256,
             );
-            const shared_key = new Uint8Array(shared_key_buffer);
-            const derived_key = await hkdf(
-              shared_key,
+            const sharedKey = new Uint8Array(sharedKeyBuffer);
+            const derivedKey = await hkdf(
+              sharedKey,
               this.getSalt(),
               this.getContext() || new Uint8Array(0),
               64,
             );
-            const token = new Token(derived_key);
+            const token = new Token(derivedKey);
             plaintext = await token.decrypt(ciphertext);
             if (plaintext) break;
           } catch (e) {
@@ -392,22 +392,22 @@ export class Identity extends EventTarget {
 
       if (!plaintext) {
         try {
-          const shared_key_buffer = await crypto.subtle.deriveBits(
+          const sharedKeyBuffer = await crypto.subtle.deriveBits(
             {
               name: "X25519",
-              public: peer_pub,
+              public: peerPub,
             },
             /** @type {any} */ (this.x25519Priv),
             256,
           );
-          const shared_key = new Uint8Array(shared_key_buffer);
-          const derived_key = await hkdf(
-            shared_key,
+          const sharedKey = new Uint8Array(sharedKeyBuffer);
+          const derivedKey = await hkdf(
+            sharedKey,
             this.getSalt(),
             this.getContext() || new Uint8Array(0),
             64,
           );
-          const token = new Token(derived_key);
+          const token = new Token(derivedKey);
           plaintext = await token.decrypt(ciphertext);
         } catch (e) {
           plaintext = null;

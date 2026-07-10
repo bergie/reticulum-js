@@ -298,12 +298,12 @@ export class Destination extends EventTarget {
 
     // 1. Generate ephemeral keys first
     /** @type {{privateKey: CryptoKey, publicKey: CryptoKey}} */
-    const local_ephemeral_keypair = await generateX25519KeyPair();
+    const localEphemeralKeyPair = await generateX25519KeyPair();
     /** @type {CryptoKey} */
-    const local_x25519_priv = local_ephemeral_keypair.privateKey;
+    const localX25519Priv = localEphemeralKeyPair.privateKey;
     // We also need signing key
-    const local_signing_keypair = await generateEd25519KeyPair();
-    const local_signing_pub = await exportPublicKey(local_signing_keypair.publicKey);
+    const localSigningKeyPair = await generateEd25519KeyPair();
+    const localSigningPub = await exportPublicKey(localSigningKeyPair.publicKey);
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -331,30 +331,30 @@ export class Destination extends EventTarget {
           }
 
           const linkId = packet.destinationHash;
-          const peer_x25519_pub_bytes = packet.payload.slice(64, 96);
-          const peer_ed25519_pub_bytes = packet.payload.slice(32, 64);
+          const peerX25519PubBytes = packet.payload.slice(64, 96);
+          const peerEd25519PubBytes = packet.payload.slice(32, 64);
 
-          const peer_x25519_pub = await crypto.subtle.importKey(
+          const peerX25519Pub = await crypto.subtle.importKey(
             "raw",
-            peer_x25519_pub_bytes,
+            peerX25519PubBytes,
             { name: "X25519" },
             true,
             [],
           );
 
-          const link_key = await LinkEncryption.deriveLinkKey(
-            local_x25519_priv,
-            peer_x25519_pub,
+          const linkKey = await LinkEncryption.deriveLinkKey(
+            localX25519Priv,
+            peerX25519Pub,
             this.getSalt(),
           );
 
           const link = new Link(
             this,
             linkId,
-            local_ephemeral_keypair,
-            peer_x25519_pub_bytes,
-            local_signing_keypair.privateKey,
-            local_signing_pub,
+            localEphemeralKeyPair,
+            peerX25519PubBytes,
+            localSigningKeyPair.privateKey,
+            localSigningPub,
             this.interfaceLayer.transport,
           );
           await link.deriveKeys();
@@ -383,7 +383,7 @@ export class Destination extends EventTarget {
         try {
           const ed25519 = await generateEd25519KeyPair();
           const x25519PubBytes = await exportPublicKey(
-            local_ephemeral_keypair.publicKey,
+            localEphemeralKeyPair.publicKey,
           );
           const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
 
@@ -575,29 +575,29 @@ export class Destination extends EventTarget {
 
   /**
    * Remember a destination.
-   * @param {Uint8Array} packet_hash
-   * @param {Uint8Array} destination_hash
-   * @param {Uint8Array} public_key
+   * @param {Uint8Array} packetHash
+   * @param {Uint8Array} destinationHash
+   * @param {Uint8Array} publicKey
    * @param {any} appData
    */
   static async remember(
-    packet_hash,
-    destination_hash,
-    public_key,
+    packetHash,
+    destinationHash,
+    publicKey,
     appData = null,
   ) {
-    const key = toHex(destination_hash);
+    const key = toHex(destinationHash);
     const entry = Destination.knownDestinations.get(key);
     if (entry) {
       entry[0] = Date.now() / 1000; // time.time() in seconds
-      entry[1] = packet_hash;
-      entry[2] = public_key;
+      entry[1] = packetHash;
+      entry[2] = publicKey;
       entry[3] = appData;
     } else {
       Destination.knownDestinations.set(key, [
         Date.now() / 1000,
-        packet_hash,
-        public_key,
+        packetHash,
+        publicKey,
         appData,
         0,
       ]);
@@ -606,28 +606,28 @@ export class Destination extends EventTarget {
 
   /**
    * Recall an identity for a destination or identity hash.
-   * @param {Uint8Array} target_hash
-   * @param {boolean} from_identity_hash
+   * @param {Uint8Array} targetHash
+   * @param {boolean} fromIdentityHash
    * @returns {Promise<Identity|null>}
    */
-  static async recall(target_hash, from_identity_hash = false) {
-    if (from_identity_hash) {
+  static async recall(targetHash, fromIdentityHash = false) {
+    if (fromIdentityHash) {
       for (const [_key, entry] of Destination.knownDestinations.entries()) {
-        const public_key = entry[2];
-        const identity = await Identity.fromPublicKey(public_key);
-        const identity_hash = await Identity.truncatedHash(identity.publicKey);
+        const publicKey = entry[2];
+        const identity = await Identity.fromPublicKey(publicKey);
+        const identityHash = await Identity.truncatedHash(identity.publicKey);
         console.log(
-          `[DEBUG] Comparing ${toHex(target_hash)} vs calculated ${toHex(identity_hash)}`,
+          `[DEBUG] Comparing ${toHex(targetHash)} vs calculated ${toHex(identityHash)}`,
         );
 
-        if (toHex(target_hash) === toHex(identity_hash)) {
+        if (toHex(targetHash) === toHex(identityHash)) {
           identity.appData = entry[3];
           return identity;
         }
       }
       return null;
     } else {
-      const key = toHex(target_hash);
+      const key = toHex(targetHash);
       const entry = Destination.knownDestinations.get(key);
       if (entry) {
         const identity = await Identity.fromPublicKey(entry[2]);

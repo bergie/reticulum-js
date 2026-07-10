@@ -128,7 +128,7 @@ export class Resource extends EventTarget {
 
     if (this.data instanceof Uint8Array) {
       let data = this.data;
-      const original_len = data.length;
+      const originalLen = data.length;
 
       if (this.autoCompress && this.bz2) {
         data = this.bz2.compress(data);
@@ -136,15 +136,15 @@ export class Resource extends EventTarget {
         this.compressed = true;
       }
 
-      this.uncompressedSize = original_len;
-      const total_len = data.length;
-      this.totalSize = total_len;
-      this.totalParts = Math.ceil(total_len / sdu);
+      this.uncompressedSize = originalLen;
+      const totalLen = data.length;
+      this.totalSize = totalLen;
+      this.totalParts = Math.ceil(totalLen / sdu);
       this.size = this.totalParts;
 
       for (let i = 0; i < this.totalParts; i++) {
         const start = i * sdu;
-        const end = Math.min(start + sdu, total_len);
+        const end = Math.min(start + sdu, totalLen);
         this.parts.push(data.slice(start, end));
       }
     } else {
@@ -248,7 +248,7 @@ export class Resource extends EventTarget {
       }
 
       // Register with the link
-      link.register_incoming_resource(resource);
+      link.registerIncomingResource(resource);
 
       return resource;
     } catch (e) {

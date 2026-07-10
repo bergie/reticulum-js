@@ -93,7 +93,7 @@ export class Link extends EventTarget {
     this.pendingResources = new Map();
   }
 
-  register_incoming_resource(resource) {
+  registerIncomingResource(resource) {
     this.addEventListener("resource", (event) => {
       const { packet } = /** @type {any} */ (event).detail;
       if (resource.link && toHex(packet.destinationHash) === toHex(resource.link.linkId)) {
