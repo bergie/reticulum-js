@@ -9,6 +9,7 @@ import {
   generateX25519KeyPair,
 } from "../crypto/keys.js";
 import { Link, LinkEncryption } from "../transport/link.js";
+import { log, LogLevel } from "../utils/log.js";
 import { toHex } from "../utils/encoding.js";
 import { Identity } from "./identity.js";
 import { ContextType, DestType, HeaderType, Packet, PacketType, TransportType } from "./packet.js";
@@ -120,10 +121,12 @@ export class Destination extends EventTarget {
     });
 
     // DEBUG: Validate payload size
-    console.log(`[DEBUG] Announce Payload Size: ${payload.length} bytes`);
+    log('Destination', `Announce Payload Size: ${payload.length} bytes`, LogLevel.DEBUG);
     if (payload.length < 148) {
-      console.error(
+      log(
+        'Destination',
         "[!] Announce payload too small! Check your concatenation.",
+        LogLevel.ERROR,
       );
     }
 
@@ -422,8 +425,10 @@ export class Destination extends EventTarget {
    * @param {import("../interfaces/base.js").Interface} receivingInterface
    */
   async receive(packet, receivingInterface) {
-    console.log(
-      `[DEST] Destination ${this.name} received packet type ${packet.packetType}`,
+    log(
+      'Destination',
+      `Destination ${this.name} received packet type ${packet.packetType}`,
+      LogLevel.DEBUG,
     );
 
     // Dispatch to internal handlers based on packet type
@@ -568,7 +573,11 @@ export class Destination extends EventTarget {
 
     await this.interfaceLayer.transport.sendPacket(responsePacket);
 
-    console.log(`[LINK] Handshake response sent to link_id: ${toHex(linkId)}`);
+    log(
+      'Destination',
+      `[LINK] Handshake response sent to link_id: ${toHex(linkId)}`,
+      LogLevel.DEBUG,
+    );
 
     return link;
   }
@@ -616,8 +625,10 @@ export class Destination extends EventTarget {
         const publicKey = entry[2];
         const identity = await Identity.fromPublicKey(publicKey);
         const identityHash = await Identity.truncatedHash(identity.publicKey);
-        console.log(
-          `[DEBUG] Comparing ${toHex(targetHash)} vs calculated ${toHex(identityHash)}`,
+        log(
+          'Destination',
+          `Comparing ${toHex(targetHash)} vs calculated ${toHex(identityHash)}`,
+          LogLevel.DEBUG,
         );
 
         if (toHex(targetHash) === toHex(identityHash)) {
