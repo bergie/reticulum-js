@@ -49,12 +49,31 @@ export class Message {
     const sourceHash = this.sourceHash || sourceIdentity.identityHash;
 
     // LXMF Standard: [timestamp, title, content, fields]
-    const msgpackPayload = MicroMsgPack.encode([
-      this.timestamp,
-      this.title,
-      this.content,
-      this.fields,
-    ]);
+    // To ensure interop with Python umsgpack, the timestamp MUST be encoded as a float64
+    // even if it has no fractional part.
+    const timestampBytes = MicroMsgPack.encodeFloat64(this.timestamp);
+    const titleBytes = MicroMsgPack.encode(this.title);
+    const contentBytes = MicroMsgPack.encode(this.content);
+    const fieldsBytes = MicroMsgPack.encode(this.fields);
+
+    const msgpackPayload = new Uint8Array(
+      1 + // array header (0x94)
+        timestampBytes.length +
+        titleBytes.length +
+        contentBytes.length +
+        fieldsBytes.length,
+    );
+
+    let offset = 0;
+    msgpackPayload[offset++] = 0x94; // fixarray of 4 elements
+    msgpackPayload.set(timestampBytes, offset);
+    offset += timestampBytes.length;
+    msgpackPayload.set(titleBytes, offset);
+    offset += titleBytes.length;
+    msgpackPayload.set(contentBytes, offset);
+    offset += contentBytes.length;
+    msgpackPayload.set(fieldsBytes, offset);
+    offset += fieldsBytes.length;
 
     // 1. Construct the 'hashed_part' (Dest + Source + Payload)
     const hashedPart = new Uint8Array(16 + 16 + msgpackPayload.length);
