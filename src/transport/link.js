@@ -495,7 +495,9 @@ export class Link extends EventTarget {
     const isUnencrypted =
       packet.packetType === PacketType.LINKREQUEST ||
       (packet.packetType === PacketType.PROOF &&
-        packet.contextByte === ContextType.LRPROOF);
+        packet.contextByte === ContextType.LRPROOF) ||
+      (packet.packetType === PacketType.PROOF &&
+        packet.contextByte === ContextType.NONE);
 
     if (!this.token && !isUnencrypted) {
       throw new Error("Link token not available. Did you call deriveKeys()?");
