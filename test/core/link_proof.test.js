@@ -1,9 +1,14 @@
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { Identity } from "../../src/core/identity.js";
-import { Link } from "../../src/transport/link.js";
-import { Packet, PacketType, DestType, ContextType } from "../../src/core/packet.js";
 import { Destination, Direction } from "../../src/core/destination.js";
+import { Identity } from "../../src/core/identity.js";
+import {
+  ContextType,
+  DestType,
+  Packet,
+  PacketType,
+} from "../../src/core/packet.js";
+import { Link } from "../../src/transport/link.js";
 
 class MockTransport {
   constructor() {
@@ -24,7 +29,7 @@ test("Link identity proof", async (t) => {
   const identityB = await Identity.generate();
 
   const linkId = new Uint8Array(16).fill(0xaa);
-  
+
   const transportA = new MockTransport();
   const transportB = new MockTransport();
 
@@ -34,15 +39,16 @@ test("Link identity proof", async (t) => {
     Direction.OUT,
     DestType.SINGLE,
     identityB,
-    null
+    null,
   );
   const ephemeralKeyPairA = {
     publicKey: identityA.x25519Pub,
     privateKey: identityA.x25519Priv,
   };
-  
+
   const sigPrvA = identityA.ed25519Priv;
   const sigPubBytesA = (await identityA.getPublicKey()).slice(32);
+  console.log("sigPubBytesA length:", sigPubBytesA.length);
 
   const linkA = new Link(
     destB,
@@ -51,7 +57,7 @@ test("Link identity proof", async (t) => {
     (await identityB.getPublicKey()).slice(0, 32), // peerPubBytes (X25519)
     sigPrvA,
     sigPubBytesA,
-    transportA
+    transportA,
   );
 
   // Link B (Responder)
@@ -60,15 +66,16 @@ test("Link identity proof", async (t) => {
     Direction.OUT,
     DestType.SINGLE,
     identityA,
-    null
+    null,
   );
   const ephemeralKeyPairB = {
     publicKey: identityB.x25519Pub,
     privateKey: identityB.x25519Priv,
   };
-  
+
   const sigPrvB = identityB.ed25519Priv;
   const sigPubBytesB = (await identityB.getPublicKey()).slice(32);
+  console.log("sigPubBytesB length:", sigPubBytesB.length);
 
   const linkB = new Link(
     destA,
@@ -77,7 +84,7 @@ test("Link identity proof", async (t) => {
     (await identityA.getPublicKey()).slice(0, 32), // peerPubBytes (X25519)
     sigPrvB,
     sigPubBytesB,
-    transportB
+    transportB,
   );
 
   // Connect them

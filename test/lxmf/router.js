@@ -49,14 +49,14 @@ test("LXMRouter", async (t) => {
     const fields = { foo: "bar" };
     const timestamp = Date.now() / 1000.0;
 
-    const msg = new Message(
-      senderHash,
-      destHash,
+    const msg = new Message({
+      sourceHash: senderHash,
+      destinationHash: destHash,
       timestamp,
       title,
       content,
       fields,
-    );
+    });
     const { messageId, wireData } = await msg.serialize(senderIdentity);
 
     console.log("Generated messageId:", messageId);
@@ -115,13 +115,17 @@ test("LXMRouter", async (t) => {
     }
 
     assert.ok(messageReceived, "Message event should have been dispatched");
-    assert.ok(messageReceived instanceof Message);
-    assert.deepStrictEqual(messageReceived.sourceHash, senderHash);
-    assert.deepStrictEqual(messageReceived.destinationHash, destHash);
-    assert.strictEqual(messageReceived.title, title);
-    assert.strictEqual(messageReceived.content, content);
-    assert.strictEqual(messageReceived.timestamp, timestamp);
-    assert.deepStrictEqual(messageReceived.fields, fields);
+    const msgReceived = messageReceived.message;
+    assert.ok(
+      msgReceived instanceof Message,
+      "messageReceived.message should be an instance of Message",
+    );
+    assert.deepStrictEqual(msgReceived.sourceHash, senderHash);
+    assert.deepStrictEqual(msgReceived.destinationHash, destHash);
+    assert.strictEqual(msgReceived.title, title);
+    assert.strictEqual(msgReceived.content, content);
+    assert.strictEqual(msgReceived.timestamp, timestamp);
+    assert.deepStrictEqual(msgReceived.fields, fields);
 
     router.deliveryDest.respondToLinkRequest = originalRespond;
   });

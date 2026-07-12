@@ -143,12 +143,11 @@ export class TCPClientInterface extends Interface {
 
     const framer = createRNSFramerStream(Packet);
 
-    // IMPORTANT: Create the writer ONCE here and store it
-    this._packetWriter = framer.writable.getWriter();
-
-    framer.readable.pipeTo(Writable.toWeb(nodeWritable)).catch((/** @type {any} */ err) => {
-      console.error("Framer pipeTo error:", err);
-    });
+    framer.readable
+      .pipeTo(Writable.toWeb(nodeWritable))
+      .catch((/** @type {any} */ err) => {
+        console.error("Framer pipeTo error:", err);
+      });
     this._writable = framer.writable;
     this._loopPromise = this._startInboundLoop();
   }
@@ -172,13 +171,18 @@ export class TCPClientInterface extends Interface {
         this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
       }
     } catch (e) {
-      if (/** @type {any} */ (e).name === "AbortError" || /** @type {any} */ (e).code === "ABORT_ERR") {
+      if (
+        /** @type {any} */ (e).name === "AbortError" ||
+        /** @type {any} */ (e).code === "ABORT_ERR"
+      ) {
         if (!this._closed) {
           this._closed = true;
           this.dispatchEvent(new CustomEvent("closed"));
         }
       } else {
-        this.dispatchEvent(new CustomEvent("error", { detail: /** @type {any} */ (e) }));
+        this.dispatchEvent(
+          new CustomEvent("error", { detail: /** @type {any} */ (e) }),
+        );
       }
     } finally {
       reader.releaseLock();

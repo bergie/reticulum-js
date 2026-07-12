@@ -9,10 +9,17 @@ import {
   generateX25519KeyPair,
 } from "../crypto/keys.js";
 import { Link, LinkEncryption } from "../transport/link.js";
-import { log, LogLevel } from "../utils/log.js";
 import { toHex } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
 import { Identity } from "./identity.js";
-import { ContextType, DestType, HeaderType, Packet, PacketType, TransportType } from "./packet.js";
+import {
+  ContextType,
+  DestType,
+  HeaderType,
+  Packet,
+  PacketType,
+  TransportType,
+} from "./packet.js";
 
 /**
  * @enum {number}
@@ -121,10 +128,14 @@ export class Destination extends EventTarget {
     });
 
     // DEBUG: Validate payload size
-    log('Destination', `Announce Payload Size: ${payload.length} bytes`, LogLevel.DEBUG);
+    log(
+      "Destination",
+      `Announce Payload Size: ${payload.length} bytes`,
+      LogLevel.DEBUG,
+    );
     if (payload.length < 148) {
       log(
-        'Destination',
+        "Destination",
         "[!] Announce payload too small! Check your concatenation.",
         LogLevel.ERROR,
       );
@@ -169,7 +180,10 @@ export class Destination extends EventTarget {
     const nameBytes = encoder.encode(this.name);
 
     // nameHash = SHA256(full_app_name_string)[:10]
-    const nameHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (nameBytes));
+    const nameHashBuffer = await crypto.subtle.digest(
+      "SHA-256",
+      /** @type {any} */ (nameBytes),
+    );
     this.nameHash = new Uint8Array(nameHashBuffer.slice(0, 10));
 
     if (this.type === DestType.SINGLE && this.identity) {
@@ -180,7 +194,10 @@ export class Destination extends EventTarget {
       combined.set(this.nameHash, 0);
       combined.set(this.identity.identityHash, this.nameHash.length);
 
-      const destHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (combined));
+      const destHashBuffer = await crypto.subtle.digest(
+        "SHA-256",
+        /** @type {any} */ (combined),
+      );
       this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
     } else if (this.type === DestType.GROUP && this.identity) {
       // Same as SINGLE for GROUP
@@ -190,7 +207,10 @@ export class Destination extends EventTarget {
       combined.set(this.nameHash, 0);
       combined.set(this.identity.identityHash, this.nameHash.length);
 
-      const destHashBuffer = await crypto.subtle.digest("SHA-256", /** @type {any} */ (combined));
+      const destHashBuffer = await crypto.subtle.digest(
+        "SHA-256",
+        /** @type {any} */ (combined),
+      );
       this.destinationHash = new Uint8Array(destHashBuffer.slice(0, 16));
     } else if (this.type === DestType.PLAIN) {
       // destHash = SHA256(nameHash)[:16]
@@ -306,7 +326,9 @@ export class Destination extends EventTarget {
     const localX25519Priv = localEphemeralKeyPair.privateKey;
     // We also need signing key
     const localSigningKeyPair = await generateEd25519KeyPair();
-    const localSigningPub = await exportPublicKey(localSigningKeyPair.publicKey);
+    const localSigningPub = await exportPublicKey(
+      localSigningKeyPair.publicKey,
+    );
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -426,7 +448,7 @@ export class Destination extends EventTarget {
    */
   async receive(packet, receivingInterface) {
     log(
-      'Destination',
+      "Destination",
       `Destination ${this.name} received packet type ${packet.packetType}`,
       LogLevel.DEBUG,
     );
@@ -509,7 +531,9 @@ export class Destination extends EventTarget {
     // ---------------------------------------------------------
     // Exporting directly to avoid any previous byte-order slicing issues
     if (!this.identity) {
-      throw new Error("Destination requires an identity to respond to a link request.");
+      throw new Error(
+        "Destination requires an identity to respond to a link request.",
+      );
     }
     const ed25519PubBytes = await exportPublicKey(this.identity.ed25519Pub);
 
@@ -553,7 +577,9 @@ export class Destination extends EventTarget {
     const initiatorPubBytes = requestPacket.payload.slice(0, 32);
 
     if (!this.interfaceLayer || !this.interfaceLayer.transport) {
-      throw new Error("Destination not bound to an RNS instance with a transport.");
+      throw new Error(
+        "Destination not bound to an RNS instance with a transport.",
+      );
     }
 
     const link = new Link(
@@ -574,7 +600,7 @@ export class Destination extends EventTarget {
     await this.interfaceLayer.transport.sendPacket(responsePacket);
 
     log(
-      'Destination',
+      "Destination",
       `[LINK] Handshake response sent to link_id: ${toHex(linkId)}`,
       LogLevel.DEBUG,
     );
@@ -626,7 +652,7 @@ export class Destination extends EventTarget {
         const identity = await Identity.fromPublicKey(publicKey);
         const identityHash = await Identity.truncatedHash(identity.publicKey);
         log(
-          'Destination',
+          "Destination",
           `Comparing ${toHex(targetHash)} vs calculated ${toHex(identityHash)}`,
           LogLevel.DEBUG,
         );

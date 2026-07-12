@@ -165,6 +165,12 @@ export class TransportCore extends EventTarget {
       return;
     }
 
+    if (this.localDestinations.has(packet.destinationHash)) {
+      console.log(
+        `Ignoring ANNOUNCE for local destination ${toHex(packet.destinationHash)}`,
+      );
+    }
+
     try {
       // The payload contains the full identity block at the start
       const identityBlock = packet.payload.slice(0, 64);

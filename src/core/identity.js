@@ -328,9 +328,7 @@ export class Identity extends EventTarget {
     const token = new Token(derivedKey);
     const ciphertext = await token.encrypt(/** @type {any} */ (plaintext));
 
-    const result = new Uint8Array(
-      ephemeralPubBytes.length + ciphertext.length,
-    );
+    const result = new Uint8Array(ephemeralPubBytes.length + ciphertext.length);
     result.set(ephemeralPubBytes, 0);
     result.set(ciphertext, ephemeralPubBytes.length);
 

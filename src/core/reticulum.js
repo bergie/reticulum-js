@@ -72,7 +72,9 @@ export class Reticulum {
     // and log the app data if an identity is present.
     if (destination.identity) {
       const appData = new TextDecoder().decode(destination.identity.appData);
-      console.log(`[+] Destination registered: ${destination.name} (${appData})`);
+      console.log(
+        `[+] Destination registered: ${destination.name} (${appData})`,
+      );
     } else {
       console.log(`[+] Destination registered: ${destination.name}`);
     }
@@ -84,7 +86,9 @@ export class Reticulum {
    */
   deregisterDestination(destination) {
     if (!destination.destinationHash) {
-      throw new Error("Destination hash must be computed before deregistration.");
+      throw new Error(
+        "Destination hash must be computed before deregistration.",
+      );
     }
     const hashHex = toHex(destination.destinationHash);
     this.localDestinations.delete(hashHex);

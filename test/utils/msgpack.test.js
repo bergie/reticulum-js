@@ -26,7 +26,7 @@ describe("MicroMsgPack implementation", () => {
       baz: 42,
       foobar: 42.7,
       barbaz: {
-        '15': true,
+        15: true,
       },
     };
     const serialized = msgpack.encode(content);

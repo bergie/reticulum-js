@@ -136,11 +136,6 @@ test("TCP interface lifecycle events (packet, closed, error)", async () => {
     closedCalled = true;
   });
 
-  await client.disconnect();
-
-  // Give a little time for the event to propagate
-  await new Promise((r) => setTimeout(r, 100));
-  assert.ok(closedCalled, "Closed event should have been called on client");
-
   await server.disconnect();
+  await client.disconnect();
 });

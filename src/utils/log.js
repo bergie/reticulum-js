@@ -23,9 +23,5 @@ export function log(module, message, logLevel = LogLevel.DEBUG) {
   if (logLevel > LOG_LEVEL) {
     return;
   }
-  console.log(
-    new Date().toISOString(),
-    `[${module}]`,
-    message,
-  );
+  console.log(new Date().toISOString(), `[${module}]`, message);
 }

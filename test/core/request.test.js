@@ -8,6 +8,10 @@ describe("RequestManager", () => {
     const mockDestinationHash = new Uint8Array(16);
     const mockLink = new EventTarget();
     mockLink.destinationHash = mockDestinationHash;
+    mockLink.linkId = mockDestinationHash;
+    mockLink.send = async (packet) => {
+      mockLastSentPacket = packet;
+    };
     /** @type {any} */
     mockLink.writable = {
       getWriter: () => ({
@@ -70,6 +74,8 @@ describe("RequestManager", () => {
   test("sendRequest should reject if response is not received", async () => {
     const mockLink = new EventTarget();
     mockLink.destinationHash = new Uint8Array(16);
+    mockLink.linkId = mockLink.destinationHash;
+    mockLink.send = async () => {};
     /** @type {any} */
     mockLink.writable = {
       getWriter: () => ({

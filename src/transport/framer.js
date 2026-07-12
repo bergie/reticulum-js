@@ -1,5 +1,5 @@
 import { TransformStream } from "node:stream/web";
-import { log, LogLevel } from "../utils/log.js";
+import { LogLevel, log } from "../utils/log.js";
 
 /**
  * @file framer.js
@@ -83,7 +83,7 @@ export function createRNSFramerStream() {
       frame.set(escaped, 1);
       frame[frame.length - 1] = FLAG;
 
-      log('Framer', `Enqueuing frame: ${frame}`, LogLevel.EXTREME);
+      log("Framer", `Enqueuing frame: ${frame}`, LogLevel.EXTREME);
       controller.enqueue(frame);
     },
   });
@@ -104,7 +104,11 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
      * @param {TransformStreamDefaultController} controller
      */
     transform(chunk, controller) {
-      log('Framer', `Received ${chunk.length} bytes from TCP socket`, LogLevel.DEBUG);
+      log(
+        "Framer",
+        `Received ${chunk.length} bytes from TCP socket`,
+        LogLevel.DEBUG,
+      );
       const combined = new Uint8Array(buffer.length + chunk.length);
       combined.set(buffer);
       combined.set(chunk, buffer.length);
@@ -120,7 +124,7 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
         // If the first flag is not at the start, the data before it is junk/malformed
         if (firstFlag > 0) {
           log(
-            'Framer',
+            "Framer",
             `Discarding ${firstFlag} bytes of junk/malformed data before first 0x7E`,
             LogLevel.WARN,
           );

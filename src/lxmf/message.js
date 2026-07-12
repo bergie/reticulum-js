@@ -49,7 +49,12 @@ export class Message {
     const sourceHash = sourceIdentity.identityHash;
 
     // LXMF Standard: [timestamp, title, content, fields]
-    const msgpackPayload = MicroMsgPack.encode([this.timestamp, this.title, this.content, this.fields]);
+    const msgpackPayload = MicroMsgPack.encode([
+      this.timestamp,
+      this.title,
+      this.content,
+      this.fields,
+    ]);
 
     // 1. Construct the 'hashed_part' (Dest + Source + Payload)
     const hashedPart = new Uint8Array(16 + 16 + msgpackPayload.length);

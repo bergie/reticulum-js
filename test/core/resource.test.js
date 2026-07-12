@@ -54,16 +54,10 @@ describe("Resource", () => {
 
   test("advertise sends correct packet", async () => {
     const mockLink = {
-      destinationHash: new Uint8Array(16).fill(0xaa),
+      linkId: new Uint8Array(16).fill(0xaa),
       mtu: 1024,
-      writable: {
-        getWriter: () => ({
-          write: async (packet) => {
-            // Capture the packet
-            resource.lastSentPacket = packet;
-          },
-          releaseLock: () => {},
-        }),
+      send: async (packet) => {
+        resource.lastSentPacket = packet;
       },
     };
 
@@ -80,15 +74,12 @@ describe("Resource", () => {
     assert.ok(resource.lastSentPacket instanceof Packet);
     assert.equal(resource.lastSentPacket.contextFlag, true);
     assert.equal(resource.lastSentPacket.contextByte, ContextType.RESOURCE_ADV);
-    assert.deepEqual(
-      resource.lastSentPacket.destinationHash,
-      mockLink.destinationHash,
-    );
+    assert.deepEqual(resource.lastSentPacket.destinationHash, mockLink.linkId);
   });
 
   test("accept creates a correctly configured resource", () => {
     const mockLink = {
-      register_incoming_resource: () => {},
+      registerIncomingResource: () => {},
     };
     const adv = new ResourceAdvertisement({
       t: 100,
@@ -134,7 +125,7 @@ describe("Resource", () => {
     };
 
     const mockLink = {
-      register_incoming_resource: () => {},
+      registerIncomingResource: () => {},
     };
     const adv = new ResourceAdvertisement({
       t: compressedData.length,

@@ -23,7 +23,7 @@ export const TransportType = {
   BROADCAST: 0x00,
   TRANSPORT: 0x01,
   RELAY: 0x02,
-}
+};
 
 /**
  * Header types.
@@ -49,17 +49,17 @@ export const ContextType = {
   RESOURCE_RCL: 0x07,
   CACHE_REQUEST: 0x08,
   REQUEST: 0x09,
-  RESPONSE: 0x0A,
-  PATH_RESPONSE: 0x0B,
-  COMMAND: 0x0C,
-  COMMAND_STATUS: 0x0D,
-  CHANNEL: 0x0E,
-  KEEPALIVE: 0xFA,
-  LINKIDENTIFY: 0xFB,
-  LINKCLOSE: 0xFC,
-  LINKPROOF: 0xFD,
-  LRRTT: 0xFE,
-  LRPROOF: 0xFF,
+  RESPONSE: 0x0a,
+  PATH_RESPONSE: 0x0b,
+  COMMAND: 0x0c,
+  COMMAND_STATUS: 0x0d,
+  CHANNEL: 0x0e,
+  KEEPALIVE: 0xfa,
+  LINKIDENTIFY: 0xfb,
+  LINKCLOSE: 0xfc,
+  LINKPROOF: 0xfd,
+  LRRTT: 0xfe,
+  LRPROOF: 0xff,
 };
 
 /**
@@ -113,7 +113,7 @@ export class Packet {
       this.raw = this.serialize();
     }
     // 1. Get flags byte and mask it (0x0F)
-    const flags = this.raw[0] & 0x0F;
+    const flags = this.raw[0] & 0x0f;
 
     // 2. Determine offset based on header_type
     // HEADER_2 (Type 2) is 32 bytes (16 dest + 16 transport)
@@ -123,11 +123,11 @@ export class Packet {
 
     let sliceOffset;
     if (this.headerType === HeaderType.HEADER_2) {
-        sliceOffset = 18;
+      sliceOffset = 18;
     } else {
-        // HEADER_1: 2 bytes (flags/hops) + 16 bytes dest = 18?
-        // Your Python snippet uses [2:], let's follow that.
-        sliceOffset = 2;
+      // HEADER_1: 2 bytes (flags/hops) + 16 bytes dest = 18?
+      // Your Python snippet uses [2:], let's follow that.
+      sliceOffset = 2;
     }
 
     const payloadPart = this.raw.slice(sliceOffset);
@@ -158,7 +158,7 @@ export class Packet {
     if (this.transportType === 1) flags |= 0x10;
 
     if (this.contextByte === ContextType.LRPROOF) {
-      flags |= (DestType.LINK << 2);
+      flags |= DestType.LINK << 2;
     } else {
       flags |= (this.destinationType & 0x03) << 2;
     }
@@ -199,7 +199,8 @@ export class Packet {
     let offset = 2;
 
     if (this.headerType === HeaderType.HEADER_2) {
-      if (!this.transportId) throw new Error("Header type 2 requires a transportId");
+      if (!this.transportId)
+        throw new Error("Header type 2 requires a transportId");
       uint8.set(this.transportId.subarray(0, 16), offset);
       offset += DST_LEN;
     }

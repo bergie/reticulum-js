@@ -1,10 +1,7 @@
 import assert from "node:assert";
-import {
-  Destination,
-  Direction,
-} from "../../src/core/destination.js";
-import { DestType } from "../../src/core/packet.js";
+import { Destination, Direction } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
+import { DestType } from "../../src/core/packet.js";
 
 async function testDestination() {
   console.log("Testing Destination...");
@@ -42,19 +39,11 @@ async function testDestination() {
   assert.strictEqual(groupDest.destinationHash.length, 16);
 
   // Test IN/OUT helpers
-  const inDest = await Destination.IN(
-    "myapp",
-    DestType.SINGLE,
-    myIdentity,
-  );
+  const inDest = await Destination.IN("myapp", DestType.SINGLE, myIdentity);
   assert.strictEqual(inDest.direction, Direction.IN);
   assert.ok(inDest.destinationHash);
 
-  const outDest = await Destination.OUT(
-    "myapp",
-    DestType.SINGLE,
-    myIdentity,
-  );
+  const outDest = await Destination.OUT("myapp", DestType.SINGLE, myIdentity);
   assert.strictEqual(outDest.direction, Direction.OUT);
   assert.ok(outDest.destinationHash);
 
