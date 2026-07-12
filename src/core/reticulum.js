@@ -1,10 +1,11 @@
-// src/core/reticulum.js
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
 import { DestType, HeaderType, Packet, PacketType } from "./packet.js";
+import { log, LogLevel } from "../utils/log.js";
 
 /**
  * The primary entry point and orchestrator for the Reticulum Network System.
+ * @description The Reticulum class orchestrates the transport and local destinations.
  */
 export class Reticulum {
   /**
@@ -23,7 +24,7 @@ export class Reticulum {
     // Local registered endpoints (e.g., the Yjs sync endpoint, LXMF delivery)
     this.localDestinations = new Map();
 
-    console.log("Reticulum Engine initialized.");
+    log("Reticulum", "Reticulum Engine initialized.");
   }
 
   /**
@@ -33,7 +34,7 @@ export class Reticulum {
    */
   addInterface(rnsInterface, isDefault = false) {
     this.transport.addInterface(rnsInterface, isDefault);
-    console.log(`[+] Interface attached: ${rnsInterface.name}`);
+    log("Reticulum", `[+] Interface attached: ${rnsInterface.name}`);
   }
 
   /**
@@ -42,7 +43,7 @@ export class Reticulum {
    */
   removeInterface(rnsInterface) {
     this.transport.removeInterface(rnsInterface);
-    console.log(`[-] Interface removed: ${rnsInterface.name}`);
+    log("Reticulum", `[-] Interface removed: ${rnsInterface.name}`);
   }
 
   /**
@@ -72,11 +73,9 @@ export class Reticulum {
     // and log the app data if an identity is present.
     if (destination.identity) {
       const appData = new TextDecoder().decode(destination.identity.appData);
-      console.log(
-        `[+] Destination registered: ${destination.name} (${appData})`,
-      );
+      log("Reticulum", `[+] Destination registered: ${destination.name} (${appData})`);
     } else {
-      console.log(`[+] Destination registered: ${destination.name}`);
+      log("Reticulum", `[+] Destination registered: ${destination.name}`);
     }
   }
 

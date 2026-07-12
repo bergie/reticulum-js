@@ -20,8 +20,8 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
-import { exportPublicKey } from "../crypto/keys.js";
 import { Token } from "../crypto/token.js";
+import { exportPublicKey } from "../crypto/keys.js";
 import { toHex } from "../utils/encoding.js";
 
 /**

@@ -5,6 +5,7 @@
 
 import { ContextType, Packet } from "../core/packet.js";
 import { ResourceAdvertisement } from "./resource_advertisement.js";
+import { log, LogLevel } from "../utils/log.js";
 
 /**
  * @enum {number}
@@ -252,7 +253,7 @@ export class Resource extends EventTarget {
 
       return resource;
     } catch (e) {
-      console.error("Failed to accept resource advertisement:", e);
+      log("Resource", `Failed to accept resource advertisement: ${e}`, LogLevel.ERROR);
       return null;
     }
   }
@@ -312,7 +313,7 @@ export class Resource extends EventTarget {
       }
     } catch (e) {
       this.status = ResourceStatus.CORRUPT;
-      console.error("Failed to assemble resource:", e);
+      log("Resource", `Failed to assemble resource: ${e}`, LogLevel.ERROR);
     }
   }
 

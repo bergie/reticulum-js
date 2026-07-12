@@ -8,9 +8,11 @@ import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
 import { Message } from "./message.js";
+import { log, LogLevel } from "../utils/log.js";
 
 /**
  * Handles LXMF routing and message processing.
+ * @description LXMF Router for managing incoming and outgoing messages
  */
 export class LXMRouter extends EventTarget {
   /**
@@ -29,7 +31,7 @@ export class LXMRouter extends EventTarget {
    * Initializes the router and registers the LXMF delivery destination.
    */
   async init() {
-    console.log("[ROUTER] Initializing...");
+    log("ROUTER", "Initializing...");
     // Register the standard LXMF delivery destination.
     // Assumes Destination.IN was updated to accept the rnsCore as the 4th/5th parameter
     const deliveryDest = await Destination.IN(
@@ -38,7 +40,7 @@ export class LXMRouter extends EventTarget {
       this.identity,
       this.rns,
     );
-    console.log("[ROUTER] deliveryDest set:", deliveryDest.name);
+    log("ROUTER", `deliveryDest set: ${deliveryDest.name}`);
     this.deliveryDest = deliveryDest;
 
     // Bind it to the central routing table
@@ -50,7 +52,7 @@ export class LXMRouter extends EventTarget {
     this.dispatchEvent(
       new CustomEvent("ready", { detail: { destination: deliveryDest } }),
     );
-    console.log("[ROUTER] init complete.");
+    log("ROUTER", "init complete.");
   }
 
   /**
@@ -66,7 +68,7 @@ export class LXMRouter extends EventTarget {
         try {
           await this._processIncomingMessage(plaintext, null);
         } catch (e) {
-          console.error("[!] Failed to process single-packet LXMF message:", e);
+          log("LXMF", `[!] Failed to process single-packet LXMF message: ${e}`, LogLevel.ERROR);
         }
       },
     );
@@ -75,7 +77,7 @@ export class LXMRouter extends EventTarget {
     /** @type {any} */ (this.deliveryDest).addEventListener(
       "link_request",
       async (/** @type {any} */ event) => {
-        console.log("[*] Incoming LXMF Link Request");
+        log("LXMF", "[*] Incoming LXMF Link Request");
 
         try {
           // Use the clean callback we built into Destination.js
@@ -92,7 +94,7 @@ export class LXMRouter extends EventTarget {
             );
           });
         } catch (e) {
-          console.error("[!] Failed to respond to LXMF link request:", e);
+          log("LXMF", `[!] Failed to respond to LXMF link request: ${e}`, LogLevel.ERROR);
         }
       },
     );
@@ -135,10 +137,7 @@ export class LXMRouter extends EventTarget {
           // it will find the link between the 178b9... hash and the 6c8f... identity key!
           this.processPendingMessages(identityHash);
         } catch (e) {
-          console.error(
-            "[ROUTER] Failed to derive LXMF destination for peer:",
-            e,
-          );
+          log("ROUTER", `Failed to derive LXMF destination for peer: ${e}`, LogLevel.ERROR);
         }
       },
     );
@@ -164,7 +163,7 @@ export class LXMRouter extends EventTarget {
     const senderIdentity = await Destination.recall(message.senderHash);
 
     if (!senderIdentity) {
-      console.log(`[ROUTER] Identity unknown for ${sourceHex}. Requesting...`);
+      log("ROUTER", `Identity unknown for ${sourceHex}. Requesting...`);
       // TODO: Send path request
 
       // Park the message for a limited time (e.g., 5 seconds)
@@ -204,9 +203,7 @@ export class LXMRouter extends EventTarget {
   async processPendingMessages(linkId) {
     const hashHex = toHex(linkId);
     if (this.pendingMessages.has(hashHex)) {
-      console.log(
-        `[ROUTER] Identity acquired. Re-processing parked message for ${hashHex}`,
-      );
+      log("ROUTER", `Identity acquired. Re-processing parked message for ${hashHex}`);
       const wireData = this.pendingMessages.get(hashHex);
       await this._processIncomingMessage(wireData, linkId);
     }
@@ -228,8 +225,8 @@ export class LXMRouter extends EventTarget {
       transportType: 0,
       payload: wireData,
     });
-    console.log(`DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
-    console.log(`DEBUG: Sending to ${toHex(message.destinationHash)}`);
+    log("LXMF", `DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
+    log("LXMF", `DEBUG: Sending to ${toHex(message.destinationHash)}`);
     // await this.deliveryDest.send(packet);
     // console.log("SEND", packet, linkId);
     await this.rns.transport.sendPacket(packet, linkId);

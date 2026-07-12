@@ -6,6 +6,7 @@ import {
   createRNSUnframerStream,
 } from "../transport/framer.js";
 import { Interface } from "./base.js";
+import { log, LogLevel } from "../utils/log.js";
 
 /**
  * @typedef {Object} TCPClientInterfaceOptions
@@ -133,20 +134,17 @@ export class TCPClientInterface extends Interface {
       write(chunk, encoding, callback) {
         socket.write(chunk, encoding, callback);
       },
-      flush(/** @type {any} */ callback) {
-        callback();
-      },
     });
     this._readable = Readable.toWeb(nodeReadable).pipeThrough(
       createRNSUnframerStream(Packet, this.ifacSize),
     );
 
-    const framer = createRNSFramerStream(Packet);
+    const framer = createRNSFramerStream();
 
     framer.readable
       .pipeTo(Writable.toWeb(nodeWritable))
       .catch((/** @type {any} */ err) => {
-        console.error("Framer pipeTo error:", err);
+        log("TCP", `Framer pipeTo error: ${err}`, LogLevel.ERROR);
       });
     this._writable = framer.writable;
     this._loopPromise = this._startInboundLoop();
@@ -242,7 +240,7 @@ export class TCPServerInterface extends Interface {
         this.online = true;
         resolve();
       });
-      this.server.on("error", (err) => {
+      this.server.on("error", (/** @type {Error} */err) => {
         this.online = false;
         reject(err);
       });

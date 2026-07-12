@@ -1,4 +1,5 @@
 import { toHex } from "../utils/encoding.js";
+import { log, LogLevel } from "../utils/log.js";
 
 /**
  * @typedef {Object} Route
@@ -57,6 +58,6 @@ export class RoutingTable {
         droppedCount++;
       }
     }
-    console.log(`Dropped ${droppedCount} routes due to interface failure.`);
+    log("Router", `Dropped ${droppedCount} routes due to interface failure.`);
   }
 }

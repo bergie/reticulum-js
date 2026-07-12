@@ -5,6 +5,7 @@ import { Identity } from "../core/identity.js";
 import { PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
 import { RoutingTable } from "./router.js";
+import { log, LogLevel } from "../utils/log.js";
 
 /**
  * The central network router for the Reticulum node.
@@ -43,10 +44,10 @@ export class TransportCore extends EventTarget {
     // 3. Handle graceful teardown
     iface.addEventListener("closed", () => this.removeInterface(iface));
     iface.addEventListener("error", (/** @type {import("../interfaces/base.js").ErrorEvent} */e) =>
-      console.error(`[!] Interface ${iface.name} error:`, e.detail.message),
+      log("Transport", `[!] Interface ${iface.name} error: ${e.detail.message}`, LogLevel.ERROR),
     );
 
-    console.log(`[+] Transport bound to interface: ${iface.name}`);
+    log("Transport", `[+] Transport bound to interface: ${iface.name}`);
   }
 
   /**
@@ -59,7 +60,7 @@ export class TransportCore extends EventTarget {
     this.interfaces.delete(iface);
     this.routingTable.dropInterface(iface);
     if (this.defaultInterface === iface) this.defaultInterface = null;
-    console.warn(`[-] Interface removed: ${iface.name}`);
+    log("Transport", `[-] Interface removed: ${iface.name}`, LogLevel.WARN);
   }
 
   /**
@@ -68,7 +69,7 @@ export class TransportCore extends EventTarget {
    */
   addLink(destinationHash, link) {
     const hex = toHex(destinationHash);
-    console.log(`Registering link ${hex}`);
+    log("Transport", `Registering link ${hex}`);
     this.activeLinks.set(hex, link);
   }
 
@@ -78,7 +79,7 @@ export class TransportCore extends EventTarget {
   removeLink(destinationHash) {
     const hex = toHex(destinationHash);
     this.activeLinks.delete(hex);
-    console.log(`[-] Link closed for ${hex}`);
+    log("Transport", `[-] Link closed for ${hex}`);
   }
 
   /**
@@ -86,7 +87,7 @@ export class TransportCore extends EventTarget {
    */
   bindLocalDestination(destination) {
     const destHex = toHex(destination.destinationHash);
-    console.log(`[ROUTER] Binding local destination: ${destHex}`);
+    log("ROUTER", `Binding local destination: ${destHex}`);
     this.localDestinations.set(destHex, destination);
   }
 
@@ -96,7 +97,7 @@ export class TransportCore extends EventTarget {
   unbindLocalDestination(destination) {
     const destHex = toHex(destination.destinationHash);
     this.localDestinations.delete(destHex);
-    console.log(`[-] Unbinding local destination: ${destHex}`);
+    log("Transport", `[-] Unbinding local destination: ${destHex}`);
   }
 
   /**
@@ -105,15 +106,11 @@ export class TransportCore extends EventTarget {
    */
   async _routeIncomingPacket(packet, receivingInterface) {
     // 1. Log arrival
-    console.log(
-      `[ROUTER] Processing packet type ${packet.packetType} (ctx ${packet.contextByte}) for ${toHex(packet.destinationHash)}`,
-    );
+    log("ROUTER", `Processing packet type ${packet.packetType} (ctx ${packet.contextByte}) for ${toHex(packet.destinationHash)}`);
 
     // Force a dump if it's a LINKREQUEST so we can see why it's not triggering
     if (packet.packetType === PacketType.LINKREQUEST) {
-      console.log(
-        `[!] CRITICAL: Received Type 2 request for ${toHex(packet.destinationHash)}`,
-      );
+      log("Transport", `[!] CRITICAL: Received Type 2 request for ${toHex(packet.destinationHash)}`);
     }
 
     // If it's an ANNOUNCE, the router handles it, but don't re-broadcast it!
@@ -127,7 +124,7 @@ export class TransportCore extends EventTarget {
 
     // 3. If it's for a known local destination, route it there
     if (this.localDestinations.has(destHex)) {
-      console.log(`Packet to local destination ${destHex}`);
+      log("Transport", `Packet to local destination ${destHex}`);
       const destination = this.localDestinations.get(destHex);
       await destination.receive(packet, receivingInterface);
       return; // STOP! Success.
@@ -135,7 +132,7 @@ export class TransportCore extends EventTarget {
 
     // 4. If it's for an active link, route it there
     if (this.activeLinks.has(destHex)) {
-      console.log(`Packet to LINK ${destHex}`);
+      log("Transport", `Packet to LINK ${destHex}`);
       const link = this.activeLinks.get(destHex);
       await link.receive(packet);
       return; // STOP! Success.
@@ -144,10 +141,8 @@ export class TransportCore extends EventTarget {
     // 5. IF WE REACH HERE: It's not for us.
     // If you are acting as a router/node, you'd forward it.
     // But since you are a bot, JUST DROP IT.
-    console.log(`[ROUTER] Packet for ${destHex} is not for us. Dropping.`);
-    console.log(
-      `[ROUTER] Registered local destinations: ${Array.from(this.localDestinations.keys()).join(", ")}`,
-    );
+    log("ROUTER", `Packet for ${destHex} is not for us. Dropping.`);
+    log("ROUTER", `Registered local destinations: ${Array.from(this.localDestinations.keys()).join(", ")}`);
   }
 
   /**
@@ -161,14 +156,12 @@ export class TransportCore extends EventTarget {
     // In Reticulum, the identity key is at the very beginning of the payload.
     // If it's less than 32 bytes, the packet is corrupted.
     if (packet.payload.length < 64) {
-      console.error("[!] Announce payload too short!");
+      log("Transport", "[!] Announce payload too short!", LogLevel.ERROR);
       return;
     }
 
     if (this.localDestinations.has(packet.destinationHash)) {
-      console.log(
-        `Ignoring ANNOUNCE for local destination ${toHex(packet.destinationHash)}`,
-      );
+      log("Transport", `Ignoring ANNOUNCE for local destination ${toHex(packet.destinationHash)}`);
     }
 
     try {
@@ -195,9 +188,9 @@ export class TransportCore extends EventTarget {
         appData,
       );
 
-      console.log(`[!] Network: Remembered new peer ${toHex(senderHash)}`);
+      log("Transport", `[!] Network: Remembered new peer ${toHex(senderHash)}`);
     } catch (e) {
-      console.error("[!] Failed to process announce:", e);
+      log("Transport", `[!] Failed to process announce: ${e}`, LogLevel.ERROR);
     }
   }
 
@@ -211,7 +204,7 @@ export class TransportCore extends EventTarget {
 
       // Write the Packet object directly. The interface's Framer turns it into bytes.
       iface._packetWriter.write(packet).catch((/** @type {Error} */err) => {
-        console.error(`[!] Broadcast failed on ${iface.name}:`, err);
+        log("Transport", `[!] Broadcast failed on ${iface.name}: ${err}`, LogLevel.ERROR);
       });
     }
   }
@@ -223,7 +216,7 @@ export class TransportCore extends EventTarget {
   async sendPacket(packet, linkId = null) {
     const destHex = toHex(packet.destinationHash);
     const packetHex = toHex(await packet.getHash());
-    console.log(`Send ${packetHex} to ${destHex}`);
+    log("Transport", `Send ${packetHex} to ${destHex}`);
 
     if (linkId) {
       const linkHex = toHex(linkId);

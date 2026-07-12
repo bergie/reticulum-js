@@ -152,7 +152,7 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
           const packet = packetClass.deserialize(dataToDeserialize);
           controller.enqueue(packet);
         } catch (e) {
-          console.error("Failed to process HDLC frame:", e);
+          log("Framer", `Failed to process HDLC frame: ${e}`, LogLevel.ERROR);
         }
 
         // Advance buffer past the second flag
