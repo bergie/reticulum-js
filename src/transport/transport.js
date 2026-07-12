@@ -32,18 +32,19 @@ export class TransportCore extends EventTarget {
 
     // 1. Hook into the Interface's existing outbound Framer
     // Since iface.writable is the input to the RNSFramerStream, we just get a writer for it
-    if (!iface._packetWriter) {
-      iface._packetWriter = iface.writable.getWriter();
+    const writable = iface.writable;
+    if (writable && !iface._packetWriter) {
+      iface._packetWriter = writable.getWriter();
     }
 
     // 2. Listen to the Interface's inbound Packet loop
-    iface.addEventListener("packet", async (event) => {
-      await this._routeIncomingPacket(event.detail.packet, iface);
+    iface.addEventListener("packet", (/** @type {any} */ event) => {
+      return this._routeIncomingPacket(event.detail.packet, iface);
     });
 
     // 3. Handle graceful teardown
     iface.addEventListener("closed", () => this.removeInterface(iface));
-    iface.addEventListener("error", (/** @type {import("../interfaces/base.js").ErrorEvent} */e) =>
+    iface.addEventListener("error", (/** @type {any} */ e) =>
       log("Transport", `[!] Interface ${iface.name} error: ${e.detail.message}`, LogLevel.ERROR),
     );
 
@@ -86,7 +87,9 @@ export class TransportCore extends EventTarget {
    * @param {import("../core/destination.js").Destination} destination
    */
   bindLocalDestination(destination) {
-    const destHex = toHex(destination.destinationHash);
+    const hash = destination.destinationHash;
+    if (!hash) return;
+    const destHex = toHex(hash);
     log("ROUTER", `Binding local destination: ${destHex}`);
     this.localDestinations.set(destHex, destination);
   }
@@ -95,7 +98,9 @@ export class TransportCore extends EventTarget {
    * @param {import("../core/destination.js").Destination} destination
    */
   unbindLocalDestination(destination) {
-    const destHex = toHex(destination.destinationHash);
+    const hash = destination.destinationHash;
+    if (!hash) return;
+    const destHex = toHex(hash);
     this.localDestinations.delete(destHex);
     log("Transport", `[-] Unbinding local destination: ${destHex}`);
   }

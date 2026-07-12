@@ -378,9 +378,11 @@ export class Destination extends EventTarget {
             linkId,
             localEphemeralKeyPair,
             peerX25519PubBytes,
+            undefined,
             localSigningKeyPair.privateKey,
             localSigningPub,
             this.interfaceLayer.transport,
+            true,
           );
           await link.deriveKeys();
 
@@ -587,6 +589,7 @@ export class Destination extends EventTarget {
       linkId,
       ephemeralKey,
       initiatorPubBytes,
+      undefined,
       this.identity.ed25519Priv,
       await exportPublicKey(this.identity.ed25519Pub),
       this.interfaceLayer.transport,

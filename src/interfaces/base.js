@@ -4,8 +4,11 @@
  */
 
 /**
- * @typedef {CustomEvent} ErrorEvent
- * @property {Error} detail
+ * @typedef {CustomEvent<Error>} ErrorEvent
+ */
+
+/**
+ * @typedef {CustomEvent<{packet: import("../core/packet.js").Packet}>} PacketEvent
  */
 
 /**
@@ -13,6 +16,7 @@
  * @extends EventTarget
  */
 export class Interface extends EventTarget {
+  socket = undefined;
   /**
    * @type {import('node:stream/web').WritableStreamDefaultWriter | null}
    */
@@ -82,9 +86,10 @@ export class Interface extends EventTarget {
 
     // FORCE DRAIN:
     // If the socket has a buffer, wait for it to empty
-    if (this.socket && this.socket.writable) {
+    const socket = /** @type {import('node:net').Socket | undefined} */this.socket;
+    if (socket && socket.writable) {
       // This forces Node to push the buffered data out of the NIC
-      await new Promise((resolve) => this.socket.write("", resolve));
+      await new Promise((resolve) => socket.write("", resolve));
     }
   }
 }

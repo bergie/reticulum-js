@@ -29,6 +29,12 @@ import { log, LogLevel } from "../utils/log.js";
  */
 export class TCPClientInterface extends Interface {
   /**
+   * The underlying socket (if any).
+   * @type {import('node:net').Socket | null}
+   */
+  socket = null;
+
+  /**
    * @param {TCPClientInterfaceOptions} options
    */
   constructor(options) {
