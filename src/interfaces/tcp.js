@@ -5,8 +5,8 @@ import {
   createRNSFramerStream,
   createRNSUnframerStream,
 } from "../transport/framer.js";
+import { LogLevel, log } from "../utils/log.js";
 import { Interface } from "./base.js";
-import { log, LogLevel } from "../utils/log.js";
 
 /**
  * @typedef {Object} TCPClientInterfaceOptions
@@ -246,7 +246,7 @@ export class TCPServerInterface extends Interface {
         this.online = true;
         resolve();
       });
-      this.server.on("error", (/** @type {Error} */err) => {
+      this.server.on("error", (/** @type {Error} */ err) => {
         this.online = false;
         reject(err);
       });

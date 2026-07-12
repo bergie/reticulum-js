@@ -15,7 +15,7 @@ import {
   importX25519PublicKey,
 } from "../crypto/keys.js";
 import { Token } from "../crypto/token.js";
-import { log, LogLevel } from "../utils/log.js";
+import { LogLevel, log } from "../utils/log.js";
 
 /**
  * Represents a Reticulum Identity.
@@ -72,7 +72,11 @@ export class Identity extends EventTarget {
    */
   static async loadOrGenerate(storageAdapter) {
     if (!storageAdapter) {
-      log("Identity", "No storage adapter provided. Generating ephemeral identity.", LogLevel.WARN);
+      log(
+        "Identity",
+        "No storage adapter provided. Generating ephemeral identity.",
+        LogLevel.WARN,
+      );
       return await Identity.generate();
     }
 
@@ -86,7 +90,11 @@ export class Identity extends EventTarget {
         }
       }
     } catch (e) {
-      log("Identity", `Failed to load identity from storage, generating new one: ${e}`, LogLevel.WARN);
+      log(
+        "Identity",
+        `Failed to load identity from storage, generating new one: ${e}`,
+        LogLevel.WARN,
+      );
     }
 
     // Fallback to generation if the file is missing or corrupt
@@ -257,7 +265,11 @@ export class Identity extends EventTarget {
         identityHash,
       );
     } catch (e) {
-      log("Identity", `Failed to load identity from bytes: ${e}`, LogLevel.ERROR);
+      log(
+        "Identity",
+        `Failed to load identity from bytes: ${e}`,
+        LogLevel.ERROR,
+      );
       return null;
     }
   }

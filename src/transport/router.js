@@ -1,5 +1,5 @@
 import { toHex } from "../utils/encoding.js";
-import { log, LogLevel } from "../utils/log.js";
+import { LogLevel, log } from "../utils/log.js";
 
 /**
  * @typedef {Object} Route

@@ -18,10 +18,10 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
-import { LogLevel, log } from "../utils/log.js";
-import { Token } from "../crypto/token.js";
 import { exportPublicKey } from "../crypto/keys.js";
+import { Token } from "../crypto/token.js";
 import { toHex } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
 
 /**
  * Handles the cryptographic derivation of link keys.
@@ -187,14 +187,17 @@ export class Link extends EventTarget {
     const now = Date.now();
 
     // 1. Check for staleness
-    if (now >= this.lastInboundTime + (this.staleTime * 1000)) {
+    if (now >= this.lastInboundTime + this.staleTime * 1000) {
       this.status = LinkStatus.CLOSED;
       this.teardownReason = LinkTeardownReason.TIMEOUT;
       return;
     }
 
     // 2. Send keepalive if initiator
-    if (this.initiator && now >= this.lastInboundTime + (this.keepaliveInterval * 1000)) {
+    if (
+      this.initiator &&
+      now >= this.lastInboundTime + this.keepaliveInterval * 1000
+    ) {
       this.sendKeepalive(true).catch(console.error);
       this.lastInboundTime = now; // Avoid spamming
     }
@@ -240,7 +243,10 @@ export class Link extends EventTarget {
   registerIncomingResource(resource) {
     this.addEventListener("resource", (event) => {
       const { packet } = /** @type {any} */ (event).detail;
-      if (resource.link && toHex(packet.destinationHash) === toHex(resource.link.linkId)) {
+      if (
+        resource.link &&
+        toHex(packet.destinationHash) === toHex(resource.link.linkId)
+      ) {
         resource.receivePart(packet);
       }
     });
@@ -260,8 +266,11 @@ export class Link extends EventTarget {
     }
 
     let payload = packet.payload;
-    if (packet.packetType !== PacketType.PROOF && !Link.UNENCRYPTED_CONTEXTS.has(packet.contextByte)) {
-      console.log('Encrypting packet');
+    if (
+      packet.packetType !== PacketType.PROOF &&
+      !Link.UNENCRYPTED_CONTEXTS.has(packet.contextByte)
+    ) {
+      console.log("Encrypting packet");
       payload = await this.encrypt(/** @type {any} */ (packet.payload));
     }
 
@@ -292,7 +301,9 @@ export class Link extends EventTarget {
    */
   async sendResourceAdvertisement(msgpackData) {
     // 1. Calculate SHA-256 hash of the payload
-    const dataHash = new Uint8Array(await crypto.subtle.digest("SHA-256", /** @type {any} */ (msgpackData)));
+    const dataHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", /** @type {any} */ (msgpackData)),
+    );
 
     // 2. Pack the payload size as a 64-bit big-endian integer (8 bytes)
     const sizeBuffer = new ArrayBuffer(8);
@@ -326,21 +337,33 @@ export class Link extends EventTarget {
    */
   async prove() {
     if ((!this.sigPrv && !this.sigPubBytes) || !this.destination?.identity) {
-      throw new Error("Link identity proof requires an identity's signing key.");
+      throw new Error(
+        "Link identity proof requires an identity's signing key.",
+      );
     }
 
     const signallingBytes = this.signallingBytes(this.mtu, this.mode);
     const pubBytes = await exportPublicKey(this.ephemeralKeyPair.publicKey);
 
-    const signedData = new Uint8Array(this.linkId.length + pubBytes.length + this.sigPubBytes.length + signallingBytes.length);
+    const signedData = new Uint8Array(
+      this.linkId.length +
+        pubBytes.length +
+        this.sigPubBytes.length +
+        signallingBytes.length,
+    );
     signedData.set(this.linkId, 0);
     signedData.set(pubBytes, this.linkId.length);
     signedData.set(this.sigPubBytes, this.linkId.length + pubBytes.length);
-    signedData.set(signallingBytes, this.linkId.length + pubBytes.length + this.sigPubBytes.length);
+    signedData.set(
+      signallingBytes,
+      this.linkId.length + pubBytes.length + this.sigPubBytes.length,
+    );
 
     const signature = await this.destination.identity.sign(signedData);
 
-    const proofPayload = new Uint8Array(signature.length + pubBytes.length + signallingBytes.length);
+    const proofPayload = new Uint8Array(
+      signature.length + pubBytes.length + signallingBytes.length,
+    );
     proofPayload.set(signature, 0);
     proofPayload.set(pubBytes, signature.length);
     proofPayload.set(signallingBytes, signature.length + pubBytes.length);
@@ -438,7 +461,11 @@ export class Link extends EventTarget {
     if (!this.token) {
       throw new Error("Link token not available. Did you call deriveKeys()?");
     }
-    log('Link', `Processing ${packet.packetType} packet (ctx ${packet.contextByte}) for link ${toHex(this.linkId)}`, LogLevel.DEBUG);
+    log(
+      "Link",
+      `Processing ${packet.packetType} packet (ctx ${packet.contextByte}) for link ${toHex(this.linkId)}`,
+      LogLevel.DEBUG,
+    );
 
     this.lastInboundTime = Date.now();
 
@@ -457,7 +484,10 @@ export class Link extends EventTarget {
     ]);
 
     let decryptedPayload;
-    if (packet.packetType === PacketType.PROOF || unencryptedContexts.has(packet.contextByte)) {
+    if (
+      packet.packetType === PacketType.PROOF ||
+      unencryptedContexts.has(packet.contextByte)
+    ) {
       decryptedPayload = packet.payload;
     } else {
       decryptedPayload = await /** @type {any} */ (this.token).decrypt(
@@ -665,7 +695,9 @@ export class Link extends EventTarget {
 
     const signalling = this.signallingBytes(this.mtu, this.mode);
     const x25519Pub = await exportPublicKey(this.ephemeralKeyPair.publicKey);
-    const ed25519Pub = this.ephemeralEd25519KeyPair ? await exportPublicKey(this.ephemeralEd25519KeyPair.publicKey) : new Uint8Array(32);
+    const ed25519Pub = this.ephemeralEd25519KeyPair
+      ? await exportPublicKey(this.ephemeralEd25519KeyPair.publicKey)
+      : new Uint8Array(32);
 
     const payload = new Uint8Array(32 + 32 + 3);
     payload.set(x25519Pub, 0);
@@ -700,13 +732,16 @@ export class Link extends EventTarget {
     await this.deriveKeysFromEphemeral(initiatorX25519Pub);
 
     // Parse signalling
-    const signallingValue = (signalling[0] << 16) | (signalling[1] << 8) | signalling[2];
+    const signallingValue =
+      (signalling[0] << 16) | (signalling[1] << 8) | signalling[2];
     const mode = (signallingValue >> 21) & 0x07;
-    const mtu = (signallingValue & 0x1fffff);
+    const mtu = signallingValue & 0x1fffff;
     this.mode = mode;
     this.mtu = mtu;
 
-    const responderX25519Pub = await exportPublicKey(this.ephemeralKeyPair.publicKey);
+    const responderX25519Pub = await exportPublicKey(
+      this.ephemeralKeyPair.publicKey,
+    );
 
     const signedData = new Uint8Array(32 + 32 + 3);
     signedData.set(initiatorX25519Pub, 0);
@@ -753,7 +788,10 @@ export class Link extends EventTarget {
     signedData.set(responderX25519Pub, 32);
     signedData.set(signalling, 64);
 
-    const isValid = await this.destination.identity.validate(signature, signedData);
+    const isValid = await this.destination.identity.validate(
+      signature,
+      signedData,
+    );
     if (!isValid) {
       throw new Error("LRPROOF signature verification failed.");
     }
@@ -761,9 +799,10 @@ export class Link extends EventTarget {
     await this.deriveKeysFromEphemeral(responderX25519Pub);
 
     // Parse signalling
-    const signallingValue = (signalling[0] << 16) | (signalling[1] << 8) | signalling[2];
+    const signallingValue =
+      (signalling[0] << 16) | (signalling[1] << 8) | signalling[2];
     const mode = (signallingValue >> 21) & 0x07;
-    const mtu = (signallingValue & 0x1fffff);
+    const mtu = signallingValue & 0x1fffff;
     this.mode = mode;
     this.mtu = mtu;
 
@@ -772,7 +811,9 @@ export class Link extends EventTarget {
 
     this.status = LinkStatus.ACTIVE;
     this._updateKeepalive();
-    this.dispatchEvent(new CustomEvent("established", { detail: { link: this.linkId } }));
+    this.dispatchEvent(
+      new CustomEvent("established", { detail: { link: this.linkId } }),
+    );
   }
 
   /**
@@ -785,14 +826,20 @@ export class Link extends EventTarget {
       throw new Error("Invalid LRRTT payload length.");
     }
 
-    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const view = new DataView(
+      payload.buffer,
+      payload.byteOffset,
+      payload.byteLength,
+    );
     const remoteTimestamp = view.getBigUint64(0, false);
     const localTimestamp = BigInt(Date.now());
     this.rtt = Number(localTimestamp - remoteTimestamp);
 
     this.status = LinkStatus.ACTIVE;
     this._updateKeepalive();
-    this.dispatchEvent(new CustomEvent("established", { detail: { link: this.linkId } }));
+    this.dispatchEvent(
+      new CustomEvent("established", { detail: { link: this.linkId } }),
+    );
   }
 
   /**
@@ -801,7 +848,11 @@ export class Link extends EventTarget {
   async sendLRRTT() {
     const timestamp = BigInt(Date.now());
     const payload = new Uint8Array(8);
-    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+    const view = new DataView(
+      payload.buffer,
+      payload.byteOffset,
+      payload.byteLength,
+    );
     view.setBigUint64(0, timestamp, false);
 
     const packet = new Packet({

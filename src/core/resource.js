@@ -4,8 +4,8 @@
  */
 
 import { ContextType, Packet } from "../core/packet.js";
+import { LogLevel, log } from "../utils/log.js";
 import { ResourceAdvertisement } from "./resource_advertisement.js";
-import { log, LogLevel } from "../utils/log.js";
 
 /**
  * @enum {number}
@@ -253,7 +253,11 @@ export class Resource extends EventTarget {
 
       return resource;
     } catch (e) {
-      log("Resource", `Failed to accept resource advertisement: ${e}`, LogLevel.ERROR);
+      log(
+        "Resource",
+        `Failed to accept resource advertisement: ${e}`,
+        LogLevel.ERROR,
+      );
       return null;
     }
   }

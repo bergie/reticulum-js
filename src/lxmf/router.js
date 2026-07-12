@@ -7,8 +7,8 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
 import { Message } from "./message.js";
-import { log, LogLevel } from "../utils/log.js";
 
 /**
  * Handles LXMF routing and message processing.
@@ -68,7 +68,11 @@ export class LXMRouter extends EventTarget {
         try {
           await this._processIncomingMessage(plaintext, null);
         } catch (e) {
-          log("LXMF", `[!] Failed to process single-packet LXMF message: ${e}`, LogLevel.ERROR);
+          log(
+            "LXMF",
+            `[!] Failed to process single-packet LXMF message: ${e}`,
+            LogLevel.ERROR,
+          );
         }
       },
     );
@@ -94,7 +98,11 @@ export class LXMRouter extends EventTarget {
             );
           });
         } catch (e) {
-          log("LXMF", `[!] Failed to respond to LXMF link request: ${e}`, LogLevel.ERROR);
+          log(
+            "LXMF",
+            `[!] Failed to respond to LXMF link request: ${e}`,
+            LogLevel.ERROR,
+          );
         }
       },
     );
@@ -137,7 +145,11 @@ export class LXMRouter extends EventTarget {
           // it will find the link between the 178b9... hash and the 6c8f... identity key!
           this.processPendingMessages(identityHash);
         } catch (e) {
-          log("ROUTER", `Failed to derive LXMF destination for peer: ${e}`, LogLevel.ERROR);
+          log(
+            "ROUTER",
+            `Failed to derive LXMF destination for peer: ${e}`,
+            LogLevel.ERROR,
+          );
         }
       },
     );
@@ -203,7 +215,10 @@ export class LXMRouter extends EventTarget {
   async processPendingMessages(linkId) {
     const hashHex = toHex(linkId);
     if (this.pendingMessages.has(hashHex)) {
-      log("ROUTER", `Identity acquired. Re-processing parked message for ${hashHex}`);
+      log(
+        "ROUTER",
+        `Identity acquired. Re-processing parked message for ${hashHex}`,
+      );
       const wireData = this.pendingMessages.get(hashHex);
       await this._processIncomingMessage(wireData, linkId);
     }

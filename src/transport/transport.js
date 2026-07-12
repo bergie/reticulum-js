@@ -4,8 +4,8 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
 import { RoutingTable } from "./router.js";
-import { log, LogLevel } from "../utils/log.js";
 
 /**
  * The central network router for the Reticulum node.
@@ -45,7 +45,11 @@ export class TransportCore extends EventTarget {
     // 3. Handle graceful teardown
     iface.addEventListener("closed", () => this.removeInterface(iface));
     iface.addEventListener("error", (/** @type {any} */ e) =>
-      log("Transport", `[!] Interface ${iface.name} error: ${e.detail.message}`, LogLevel.ERROR),
+      log(
+        "Transport",
+        `[!] Interface ${iface.name} error: ${e.detail.message}`,
+        LogLevel.ERROR,
+      ),
     );
 
     log("Transport", `[+] Transport bound to interface: ${iface.name}`);
@@ -111,11 +115,17 @@ export class TransportCore extends EventTarget {
    */
   async _routeIncomingPacket(packet, receivingInterface) {
     // 1. Log arrival
-    log("ROUTER", `Processing packet type ${packet.packetType} (ctx ${packet.contextByte}) for ${toHex(packet.destinationHash)}`);
+    log(
+      "ROUTER",
+      `Processing packet type ${packet.packetType} (ctx ${packet.contextByte}) for ${toHex(packet.destinationHash)}`,
+    );
 
     // Force a dump if it's a LINKREQUEST so we can see why it's not triggering
     if (packet.packetType === PacketType.LINKREQUEST) {
-      log("Transport", `[!] CRITICAL: Received Type 2 request for ${toHex(packet.destinationHash)}`);
+      log(
+        "Transport",
+        `[!] CRITICAL: Received Type 2 request for ${toHex(packet.destinationHash)}`,
+      );
     }
 
     // If it's an ANNOUNCE, the router handles it, but don't re-broadcast it!
@@ -147,7 +157,10 @@ export class TransportCore extends EventTarget {
     // If you are acting as a router/node, you'd forward it.
     // But since you are a bot, JUST DROP IT.
     log("ROUTER", `Packet for ${destHex} is not for us. Dropping.`);
-    log("ROUTER", `Registered local destinations: ${Array.from(this.localDestinations.keys()).join(", ")}`);
+    log(
+      "ROUTER",
+      `Registered local destinations: ${Array.from(this.localDestinations.keys()).join(", ")}`,
+    );
   }
 
   /**
@@ -166,7 +179,10 @@ export class TransportCore extends EventTarget {
     }
 
     if (this.localDestinations.has(packet.destinationHash)) {
-      log("Transport", `Ignoring ANNOUNCE for local destination ${toHex(packet.destinationHash)}`);
+      log(
+        "Transport",
+        `Ignoring ANNOUNCE for local destination ${toHex(packet.destinationHash)}`,
+      );
     }
 
     try {
@@ -208,8 +224,12 @@ export class TransportCore extends EventTarget {
       if (iface === sourceInterface || !iface._packetWriter) continue;
 
       // Write the Packet object directly. The interface's Framer turns it into bytes.
-      iface._packetWriter.write(packet).catch((/** @type {Error} */err) => {
-        log("Transport", `[!] Broadcast failed on ${iface.name}: ${err}`, LogLevel.ERROR);
+      iface._packetWriter.write(packet).catch((/** @type {Error} */ err) => {
+        log(
+          "Transport",
+          `[!] Broadcast failed on ${iface.name}: ${err}`,
+          LogLevel.ERROR,
+        );
       });
     }
   }

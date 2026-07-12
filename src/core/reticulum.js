@@ -1,7 +1,7 @@
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
 import { DestType, HeaderType, Packet, PacketType } from "./packet.js";
-import { log, LogLevel } from "../utils/log.js";
 
 /**
  * The primary entry point and orchestrator for the Reticulum Network System.
@@ -73,7 +73,10 @@ export class Reticulum {
     // and log the app data if an identity is present.
     if (destination.identity) {
       const appData = new TextDecoder().decode(destination.identity.appData);
-      log("Reticulum", `[+] Destination registered: ${destination.name} (${appData})`);
+      log(
+        "Reticulum",
+        `[+] Destination registered: ${destination.name} (${appData})`,
+      );
     } else {
       log("Reticulum", `[+] Destination registered: ${destination.name}`);
     }
