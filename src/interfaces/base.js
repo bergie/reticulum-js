@@ -4,6 +4,11 @@
  */
 
 /**
+ * @typedef {CustomEvent} ErrorEvent
+ * @property {Error} detail
+ */
+
+/**
  * Abstract base class for all RNS interfaces.
  * @extends EventTarget
  */

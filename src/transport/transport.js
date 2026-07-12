@@ -42,7 +42,7 @@ export class TransportCore extends EventTarget {
 
     // 3. Handle graceful teardown
     iface.addEventListener("closed", () => this.removeInterface(iface));
-    iface.addEventListener("error", (e) =>
+    iface.addEventListener("error", (/** @type {import("../interfaces/base.js").ErrorEvent} */e) =>
       console.error(`[!] Interface ${iface.name} error:`, e.detail.message),
     );
 
@@ -210,7 +210,7 @@ export class TransportCore extends EventTarget {
       if (iface === sourceInterface || !iface._packetWriter) continue;
 
       // Write the Packet object directly. The interface's Framer turns it into bytes.
-      iface._packetWriter.write(packet).catch((err) => {
+      iface._packetWriter.write(packet).catch((/** @type {Error} */err) => {
         console.error(`[!] Broadcast failed on ${iface.name}:`, err);
       });
     }
