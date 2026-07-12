@@ -155,9 +155,10 @@ export class Link extends EventTarget {
    * @param {LinkStatus} newStatus
    */
   set status(newStatus) {
+    const tearDown = (newStatus === LinkStatus.CLOSED) ? ` (${getEnumName(LinkTeardownReason, this.tearDownReason)})` : '';
     log(
       "Link",
-      `Link ${toHex(this.linkId)} status is now ${newStatus}`,
+      `Link ${toHex(this.linkId)} status is now ${getEnumName(LinkStatus, newStatus)}${tearDown}`,
       LogLevel.DEBUG,
     );
     const oldStatus = this._status;
@@ -208,7 +209,7 @@ export class Link extends EventTarget {
     log(
       "Link",
       `Link ${toHex(this.linkId)} watchdog activated`,
-      LogLevel.DEBUG,
+      LogLevel.EXTREME,
     );
     const now = Date.now();
 
@@ -303,7 +304,7 @@ export class Link extends EventTarget {
       packet.packetType !== PacketType.PROOF &&
       !Link.UNENCRYPTED_CONTEXTS.has(packet.contextByte)
     ) {
-      console.log("Encrypting packet");
+      log("Link", `Encrypting packet ${getEnumName(PacketType, packet.packetType)} (ctx ${getEnumName(ContextType, packet.contextByte)})`);
       payload = await this.encrypt(/** @type {any} */ (packet.payload));
     }
 

@@ -102,57 +102,44 @@ export class LXMRouter extends EventTarget {
               this.deliveryDest.destinationHash,
             );
           });
+
+          // Listen for identity on the link
+          link.addEventListener("identify", async (/** @type {any} */ event) => {
+            try {
+              const peerIdentity = event.detail.identity;
+              const identityHash = await Identity.truncatedHash(
+                peerIdentity.publicKey,
+              );
+              log("LXMF", `Received LINKIDENTIFY for ${toHex(identityHash)}`);
+
+              // 2. CRITICAL: Derive and store by the LXMF Address (sourceHash)
+              const peerDeliveryDest = await Destination.OUT(
+                "lxmf.delivery",
+                DestType.SINGLE,
+                peerIdentity,
+                this.rns,
+              );
+
+              // Map the LXMF Address to the Identity Key
+              await Destination.remember(
+                identityHash,
+                peerDeliveryDest.destinationHash,
+                peerIdentity.publicKey,
+              );
+
+              this.processPendingMessages(identityHash);
+            } catch (e) {
+              log(
+                "ROUTER",
+                `Failed to derive LXMF destination for peer from link: ${e}`,
+                LogLevel.ERROR,
+              );
+            }
+          });
         } catch (e) {
           log(
             "LXMF",
             `[!] Failed to respond to LXMF link request: ${e}`,
-            LogLevel.ERROR,
-          );
-        }
-      },
-    );
-
-    // 2. Listen for IDENTIFY packets so we can process any pending
-    /** @type {any} */ (this.deliveryDest).addEventListener(
-      "identify",
-      async (/** @type {any} */ event) => {
-        try {
-          // Inside your link.addEventListener("identify", ...)
-          const peerIdentity = event.detail.identity;
-          const identityHash = await Identity.truncatedHash(
-            peerIdentity.publicKey,
-          );
-
-          // 1. Store by the base Identity Hash
-          await Destination.remember(
-            identityHash,
-            identityHash,
-            peerIdentity.publicKey,
-          );
-
-          // 2. CRITICAL: Derive and store by the LXMF Address (sourceHash)
-          // This binds the "Author" to their "Inbox"
-          const peerDeliveryDest = await Destination.OUT(
-            "lxmf.delivery",
-            DestType.SINGLE,
-            peerIdentity,
-            this.rns,
-          );
-
-          // Map the LXMF Address to the Identity Key
-          await Destination.remember(
-            identityHash,
-            peerDeliveryDest.destinationHash,
-            peerIdentity.publicKey,
-          );
-
-          // Now, when processIncomingMessage(wireData) calls recall(sourceHash),
-          // it will find the link between the 178b9... hash and the 6c8f... identity key!
-          this.processPendingMessages(identityHash);
-        } catch (e) {
-          log(
-            "ROUTER",
-            `Failed to derive LXMF destination for peer: ${e}`,
             LogLevel.ERROR,
           );
         }
@@ -175,23 +162,22 @@ export class LXMRouter extends EventTarget {
     // 1. Deserialize the message immediately
     const message = await Message.deserialize(wireData, expectedDestHash);
 
-    const sourceHex = toHex(message.senderHash);
+    log("LXMF", `Incoming message from source ${toHex(message.sourceHash)}`);
 
     // 2. Validate signature against the SENDER'S public key
-    const senderIdentity = await Destination.recall(message.senderHash);
+    const senderIdentity = await Destination.recall(message.sourceHash);
 
     if (!senderIdentity) {
-      log("ROUTER", `Identity unknown for ${sourceHex}. Requesting...`);
-      // TODO: Send path request
+      log("LXMF", `Identity unknown for ${toHex(message.sourceHash)}. Requesting...`);
 
       // Park the message for a limited time (e.g., 5 seconds)
-      this.pendingMessages.set(sourceHex, wireData);
+      this.pendingMessages.set(linkId, wireData);
 
       return;
     }
 
     // If we reach here, we have the identity, clear any pending message
-    this.pendingMessages.delete(sourceHex);
+    this.pendingMessages.delete(linkId);
 
     // 3. Verify using the identity helper method
     if (
@@ -252,9 +238,6 @@ export class LXMRouter extends EventTarget {
     });
     log("LXMF", `DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
     log("LXMF", `DEBUG: Sending to ${toHex(message.destinationHash)}`);
-    // await this.deliveryDest.send(packet);
-    // console.log("SEND", packet, linkId);
     await this.rns.transport.sendPacket(packet, linkId);
-    //await this.rns.transport.sendPacket(packet, linkId);
   }
 }

@@ -31,7 +31,6 @@ export class Message {
     signedPart,
   }) {
     this.sourceHash = sourceHash;
-    this.senderHash = sourceHash;
     this.destinationHash = destinationHash;
     (this.timestamp = timestamp || Date.now() / 1000), (this.title = title);
     this.content = content;

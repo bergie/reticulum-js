@@ -627,11 +627,22 @@ export class Destination extends EventTarget {
     const key = toHex(destinationHash);
     const entry = Destination.knownDestinations.get(key);
     if (entry) {
+      log("Destination", `Updating destination ${key}`);
+      if (toHex(entry[1]) !== toHex(packetHash)) {
+        log("Destination", `  - packetHash changed to ${toHex(packetHash)}`);
+      }
+      if (toHex(entry[2]) !== toHex(publicKey)) {
+        log("Destination", `  - publicKey changed to ${toHex(publicKey)}`);
+      }
+      if (entry[3] !== appData) {
+        log("Destination", `  - appData changed to ${appData}`);
+      }
       entry[0] = Date.now() / 1000; // time.time() in seconds
       entry[1] = packetHash;
       entry[2] = publicKey;
       entry[3] = appData;
     } else {
+      log("Destination", `Saving new destination ${key}`);
       Destination.knownDestinations.set(key, [
         Date.now() / 1000,
         packetHash,

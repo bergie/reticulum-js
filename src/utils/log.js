@@ -8,7 +8,8 @@ export const LogLevel = {
   WARN: 2,
   LOG: 3,
   DEBUG: 4,
-  EXTREME: 5,
+  VERBOSE: 5,
+  EXTREME: 6,
 };
 
 // TODO: Read from env
