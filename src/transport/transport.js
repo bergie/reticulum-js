@@ -178,11 +178,12 @@ export class TransportCore extends EventTarget {
       return;
     }
 
-    if (this.localDestinations.has(packet.destinationHash)) {
+    if (this.localDestinations.has(toHex(packet.destinationHash))) {
       log(
         "Transport",
         `Ignoring ANNOUNCE for local destination ${toHex(packet.destinationHash)}`,
       );
+      return;
     }
 
     try {
