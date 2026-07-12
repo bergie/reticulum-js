@@ -16,7 +16,7 @@ export const LinkTeardownReason = {
 
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
-import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
+import { ContextType, DestType, Packet, PacketType, getEnumName } from "../core/packet.js";
 import { hkdf } from "../crypto/ciphers.js";
 import { exportPublicKey } from "../crypto/keys.js";
 import { Token } from "../crypto/token.js";
@@ -502,7 +502,7 @@ export class Link extends EventTarget {
     }
     log(
       "Link",
-      `Processing ${packet.packetType} packet (ctx ${packet.contextByte}) for link ${toHex(this.linkId)}`,
+      `Processing ${getEnumName(PacketType, packet.packetType)} packet (ctx ${getEnumName(ContextType, packet.contextByte)}) for link ${toHex(this.linkId)}`,
       LogLevel.DEBUG,
     );
 

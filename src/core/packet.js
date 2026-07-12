@@ -4,6 +4,16 @@
  */
 
 /**
+ * Returns the key name for a given value in an enum object.
+ * @param {Record<string, any>} enumObj
+ * @param {number} value
+ * @returns {string}
+ */
+export function getEnumName(enumObj, value) {
+  return Object.keys(enumObj).find((key) => enumObj[key] === value) || value.toString();
+}
+
+/**
  * Packet types.
  * @enum {number}
  */

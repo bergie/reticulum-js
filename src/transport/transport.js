@@ -2,7 +2,7 @@
 
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
-import { PacketType } from "../core/packet.js";
+import { ContextType, PacketType, getEnumName } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { RoutingTable } from "./router.js";
@@ -117,7 +117,7 @@ export class TransportCore extends EventTarget {
     // 1. Log arrival
     log(
       "ROUTER",
-      `Processing packet type ${packet.packetType} (ctx ${packet.contextByte}) for ${toHex(packet.destinationHash)}`,
+      `Processing packet type ${getEnumName(PacketType, packet.packetType)} (ctx ${getEnumName(ContextType, packet.contextByte)}) for ${toHex(packet.destinationHash)}`,
     );
 
     // Force a dump if it's a LINKREQUEST so we can see why it's not triggering
