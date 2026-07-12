@@ -285,7 +285,12 @@ export class Link extends EventTarget {
    * @param {Packet} packet
    */
   async send(packet) {
-    if (!this.token) {
+    const isUnencrypted =
+      packet.packetType === PacketType.LINKREQUEST ||
+      (packet.packetType === PacketType.PROOF &&
+        packet.contextByte === ContextType.LRPROOF);
+
+    if (!this.token && !isUnencrypted) {
       throw new Error("Link token not available. Did you call deriveKeys()?");
     }
     if (!this.transport) {
@@ -294,6 +299,7 @@ export class Link extends EventTarget {
 
     let payload = packet.payload;
     if (
+      !isUnencrypted &&
       packet.packetType !== PacketType.PROOF &&
       !Link.UNENCRYPTED_CONTEXTS.has(packet.contextByte)
     ) {
@@ -486,7 +492,12 @@ export class Link extends EventTarget {
    * @param {Packet} packet
    */
   async _processPacket(packet) {
-    if (!this.token) {
+    const isUnencrypted =
+      packet.packetType === PacketType.LINKREQUEST ||
+      (packet.packetType === PacketType.PROOF &&
+        packet.contextByte === ContextType.LRPROOF);
+
+    if (!this.token && !isUnencrypted) {
       throw new Error("Link token not available. Did you call deriveKeys()?");
     }
     log(
@@ -512,10 +523,7 @@ export class Link extends EventTarget {
     ]);
 
     let decryptedPayload;
-    if (
-      packet.packetType === PacketType.PROOF ||
-      unencryptedContexts.has(packet.contextByte)
-    ) {
+    if (isUnencrypted || unencryptedContexts.has(packet.contextByte)) {
       decryptedPayload = packet.payload;
     } else {
       decryptedPayload = await /** @type {any} */ (this.token).decrypt(

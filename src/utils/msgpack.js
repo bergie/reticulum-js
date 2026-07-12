@@ -18,6 +18,17 @@ export class MicroMsgPack {
   }
 
   /**
+   * Encodes a number as a MessagePack float64.
+   * @param {number} value
+   * @returns {Uint8Array}
+   */
+  static encodeFloat64(value) {
+    const bytes = [];
+    MicroMsgPack._encodeFloat64(value, bytes);
+    return new Uint8Array(bytes);
+  }
+
+  /**
    * Decodes a MessagePack Uint8Array into a JavaScript value.
    * @param {Uint8Array} uint8array
    * @returns {any}
