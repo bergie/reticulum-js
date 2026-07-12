@@ -51,9 +51,11 @@ export class Message {
     // LXMF Standard: [timestamp, title, content, fields]
     // To ensure interop with Python umsgpack, the timestamp MUST be encoded as a float64
     // even if it has no fractional part.
+    // Title and content MUST be encoded as msgpack BINARY (bin) types.
+    const encoder = new TextEncoder();
     const timestampBytes = MicroMsgPack.encodeFloat64(this.timestamp);
-    const titleBytes = MicroMsgPack.encode(this.title);
-    const contentBytes = MicroMsgPack.encode(this.content);
+    const titleBytes = MicroMsgPack.encode(new Uint8Array(encoder.encode(this.title)));
+    const contentBytes = MicroMsgPack.encode(new Uint8Array(encoder.encode(this.content)));
     const fieldsBytes = MicroMsgPack.encode(this.fields);
 
     const msgpackPayload = new Uint8Array(

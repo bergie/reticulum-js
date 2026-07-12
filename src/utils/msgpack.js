@@ -65,6 +65,8 @@ export class MicroMsgPack {
       MicroMsgPack._encodeBinary(value, bytes);
     } else if (Array.isArray(value)) {
       MicroMsgPack._encodeArray(value, bytes);
+    } else if (value instanceof Map) {
+      MicroMsgPack._encodeMap(value, bytes);
     } else if (typeof value === "object") {
       MicroMsgPack._encodeMap(value, bytes);
     } else {
@@ -213,8 +215,13 @@ export class MicroMsgPack {
    * @private
    */
   static _encodeMap(value, bytes) {
-    const keys = Object.keys(value);
-    const len = keys.length;
+    let entries;
+    if (value instanceof Map) {
+      entries = Array.from(value.entries());
+    } else {
+      entries = Object.entries(value);
+    }
+    const len = entries.length;
     if (len <= 15) {
       bytes.push(0x80 | len); // fixmap
     } else if (len <= 65535) {
@@ -228,9 +235,9 @@ export class MicroMsgPack {
         len & 0xff,
       ); // map 32
     }
-    for (const key of keys) {
-      MicroMsgPack._encodeString(key, bytes);
-      MicroMsgPack._encodeValue(value[key], bytes);
+    for (const [key, val] of entries) {
+      MicroMsgPack._encodeValue(key, bytes);
+      MicroMsgPack._encodeValue(val, bytes);
     }
   }
 
