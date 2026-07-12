@@ -66,7 +66,11 @@ export class LXMRouter extends EventTarget {
       async (/** @type {any} */ event) => {
         const { plaintext } = /** @type {any} */ (event).detail;
         try {
-          await this._processIncomingMessage(plaintext, null);
+          await this._processIncomingMessage(
+            plaintext,
+            null,
+            this.deliveryDest.destinationHash,
+          );
         } catch (e) {
           log(
             "LXMF",
@@ -95,6 +99,7 @@ export class LXMRouter extends EventTarget {
             await this._processIncomingMessage(
               /** @type {any} */ (pktEvent).detail.packet.payload,
               pktEvent.detail.link,
+              this.deliveryDest.destinationHash,
             );
           });
         } catch (e) {
@@ -159,15 +164,16 @@ export class LXMRouter extends EventTarget {
    * Processes a raw LXMF message wire buffer.
    * @param {Uint8Array} wireData
    * @param {Uint8Array|null} linkId
+   * @param {Uint8Array} [expectedDestHash]
    * @private
    */
-  async _processIncomingMessage(wireData, linkId) {
-    if (wireData.length < 96) {
+  async _processIncomingMessage(wireData, linkId, expectedDestHash) {
+    if (wireData.length < 80) {
       throw new Error("LXMF message too short to contain required headers");
     }
 
     // 1. Deserialize the message immediately
-    const message = await Message.deserialize(wireData);
+    const message = await Message.deserialize(wireData, expectedDestHash);
 
     const sourceHex = toHex(message.senderHash);
 
@@ -220,7 +226,11 @@ export class LXMRouter extends EventTarget {
         `Identity acquired. Re-processing parked message for ${hashHex}`,
       );
       const wireData = this.pendingMessages.get(hashHex);
-      await this._processIncomingMessage(wireData, linkId);
+      await this._processIncomingMessage(
+        wireData,
+        linkId,
+        this.deliveryDest.destinationHash,
+      );
     }
   }
 

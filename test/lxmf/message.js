@@ -11,8 +11,22 @@ test("Message serialization and deserialization", async (t) => {
   const fields = { test: "field" };
   const timestamp = Date.now() / 1000.0;
 
+  // Compute a proper sourceHash (the sender's destination hash)
+  // source_hash = SHA256(name_hash || identity_hash)[:16]
+  const nameHash = new Uint8Array(10).fill(0xbb);
+  const combined = new Uint8Array(
+    nameHash.length + identity.identityHash.length,
+  );
+  combined.set(nameHash, 0);
+  combined.set(identity.identityHash, nameHash.length);
+  const sourceHashBuffer = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    combined,
+  );
+  const sourceHash = new Uint8Array(sourceHashBuffer).slice(0, 16);
+
   const msg = new Message({
-    sourceHash: identity.identityHash,
+    sourceHash,
     destinationHash: destHash,
     timestamp,
     title,
@@ -28,9 +42,9 @@ test("Message serialization and deserialization", async (t) => {
     const decodedDestHash = wireData.slice(0, 16);
     assert.deepStrictEqual(decodedDestHash, destHash);
 
-    // Check source hash (identityHash)
+    // Check source hash (should be the calculated sourceHash, not identityHash)
     const decodedSourceHash = wireData.slice(16, 32);
-    assert.deepStrictEqual(decodedSourceHash, identity.identityHash);
+    assert.deepStrictEqual(decodedSourceHash, sourceHash);
 
     // Check signature length (64 bytes)
     const signature = wireData.slice(32, 96);
@@ -38,11 +52,11 @@ test("Message serialization and deserialization", async (t) => {
 
     // Verify signature
     const destinationHash = wireData.slice(0, 16);
-    const sourceHash = wireData.slice(16, 32);
+    const sourceHashWire = wireData.slice(16, 32);
     const payload = wireData.slice(96);
     const signedPart = new Uint8Array(16 + 16 + payload.length + 32);
     signedPart.set(destinationHash, 0);
-    signedPart.set(sourceHash, 16);
+    signedPart.set(sourceHashWire, 16);
     signedPart.set(payload, 32);
     signedPart.set(messageId, 16 + 16 + payload.length);
 
@@ -51,9 +65,9 @@ test("Message serialization and deserialization", async (t) => {
   });
 
   await t.test("deserialization produces equivalent Message", async () => {
-    const deserializedMsg = await Message.deserialize(wireData);
+    const deserializedMsg = await Message.deserialize(wireData, destHash);
 
-    assert.deepStrictEqual(deserializedMsg.sourceHash, identity.identityHash);
+    assert.deepStrictEqual(deserializedMsg.sourceHash, sourceHash);
     assert.deepStrictEqual(deserializedMsg.destinationHash, destHash);
     assert.strictEqual(deserializedMsg.timestamp, timestamp);
     assert.strictEqual(deserializedMsg.title, title);

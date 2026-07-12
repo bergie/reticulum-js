@@ -46,7 +46,7 @@ export class Message {
    * @returns {Promise<{messageId: Uint8Array, wireData: Uint8Array}>}
    */
   async serialize(sourceIdentity) {
-    const sourceHash = sourceIdentity.identityHash;
+    const sourceHash = this.sourceHash || sourceIdentity.identityHash;
 
     // LXMF Standard: [timestamp, title, content, fields]
     const msgpackPayload = MicroMsgPack.encode([
@@ -88,18 +88,33 @@ export class Message {
   /**
    * Creates a Message from wire data.
    * @param {Uint8Array} wireData
+   * @param {Uint8Array} [expectedDestinationHash]
    * @returns {Promise<Message>}
    */
-  static async deserialize(wireData) {
-    if (wireData.length < 96) {
-      throw new Error("LXMF message too short to contain required headers");
-    }
+  static async deserialize(wireData, expectedDestinationHash) {
+    let destinationHash, sourceHash, signature, payload;
 
-    // Slice the wireData into Hash, Hash, Sig, and Payload views
-    const destinationHash = wireData.slice(0, 16);
-    const sourceHash = wireData.slice(16, 32);
-    const signature = wireData.slice(32, 96);
-    const payload = wireData.slice(96);
+    const isDirect =
+      wireData.length >= 96 &&
+      (!expectedDestinationHash ||
+        wireData
+          .subarray(0, 16)
+          .every((v, i) => v === expectedDestinationHash[i]));
+
+    if (isDirect) {
+      destinationHash = wireData.slice(0, 16);
+      sourceHash = wireData.slice(16, 32);
+      signature = wireData.slice(32, 96);
+      payload = wireData.slice(96);
+    } else if (wireData.length >= 80) {
+      // Opportunistic delivery: source_hash(16) || signature(64) || msgpack_payload(...)
+      sourceHash = wireData.slice(0, 16);
+      signature = wireData.slice(16, 80);
+      payload = wireData.slice(80);
+      destinationHash = expectedDestinationHash;
+    } else {
+      throw new Error("LXMF message too short or format unrecognized");
+    }
 
     // Calculate the Message ID exactly as LXMF expects
     // SHA-256 of: Dest (16) + Source (16) + Payload (N)
