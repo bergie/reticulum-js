@@ -25,6 +25,7 @@ export class LXMRouter extends EventTarget {
     this.rns = rnsCore;
     this.deliveryDest = null;
     this.pendingMessages = new Map();
+    this.pendingLinks = new Map();
   }
 
   /**
@@ -103,14 +104,29 @@ export class LXMRouter extends EventTarget {
             );
           });
 
+          // Python LXMF is not ready to receive messages until it has identified
+          // We should park messages until we receive LINKIDENTIFY (or a timeout)
+          const linkHex = toHex(link.linkId);
+          this.pendingLinks.set(linkHex, true);
+          const timer = setTimeout(() => {
+            log("LXMF", `Timeout waiting for link ${linkHex} to identify`);
+            this.pendingLinks.delete(linkHex);
+            this.processPendingMessages(link.linkId);
+          }, 10000);
+
+
           // Listen for identity on the link
           link.addEventListener("identify", async (/** @type {any} */ event) => {
             try {
+              if (timer) {
+                clearTimeout(timer);
+              }
+
               const peerIdentity = event.detail.identity;
               const identityHash = await Identity.truncatedHash(
                 peerIdentity.publicKey,
               );
-              log("LXMF", `Received LINKIDENTIFY for ${toHex(identityHash)}`);
+              log("LXMF", `Received LINKIDENTIFY for ${toHex(identityHash)} (${linkHex})`);
 
               // 2. CRITICAL: Derive and store by the LXMF Address (sourceHash)
               const peerDeliveryDest = await Destination.OUT(
@@ -127,7 +143,8 @@ export class LXMRouter extends EventTarget {
                 peerIdentity.publicKey,
               );
 
-              this.processPendingMessages(identityHash);
+              this.pendingLinks.delete(linkHex);
+              this.processPendingMessages(link.linkId);
             } catch (e) {
               log(
                 "ROUTER",
@@ -175,6 +192,13 @@ export class LXMRouter extends EventTarget {
 
       return;
     }
+    if (this.pendingLinks.has(toHex(linkId))) {
+      log("LXMF", `Link ${toHex(linkId)} is pending identification, parking incoming message.`);
+
+      // Park the message for a limited time (e.g., 5 seconds)
+      this.pendingMessages.set(linkId, wireData);
+      return
+    }
 
     // If we reach here, we have the identity, clear any pending message
     this.pendingMessages.delete(linkId);
@@ -206,12 +230,12 @@ export class LXMRouter extends EventTarget {
    */
   async processPendingMessages(linkId) {
     const hashHex = toHex(linkId);
-    if (this.pendingMessages.has(hashHex)) {
+    if (this.pendingMessages.has(linkId)) {
       log(
-        "ROUTER",
+        "LXMF",
         `Identity acquired. Re-processing parked message for ${hashHex}`,
       );
-      const wireData = this.pendingMessages.get(hashHex);
+      const wireData = this.pendingMessages.get(linkId);
       await this._processIncomingMessage(
         wireData,
         linkId,

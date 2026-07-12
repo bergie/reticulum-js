@@ -110,8 +110,8 @@ test("LXMRouter", async (t) => {
 
     console.log("Message received:", messageReceived);
     if (messageReceived) {
-      console.log("Message received source:", messageReceived.sourceHash);
-      console.log("Message received title:", messageReceived.title);
+      console.log("Message received source:", messageReceived.message.sourceHash);
+      console.log("Message received title:", messageReceived.message.title);
     }
 
     assert.ok(messageReceived, "Message event should have been dispatched");

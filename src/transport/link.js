@@ -659,6 +659,7 @@ export class Link extends EventTarget {
   }
 
   async deriveKeys() {
+    log("Link", "Deriving keys");
     const peerPub = await crypto.subtle.importKey(
       "raw",
       this.peerPubBytes,
@@ -693,6 +694,7 @@ export class Link extends EventTarget {
    * @param {Uint8Array} responderX25519Pub
    */
   async deriveKeysFromEphemeral(responderX25519Pub) {
+    log("Link", "Deriving keys from ephemeral");
     const peerPub = await crypto.subtle.importKey(
       "raw",
       responderX25519Pub,
