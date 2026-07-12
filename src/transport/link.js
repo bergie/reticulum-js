@@ -71,8 +71,23 @@ export class Link extends EventTarget {
   /** @type {number} */
   lastInboundTime = Date.now();
 
-  /** @type {ReturnType<typeof setInterval> | null} */
+  /**
+   * @private
+   * @type {ReturnType<typeof setInterval> | null}
+   */
   _watchdogTimer = null;
+
+  /**
+   * @private
+   * @type {number}
+   */
+  _status = LinkStatus.PENDING;
+
+  /**
+   * @private
+   * @type {Promise<void>}
+   */
+  _rxQueue = Promise.resolve();
 
   /** @type {Set<number>} */
   static UNENCRYPTED_CONTEXTS = new Set([
@@ -122,10 +137,8 @@ export class Link extends EventTarget {
     this.transport = transport;
     this.initiator = initiator;
     this.mtu = 1024;
-    this._status = LinkStatus.PENDING;
     this.teardownReason = null;
     this.token = null;
-    this._rxQueue = Promise.resolve();
 
     // Store pending resources waiting for a RESOURCE_REQ from NomadNet
     this.pendingResources = new Map();
@@ -142,6 +155,11 @@ export class Link extends EventTarget {
    * @param {LinkStatus} newStatus
    */
   set status(newStatus) {
+    log(
+      "Link",
+      `Link ${toHex(this.linkId)} status is now ${newStatus}`,
+      LogLevel.DEBUG,
+    );
     const oldStatus = this._status;
     this._status = newStatus;
     if (oldStatus !== newStatus) {
@@ -164,6 +182,7 @@ export class Link extends EventTarget {
 
   /**
    * Starts the watchdog timer.
+   * @private
    */
   _startWatchdog() {
     if (this._watchdogTimer) return;
@@ -172,6 +191,7 @@ export class Link extends EventTarget {
 
   /**
    * Stops the watchdog timer.
+   * @private
    */
   _stopWatchdog() {
     if (this._watchdogTimer) {
@@ -182,8 +202,14 @@ export class Link extends EventTarget {
 
   /**
    * The watchdog job runs every second.
+   * @private
    */
   _watchdogJob() {
+    log(
+      "Link",
+      `Link ${toHex(this.linkId)} watchdog activated`,
+      LogLevel.DEBUG,
+    );
     const now = Date.now();
 
     // 1. Check for staleness
@@ -223,6 +249,7 @@ export class Link extends EventTarget {
 
   /**
    * Updates keepalive and staleness parameters based on RTT.
+   * @private
    */
   _updateKeepalive() {
     const KEEPALIVE_MAX = 360;
@@ -455,6 +482,7 @@ export class Link extends EventTarget {
   }
 
   /**
+   * @private
    * @param {Packet} packet
    */
   async _processPacket(packet) {
@@ -743,10 +771,13 @@ export class Link extends EventTarget {
       this.ephemeralKeyPair.publicKey,
     );
 
-    const signedData = new Uint8Array(32 + 32 + 3);
-    signedData.set(initiatorX25519Pub, 0);
-    signedData.set(responderX25519Pub, 32);
-    signedData.set(signalling, 64);
+    const signedData = new Uint8Array(
+      this.linkId.length + 32 + 32 + signalling.length,
+    );
+    signedData.set(this.linkId, 0);
+    signedData.set(responderX25519Pub, this.linkId.length);
+    signedData.set(this.sigPubBytes, this.linkId.length + 32);
+    signedData.set(signalling, this.linkId.length + 32 + 32);
 
     const signature = await this.destination.identity.sign(signedData);
 

@@ -29,7 +29,7 @@ export class Reticulum {
 
   /**
    * Attaches a physical or virtual network interface to the router.
-   * @param {any} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
+   * @param {import("../interfaces/base.js").Interface} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
    * @param {boolean} isDefault - If true, unroutable packets fallback to this interface
    */
   addInterface(rnsInterface, isDefault = false) {
@@ -39,7 +39,7 @@ export class Reticulum {
 
   /**
    * Removes an interface and purges its routes from the TransportCore.
-   * @param {any} rnsInterface
+   * @param {import("../interfaces/base.js").Interface} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
    */
   removeInterface(rnsInterface) {
     this.transport.removeInterface(rnsInterface);
