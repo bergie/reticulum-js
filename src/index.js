@@ -12,6 +12,7 @@ export {
   ContextType,
   DestType,
   HeaderType,
+  Packet,
   PacketType,
   TransportType,
 } from "./core/packet.js";
