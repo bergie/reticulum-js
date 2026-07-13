@@ -8,6 +8,10 @@ import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
+import {
+  buildAnnounceAppData,
+  parseAnnounceAppData,
+} from "./announce_data.js";
 import { Message } from "./message.js";
 
 /**
@@ -30,6 +34,9 @@ export class LXMRouter extends EventTarget {
     // Tracks outbound links (by hex link_id) we have already sent LINKIDENTIFY
     // on, so we identify once per link rather than on every message.
     this.identifiedLinks = new Set();
+    // Last display name / stamp cost we announced with (§4.3 app_data).
+    this.displayName = null;
+    this.stampCost = null;
   }
 
   /**
@@ -58,6 +65,31 @@ export class LXMRouter extends EventTarget {
       new CustomEvent("ready", { detail: { destination: deliveryDest } }),
     );
     log("ROUTER", "init complete.");
+  }
+
+  /**
+   * Announces the `lxmf.delivery` destination with the given display name.
+   *
+   * Builds the §4.3 msgpack `app_data` (`[name(bin8), stamp_cost, [SF_COMPRESSION]]`)
+   * and attaches it to the identity so `Destination.announce` signs it as part
+   * of the announce body.
+   *
+   * @param {string} displayName - Human-readable node name shown to peers.
+   * @param {number|null} [stampCost=null] - Active stamp cost (1-254), or null
+   *   to advertise stamping as disabled.
+   * @returns {Promise<void>}
+   */
+  async announce(displayName, stampCost = null) {
+    if (!this.deliveryDest) {
+      throw new Error("Router not initialized; call init() first.");
+    }
+    this.displayName = displayName;
+    this.stampCost = stampCost;
+    // Slice so the identity owns an ArrayBuffer-backed copy (the §4.3 blob is
+    // signed verbatim by Destination.announce, so the bytes must not alias a
+    // larger transient buffer).
+    this.identity.appData = buildAnnounceAppData(displayName, stampCost).slice();
+    await this.deliveryDest.announce();
   }
 
   /**
@@ -179,6 +211,25 @@ export class LXMRouter extends EventTarget {
         }
       },
     );
+
+    // 3. Listen for validated announces from the transport (SPEC §4.5) and
+    //    decode the lxmf.delivery `app_data` (§4.3) so the app layer learns
+    //    peer display names / stamp costs without a separate handshake.
+    //    Self-echo for local destinations is already filtered by the transport
+    //    (§9.5), so we only see remote announces here.
+    this.rns.transport.addEventListener("announce", (event) => {
+      const { destinationHash, identity, appData } =
+        /** @type {CustomEvent} */ (event).detail;
+      this.dispatchEvent(
+        new CustomEvent("peer", {
+          detail: {
+            destinationHash,
+            identity,
+            appData: parseAnnounceAppData(appData),
+          },
+        }),
+      );
+    });
   }
 
   /**

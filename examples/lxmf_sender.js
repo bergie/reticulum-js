@@ -69,10 +69,10 @@ async function startSender() {
   const senderIdentity = await Identity.loadOrGenerate(rns.storage);
   console.log(`Sender Identity Hash: ${toHex(senderIdentity.identityHash)}`);
 
+  // Read our version string for the announce display name (§4.3 app_data).
   const { default: data } = await import("../package.json", {
     with: { type: "json" },
   });
-  senderIdentity.setAppData(`JS LXMF sender (${data.version})`);
 
   // Bind the LXMF Router to our Identity and Network Core
   const lxmf = new LXMRouter(senderIdentity, rns);
@@ -81,8 +81,10 @@ async function startSender() {
     `Sender Destination Hash: ${toHex(lxmf.deliveryDest.destinationHash)}`,
   );
 
-  // Announce ourselves so the peer knows who we are
-  await lxmf.deliveryDest.announce();
+  // Announce ourselves so the peer knows who we are. LXMRouter.announce
+  // attaches the §4.3 msgpack app_data (display name as bin8 + stamp cost +
+  // capability list) for peer-name interop.
+  await lxmf.announce(`JS LXMF sender (${data.version})`);
   console.log("Sender announced to the mesh.");
 
   // If the peer replies, just log it for visibility

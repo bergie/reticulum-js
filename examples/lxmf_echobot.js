@@ -43,11 +43,10 @@ async function startEchoBot() {
     `Bot Identity Hash: ${Buffer.from(botIdentity.identityHash).toString("hex")}`,
   );
 
-  // Tell who we are
+  // Read our version string for the announce display name (§4.3 app_data).
   const { default: data } = await import("../package.json", {
     with: { type: "json" },
   });
-  botIdentity.setAppData(`JS echo bot (${data.version})`);
 
   // Bind the LXMF Router to our Identity and Network Core
   // This automatically registers the 'lxmf.delivery' destination
@@ -57,8 +56,10 @@ async function startEchoBot() {
     `Bot Destination Hash: ${Buffer.from(lxmf.deliveryDest.destinationHash).toString("hex")}`,
   );
 
-  // Announce the bot's presence to the mesh so clients know it's online
-  await lxmf.deliveryDest.announce();
+  // Announce the bot's presence to the mesh. LXMRouter.announce attaches the
+  // §4.3 msgpack app_data (display name as bin8 + stamp cost + capability
+  // list) so peers like Sideband/Nomadnet display our name correctly.
+  await lxmf.announce(`JS echo bot (${data.version})`);
   console.log("Bot announced to the mesh. Listening for messages...");
 
   // Handle Incoming Messages

@@ -14,11 +14,11 @@ test("LXMRouter", async (t) => {
     registerDestination: (dest) => {
       interfaceLayer.lastRegisteredDest = dest;
     },
-    transport: {
+    transport: Object.assign(new EventTarget(), {
       bindLocalDestination: () => {},
       addLink: () => {},
       sendPacket: async () => {},
-    },
+    }),
   };
 
   await t.test("initialization", async () => {
@@ -273,12 +273,12 @@ test("LXMRouter", async (t) => {
   await t.test(
     "send() identifies on the initiator link before sending the message",
     async () => {
-      const transport = {
+      const transport = Object.assign(new EventTarget(), {
         bindLocalDestination: () => {},
         addLink: () => {},
         sendPacket: async () => {},
         activeLinks: new Map(),
-      };
+      });
       const sendInterfaceLayer = {
         registerDestination: () => {},
         transport,

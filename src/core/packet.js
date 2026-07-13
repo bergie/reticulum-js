@@ -24,7 +24,6 @@ export const PacketType = {
   DATA: 0x00,
   ANNOUNCE: 0x01,
   LINKREQUEST: 0x02,
-  LINKRESPONSE: 0x04,
   PROOF: 0x03,
 };
 
