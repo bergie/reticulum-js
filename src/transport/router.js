@@ -8,6 +8,13 @@ import { LogLevel, log } from "../utils/log.js";
  * @property {number} timestamp
  */
 
+/**
+ * Maintains the table of learned routes to remote destinations.
+ *
+ * Each entry maps a destination hash (hex) to the interface it was learned
+ * through, the announced hop count, and the timestamp of the announcement.
+ * Shortest paths are preferred; ties go to the most recent announcement.
+ */
 export class RoutingTable {
   constructor() {
     // Maps Destination Hash (Hex String) to RouteEntry
@@ -38,6 +45,7 @@ export class RoutingTable {
   }
 
   /**
+   * Looks up the best-known route for a destination hash.
    * @param {Uint8Array} destinationHash
    * @returns {Route}
    */

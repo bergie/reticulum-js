@@ -12,6 +12,9 @@ import { RoutingTable } from "./router.js";
  * Routes packets emitted by Interfaces.
  */
 export class TransportCore extends EventTarget {
+  /**
+   * Creates an empty transport core with no interfaces, links or routes.
+   */
   constructor() {
     super();
     this.interfaces = new Set();
@@ -56,6 +59,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Detaches an interface, releases its writer and purges its routes.
    * @param {import("../interfaces/base.js").Interface} iface
    */
   removeInterface(iface) {
@@ -69,6 +73,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Registers an active link keyed by its destination hash.
    * @param {Uint8Array} destinationHash
    * @param {import("./link.js").Link} link
    */
@@ -79,6 +84,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Removes a previously registered link.
    * @param {Uint8Array} destinationHash
    */
   removeLink(destinationHash) {
@@ -88,6 +94,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Binds a local destination so inbound packets for it are delivered locally.
    * @param {import("../core/destination.js").Destination} destination
    */
   bindLocalDestination(destination) {
@@ -99,6 +106,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Removes a previously bound local destination.
    * @param {import("../core/destination.js").Destination} destination
    */
   unbindLocalDestination(destination) {
@@ -110,8 +118,11 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Dispatches an inbound packet to the matching local destination or link,
+   * or drops it if no route exists.
    * @param {import("../core/packet.js").Packet} packet
    * @param {import("../interfaces/base.js").Interface} receivingInterface
+   * @private
    */
   async _routeIncomingPacket(packet, receivingInterface) {
     // 1. Log arrival
@@ -164,7 +175,9 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Extracts and remembers the identity advertised in an ANNOUNCE packet.
    * @param {import("../core/packet.js").Packet} packet
+   * @private
    */
   async _handleAnnounce(packet) {
     // 1. The payload of an ANNOUNCE packet contains the public key

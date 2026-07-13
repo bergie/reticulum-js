@@ -100,6 +100,17 @@ export async function linkIdFromLrPacket(packet) {
   return Identity.truncatedHash(hashable);
 }
 
+/**
+ * An ephemeral encrypted channel between two destinations.
+ *
+ * A Link is established through a LINKREQUEST/LRPROOF handshake which derives
+ * shared session keys; once ACTIVE, application packets are Token-encrypted
+ * over the link. Provides inbound sequencing, keepalive/watchdog handling,
+ * link identification, and resource advertisement transport.
+ *
+ * Construct via {@link Link.initiate} or {@link Link.accept}; do not call the
+ * constructor directly.
+ */
 export class Link extends EventTarget {
   /** Combined size of the two initiator ephemeral public keys (X25519 + Ed25519). */
   static ECPUBSIZE = 64;
@@ -191,6 +202,7 @@ export class Link extends EventTarget {
   }
 
   /**
+   * The current link status.
    * @returns {LinkStatus}
    */
   get status() {
@@ -198,6 +210,7 @@ export class Link extends EventTarget {
   }
 
   /**
+   * Transitions the link to a new status, emitting `statuschange`.
    * @param {LinkStatus} newStatus
    */
   set status(newStatus) {
@@ -419,6 +432,7 @@ export class Link extends EventTarget {
    *
    * @param {Uint8Array} peerX25519PubBytes
    * @returns {Promise<void>}
+   * @private
    */
   async _deriveKeys(peerX25519PubBytes) {
     log("Link", "Deriving session keys");
@@ -497,6 +511,7 @@ export class Link extends EventTarget {
    * Sends an already-built packet without re-addressing/encrypting. Used for
    * the LINKREQUEST (addressed to the responder's destination hash, not link_id).
    * @param {Packet} packet
+   * @private
    */
   async _sendRaw(packet) {
     await this.transport.sendPacket(packet);
@@ -513,6 +528,7 @@ export class Link extends EventTarget {
    *   proof_data  = signature(64) || responder_X25519(32) || signalling(3)
    *
    * Signed with the destination's long-term identity key.
+   * @private
    */
   async _sendLRProof() {
     if (!this.destination?.identity) {
@@ -576,6 +592,7 @@ export class Link extends EventTarget {
    * Initiator: validate the responder's LRPROOF, derive session keys, send
    * LRRTT, and transition to ACTIVE (`RNS/Link.py:401-442`).
    * @param {Packet} packet
+   * @private
    */
   async _handleLRPROOF(packet) {
     if (!this.destination?.identity) {
@@ -662,6 +679,7 @@ export class Link extends EventTarget {
   /**
    * Initiator: send the RTT packet. Body is `umsgpack.packb(rtt_seconds)` (a
    * 9-byte msgpack float64), Token-encrypted with the link session key.
+   * @private
    */
   async _sendLRRTT() {
     const body = MicroMsgPack.encode(this.rtt);
@@ -680,6 +698,7 @@ export class Link extends EventTarget {
    * (`RNS/Link.py:534-553`). This is the only path that fires `established` on
    * the responder side.
    * @param {Packet} packet
+   * @private
    */
   async _handleLRRTT(packet) {
     // packet.payload is already decrypted by _processPacket.
@@ -705,6 +724,7 @@ export class Link extends EventTarget {
    * Responder signs with its long-term identity key; initiator signs with its
    * fresh ephemeral Ed25519 key (LINKS.md §6.5.1).
    * @returns {Promise<CryptoKey>}
+   * @private
    */
   async _linkSigningKey() {
     if (this.initiator) {
@@ -724,6 +744,7 @@ export class Link extends EventTarget {
    *   proof_data = packet_hash(32) || signature(64)
    * Addressed to link_id, unencrypted. Always explicit on links (§6.5.2).
    * @param {Packet} packet
+   * @private
    */
   async _provePacket(packet) {
     const packetHash = await packet.getHash();
@@ -759,6 +780,7 @@ export class Link extends EventTarget {
    * Sends a KEEPALIVE packet. Ping body is 0xFF, pong is 0xFE. KEEPALIVE bodies
    * are NOT Token-encrypted (§6.7.1).
    * @param {boolean} isPing
+   * @private
    */
   async _sendKeepalive(isPing) {
     const packet = new Packet({
@@ -802,6 +824,7 @@ export class Link extends EventTarget {
   /**
    * Receiver side of LINKCLOSE: decrypt, verify body equals link_id, close.
    * @param {Packet} packet
+   * @private
    */
   async _handleLinkClose(packet) {
     // packet.payload is already decrypted by _processPacket; the sole auth
@@ -872,6 +895,7 @@ export class Link extends EventTarget {
    * Body = public_key(64) || signature(64), where signature is over
    * `link_id || public_key`. The whole packet is link-encrypted.
    * @param {Packet} packet
+   * @private
    */
   async _handleIdentify(packet) {
     const { Identity } = await import("../core/identity.js");
@@ -965,6 +989,8 @@ export class Link extends EventTarget {
   }
 
   /**
+   * Handles a single inbound packet after handshake completion: verifies
+   * proofs, decrypts Token-encrypted packets, and dispatches by context.
    * @param {Packet} packet
    * @private
    */
@@ -1093,11 +1119,19 @@ export class Link extends EventTarget {
   // Watchdog (LINKS.md §6.7)
   // -----------------------------------------------------------------------
 
+  /**
+   * Starts the 1-second watchdog timer that monitors link liveness.
+   * @private
+   */
   _startWatchdog() {
     if (this._watchdogTimer) return;
     this._watchdogTimer = setInterval(() => this._watchdogJob(), 1000);
   }
 
+  /**
+   * Stops the watchdog timer.
+   * @private
+   */
   _stopWatchdog() {
     if (this._watchdogTimer) {
       clearInterval(this._watchdogTimer);
@@ -1105,6 +1139,10 @@ export class Link extends EventTarget {
     }
   }
 
+  /**
+   * Periodic watchdog tick: tears down stale links and sends initiator keepalives.
+   * @private
+   */
   _watchdogJob() {
     log("Link", `Watchdog tick for ${toHex(this.linkId)}`, LogLevel.EXTREME);
     const now = Date.now();
@@ -1127,6 +1165,10 @@ export class Link extends EventTarget {
     }
   }
 
+  /**
+   * Recomputes the keepalive and stale intervals from the measured RTT.
+   * @private
+   */
   _updateKeepalive() {
     const interval = this.rtt * (Link.KEEPALIVE_MAX / Link.KEEPALIVE_MAX_RTT);
     this.keepaliveInterval = Math.max(

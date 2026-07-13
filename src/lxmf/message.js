@@ -10,6 +10,7 @@ import { MicroMsgPack } from "../utils/msgpack.js";
  */
 export class Message {
   /**
+   * Constructs an LXMF message.
    * @param {Object} options
    * @param {Uint8Array} options.sourceHash
    * @param {Uint8Array} options.destinationHash

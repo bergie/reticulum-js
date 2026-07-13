@@ -88,9 +88,13 @@ export const DestType = {
 
 /**
  * Represents a Reticulum packet.
+ *
+ * Holds the parsed header fields, destination hash, context byte and payload,
+ * and provides serialization/deserialization to and from the wire format.
  */
 export class Packet {
   /**
+   * Constructs a Reticulum packet from header, destination and payload fields.
    * @param {Object} options
    * @param {HeaderType} [options.headerType]
    * @param {number} [options.hops]
@@ -119,6 +123,8 @@ export class Packet {
   }
 
   /**
+   * Returns the canonical bytes used to compute the packet hash
+   * (flags byte followed by the destination/context/payload portion).
    * @returns {Uint8Array<ArrayBuffer>}
    */
   getHashablePart() {
@@ -153,6 +159,7 @@ export class Packet {
   }
 
   /**
+   * Computes the SHA-256 packet hash over {@link getHashablePart}.
    * @returns {Promise<Uint8Array>}
    */
   async getHash() {
@@ -161,6 +168,12 @@ export class Packet {
     return new Uint8Array(hashBuffer);
   }
 
+  /**
+   * Encodes header type, context flag, transport/destination type, packet type
+   * and context byte into the single Reticulum flags byte.
+   * @returns {number}
+   * @private
+   */
   _buildFlagsByte() {
     let flags = 0x00;
 
@@ -232,6 +245,7 @@ export class Packet {
   }
 
   /**
+   * Parses a raw Reticulum wire-format packet into a {@link Packet}.
    * @param {Uint8Array} data
    * @returns {Packet}
    */

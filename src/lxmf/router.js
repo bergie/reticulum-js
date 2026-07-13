@@ -16,6 +16,7 @@ import { Message } from "./message.js";
  */
 export class LXMRouter extends EventTarget {
   /**
+   * Creates an LXMF router bound to the given identity and Reticulum instance.
    * @param {import("../core/identity.js").Identity} identity
    * @param {import("../core/reticulum.js").Reticulum} rnsCore - The Reticulum instance
    */
@@ -268,9 +269,12 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
+   * Serializes and sends an LXMF message, waiting for the link to become
+   * active before delivery when a link id is given.
    * @param {Message} message
    * @param {Identity} senderIdentity
    * @param {Uint8Array|null} linkId
+   * @returns {Promise<void>}
    */
   async send(message, senderIdentity, linkId) {
     const { messageId, wireData } = await message.serialize(senderIdentity);

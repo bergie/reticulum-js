@@ -27,6 +27,8 @@ export class Identity extends EventTarget {
   appData = new Uint8Array();
 
   /**
+   * Low-level constructor. Prefer the static factories (`Identity.generate`,
+   * `Identity.fromPublicKey`, `Identity.fromBytes`).
    * @param {CryptoKey|null} x25519Priv
    * @param {CryptoKey|null} ed25519Priv
    * @param {CryptoKey} x25519Pub
@@ -52,6 +54,7 @@ export class Identity extends EventTarget {
   }
 
   /**
+   * Sets the application-specific metadata attached to announcements.
    * @param {string} data
    */
   setAppData(data) {
@@ -59,6 +62,7 @@ export class Identity extends EventTarget {
   }
 
   /**
+   * Returns the application-specific metadata as a UTF-8 string.
    * @returns {string}
    */
   getAppData() {

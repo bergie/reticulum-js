@@ -25,6 +25,10 @@ import { Interface } from "./base.js";
  */
 
 /**
+ * Reticulum interface that connects to a remote node over a TCP socket.
+ *
+ * Wraps the Node.js `net.Socket` into RNS streams with KISS/HDLC framing.
+ * Used both for outbound client connections and (via a server) for inbound ones.
  * @extends Interface
  */
 export class TCPClientInterface extends Interface {
@@ -35,6 +39,7 @@ export class TCPClientInterface extends Interface {
   socket = null;
 
   /**
+   * Creates a TCP client interface.
    * @param {TCPClientInterfaceOptions} options
    */
   constructor(options) {
@@ -72,6 +77,8 @@ export class TCPClientInterface extends Interface {
   }
 
   /**
+   * Establishes the TCP connection (or adopts the provided socket) and starts
+   * the inbound loop.
    * @returns {Promise<void>}
    */
   async connect() {
@@ -107,6 +114,7 @@ export class TCPClientInterface extends Interface {
   }
 
   /**
+   * Tears down the socket and marks the interface offline.
    * @returns {Promise<void>}
    */
   async disconnect() {
@@ -126,6 +134,8 @@ export class TCPClientInterface extends Interface {
   }
 
   /**
+   * Wraps the raw socket into RNS frame/unframe streams and starts the
+   * inbound loop.
    * @param {any} socket
    * @private
    */
@@ -195,10 +205,15 @@ export class TCPClientInterface extends Interface {
 }
 
 /**
+ * Reticulum interface that listens for inbound TCP connections.
+ *
+ * Each accepted connection is exposed as a spawned {@link TCPClientInterface}
+ * via the `connection` event.
  * @extends Interface
  */
 export class TCPServerInterface extends Interface {
   /**
+   * Creates a TCP server interface.
    * @param {TCPServerInterfaceOptions} options
    */
   constructor(options) {
@@ -228,6 +243,7 @@ export class TCPServerInterface extends Interface {
   }
 
   /**
+   * Starts listening on the configured port for inbound connections.
    * @returns {Promise<void>}
    */
   async connect() {
@@ -254,6 +270,7 @@ export class TCPServerInterface extends Interface {
   }
 
   /**
+   * Closes the listening server and disconnects all spawned client interfaces.
    * @returns {Promise<void>}
    */
   async disconnect() {

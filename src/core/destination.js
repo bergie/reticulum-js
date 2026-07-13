@@ -18,7 +18,9 @@ export const Direction = {
 };
 
 /**
- * Represents a Reticulum destination.
+ * Represents a Reticulum destination — an addressable endpoint that can
+ * announce, receive packets, encrypt/decrypt, and establish Links.
+ * @extends EventTarget
  */
 export class Destination extends EventTarget {
   /**
@@ -28,6 +30,8 @@ export class Destination extends EventTarget {
   static knownDestinations = new Map();
 
   /**
+   * Low-level constructor. Prefer the static factories (`Destination.IN`,
+   * `Destination.OUT`, etc.) which also compute the destination hashes.
    * @param {string} name - The application name.
    * @param {Direction} direction - The direction of this destination.
    * @param {DestType} type - The type of this destination.
@@ -57,6 +61,10 @@ export class Destination extends EventTarget {
    */
   nameHash;
 
+  /**
+   * Broadcasts an Announce packet advertising this destination's public key,
+   * name hash and signed metadata so peers can learn and remember it.
+   */
   async announce() {
     if (!this.interfaceLayer)
       throw new Error("Destination not bound to an RNS instance.");
@@ -342,14 +350,19 @@ export class Destination extends EventTarget {
   }
 
   /**
+   * Accepts an incoming LINKREQUEST and returns the established {@link Link}.
    * @param {import('./packet.js').Packet} packet
+   * @returns {Promise<import("../transport/link.js").Link>}
    */
   async acceptLink(packet) {
     return await this.respondToLinkRequest(packet);
   }
 
   /**
+   * Decrypts (where applicable) and dispatches an inbound DATA packet
+   * as a `data` event.
    * @param {import('./packet.js').Packet} packet
+   * @private
    */
   async _handleData(packet) {
     let plaintext = null;
@@ -472,6 +485,7 @@ export class Destination extends EventTarget {
   }
 
   /**
+   * Encrypts data for this destination's identity.
    * @param {Uint8Array} data
    * @return {Promise<Uint8Array>}
    */
@@ -483,7 +497,10 @@ export class Destination extends EventTarget {
   }
 
   /**
+   * Encrypts the packet payload for this destination and sends it via the
+   * bound transport.
    * @param {Packet} packet
+   * @returns {Promise<void>}
    */
   async send(packet) {
     if (!this.interfaceLayer) {

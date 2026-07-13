@@ -4,6 +4,10 @@
  * Optimized for Reticulum RNS and LXMF requirements.
  */
 
+/**
+ * Minimal, zero-dependency MessagePack encoder/decoder optimized for the
+ * subset of types used by RNS and LXMF.
+ */
 export class MicroMsgPack {
   /**
    * Encodes a JavaScript value into a MessagePack Uint8Array.
