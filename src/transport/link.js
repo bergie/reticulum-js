@@ -1,3 +1,31 @@
+/**
+ * @file link.js
+ * @description Reticulum Link — an ephemeral encrypted channel between two
+ * destinations, established via a LINKREQUEST/LRPROOF handshake (LINKS.md §6).
+ *
+ * This module is the single source of truth for the Link protocol. Both the
+ * initiator and responder handshake paths live here; Destination only delegates.
+ */
+
+import {
+  ContextType,
+  DestType,
+  getEnumName,
+  HeaderType,
+  Packet,
+  PacketType,
+} from "../core/packet.js";
+import { hkdf } from "../crypto/ciphers.js";
+import {
+  exportPublicKey,
+  generateEd25519KeyPair,
+  generateX25519KeyPair,
+} from "../crypto/keys.js";
+import { Token } from "../crypto/token.js";
+import { toHex } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
+import { MicroMsgPack } from "../utils/msgpack.js";
+
 /** @enum {number} */
 export const LinkStatus = {
   PENDING: 0,
@@ -14,140 +42,152 @@ export const LinkTeardownReason = {
   DESTINATION_CLOSED: 0x03,
 };
 
-import { Destination } from "../core/destination.js";
-import { Identity } from "../core/identity.js";
-import {
-  ContextType,
-  DestType,
-  getEnumName,
-  Packet,
-  PacketType,
-} from "../core/packet.js";
-import { hkdf } from "../crypto/ciphers.js";
-import { exportPublicKey } from "../crypto/keys.js";
-import { Token } from "../crypto/token.js";
-import { toHex } from "../utils/encoding.js";
-import { LogLevel, log } from "../utils/log.js";
+/**
+ * Returns true if a packet on a Link must NOT be Token-encrypted.
+ *
+ * Mirrors `RNS/Packet.py` `pack()` for a HEADER_1 packet whose destination is a
+ * Link (LINKS.md §6.7.1, §6.5). The not-encrypted branches are:
+ *   - LINKREQUEST (handled separately, never reaches this predicate on a live link)
+ *   - packet_type PROOF with context NONE         (regular link DATA proof)
+ *   - packet_type PROOF with context RESOURCE_PRF (resource proof)
+ *   - context RESOURCE    (resource parts encrypt themselves)
+ *   - context KEEPALIVE
+ *   - context CACHE_REQUEST
+ * Everything else (LRRTT, LINKCLOSE, LINKIDENTIFY, RESOURCE_ADV/REQ/HMU/ICL/RCL,
+ * CHANNEL, REQUEST, RESPONSE, NONE DATA) is Token-encrypted.
+ *
+ * @param {number} packetType
+ * @param {number} contextByte
+ * @returns {boolean}
+ */
+export function isLinkPacketUnencrypted(packetType, contextByte) {
+  if (packetType === PacketType.PROOF) {
+    return (
+      contextByte === ContextType.NONE ||
+      contextByte === ContextType.RESOURCE_PRF
+    );
+  }
+  return (
+    contextByte === ContextType.RESOURCE ||
+    contextByte === ContextType.KEEPALIVE ||
+    contextByte === ContextType.CACHE_REQUEST
+  );
+}
 
 /**
- * Handles the cryptographic derivation of link keys.
+ * Derives the 16-byte link_id from a serialized LINKREQUEST packet.
+ *
+ * `link_id = truncated_hash(low_flags || dest_hash || context || body)` with the
+ * trailing MTU-discovery signalling bytes (if present) stripped before hashing,
+ * so the id is invariant under signalling changes (`RNS/Link.py:341-348`).
+ *
+ * @param {Packet} packet - a LINKREQUEST packet with `raw` populated
+ * @returns {Promise<Uint8Array>}
  */
-export class LinkEncryption {
-  /**
-   * Derives a symmetric link key using ECIES (X25519 + HKDF).
-   * @param {CryptoKey} localPrivateX25519 - Local ephemeral X25519 private key.
-   * @param {CryptoKey} remotePublicX25519 - Remote ephemeral X25519 public key.
-   * @param {Uint8Array} salt - Salt for HKDF (typically the identity hash).
-   * @returns {Promise<Uint8Array>} A 64-byte key for Token (AES_256_CBC mode).
-   */
-  static async deriveLinkKey(localPrivateX25519, remotePublicX25519, salt) {
-    // 1. ECDH Shared Secret
-    const sharedSecretBits = await crypto.subtle.deriveBits(
-      { name: "X25519", public: remotePublicX25519 },
-      localPrivateX25519,
-      256,
-    );
-
-    // 2. Import Master Key for HKDF
-    const hkdfMasterKey = await crypto.subtle.importKey(
-      "raw",
-      sharedSecretBits,
-      { name: "HKDF" },
-      false,
-      ["deriveKey"],
-    );
-
-    return await hkdf(hkdfMasterKey, salt, new Uint8Array(0), 64);
+export async function linkIdFromLrPacket(packet) {
+  const { Identity } = await import("../core/identity.js");
+  const lowFlags = packet.raw[0] & 0x0f;
+  const offset = packet.headerType === HeaderType.HEADER_2 ? 18 : 2;
+  let body = packet.raw.subarray(offset);
+  // Strip trailing signalling if the LINKREQUEST body is longer than ECPUBSIZE.
+  if (packet.payload.length > Link.ECPUBSIZE) {
+    const diff = packet.payload.length - Link.ECPUBSIZE;
+    body = body.subarray(0, body.length - diff);
   }
+  const hashable = new Uint8Array(1 + body.length);
+  hashable[0] = lowFlags;
+  hashable.set(body, 1);
+  return Identity.truncatedHash(hashable);
 }
 
 export class Link extends EventTarget {
+  /** Combined size of the two initiator ephemeral public keys (X25519 + Ed25519). */
+  static ECPUBSIZE = 64;
+
+  /** Size of the optional MTU/mode signalling trailer on LINKREQUEST/LRPROOF. */
+  static LINK_MTU_SIZE = 3;
+
+  /** Default link mode (the only enabled mode in upstream RNS). */
+  static MODE_AES256_CBC = 0x01;
+
+  /** Default Reticulum MTU when MTU discovery is disabled or unavailable. */
+  static DEFAULT_MTU = 500;
+
+  // Keepalive cadence constants (RNS/Link.py:79-101)
+  static KEEPALIVE_MAX = 360;
+  static KEEPALIVE_MIN = 5;
+  static KEEPALIVE_MAX_RTT = 1.75;
+  static STALE_FACTOR = 2;
+
   /** @type {number} */
-  mode = 0x01; // Default to AES_256_CBC
+  mode = Link.MODE_AES256_CBC;
 
   /** @type {number} */
   rtt = 0;
 
   /** @type {number} */
-  keepaliveInterval = 360;
+  keepaliveInterval = Link.KEEPALIVE_MAX;
 
   /** @type {number} */
-  staleTime = 720;
+  staleTime = Link.STALE_FACTOR * Link.KEEPALIVE_MAX;
+
+  /** @type {Token|null} */
+  token = null;
+
+  /** @type {Uint8Array|null} */
+  derivedKey = null;
 
   /** @type {number} */
-  lastInboundTime = Date.now();
+  mtu = Link.DEFAULT_MTU;
+
+  /** @type {number} */
+  teardownReason = 0;
 
   /**
-   * @private
-   * @type {ReturnType<typeof setInterval> | null}
-   */
-  _watchdogTimer = null;
-
-  /**
-   * @private
+   * Wall-clock time (ms) at which the LINKREQUEST was sent (initiator) or
+   * received (responder). Used to measure RTT.
    * @type {number}
    */
-  _status = LinkStatus.PENDING;
+  requestTimeMs = 0;
 
-  /**
-   * @private
-   * @type {Promise<void>}
-   */
+  /** @type {ReturnType<typeof setInterval> | null} */
+  _watchdogTimer = null;
+
+  /** @type {Promise<void>} */
   _rxQueue = Promise.resolve();
 
-  /** @type {Set<number>} */
-  static UNENCRYPTED_CONTEXTS = new Set([
-    ContextType.RESOURCE,
-    ContextType.RESOURCE_ADV,
-    ContextType.RESOURCE_HMU,
-    ContextType.RESOURCE_ICL,
-    ContextType.RESOURCE_RCL,
-    ContextType.RESOURCE_PRF,
-    ContextType.KEEPALIVE,
-    ContextType.LINKIDENTIFY,
-    ContextType.LINKCLOSE,
-    ContextType.LRRTT,
-    ContextType.LRPROOF,
-  ]);
+  /** Pending outgoing resource payloads keyed by hex hash (RESOURCE_ADV/REQ). */
+  pendingResources = new Map();
 
   /**
-   * @param {Destination} destination
-   * @param {Uint8Array} linkId
-   * @param {import("../crypto/keys.js").KeyPair} ephemeralKeyPair - The ephemeral X25519 keypair.
-   * @param {Uint8Array} peerPubBytes
-   * @param {import("../crypto/keys.js").KeyPair} [ephemeralEd25519KeyPair] - The ephemeral Ed25519 keypair.
-   * @param {CryptoKey} [sigPrv] - The Ed25519 private key for identity proofing.
-   * @param {Uint8Array} [sigPubBytes] - The Ed25519 public key for identity proofing.
-   * @param {import("../transport/transport.js").TransportCore} transport
-   * @param {boolean} [initiator=false]
+   * Low-level constructor. Prefer the `Link.initiate` / `Link.accept` factories.
+   *
+   * @param {object} opts
+   * @param {import("../core/destination.js").Destination} opts.destination
+   * @param {Uint8Array} opts.linkId
+   * @param {import("../transport/transport.js").TransportCore} opts.transport
+   * @param {boolean} opts.initiator
+   * @param {CryptoKey} opts.ephemeralX25519Priv - This side's ephemeral X25519 private key.
+   * @param {Uint8Array} [opts.ephemeralX25519Pub] - This side's ephemeral X25519 public key (raw 32 bytes).
+   * @param {CryptoKey} [opts.ephemeralEd25519Priv] - Initiator's fresh ephemeral Ed25519 private key (link-proof signing).
+   * @param {Uint8Array} [opts.peerX25519Pub] - Peer's ephemeral X25519 public key (raw 32 bytes).
+   * @param {number} [opts.mtu]
+   * @param {number} [opts.mode]
    */
-  constructor(
-    destination,
-    linkId,
-    ephemeralKeyPair,
-    peerPubBytes,
-    ephemeralEd25519KeyPair = undefined,
-    sigPrv = undefined,
-    sigPubBytes = undefined,
-    transport = undefined,
-    initiator = false,
-  ) {
+  constructor(opts) {
     super();
-    this.destination = destination;
-    this.linkId = linkId;
-    this.ephemeralKeyPair = ephemeralKeyPair;
-    this.peerPubBytes = peerPubBytes;
-    this.ephemeralEd25519KeyPair = ephemeralEd25519KeyPair;
-    this.sigPrv = sigPrv;
-    this.sigPubBytes = sigPubBytes;
-    this.transport = transport;
-    this.initiator = initiator;
-    this.mtu = 1024;
-    this.teardownReason = null;
-    this.token = null;
-
-    // Store pending resources waiting for a RESOURCE_REQ from NomadNet
-    this.pendingResources = new Map();
+    this.destination = opts.destination;
+    this.linkId = opts.linkId;
+    this.transport = opts.transport;
+    this.initiator = opts.initiator;
+    this.ephemeralX25519Priv = opts.ephemeralX25519Priv;
+    this.ephemeralX25519Pub = opts.ephemeralX25519Pub;
+    this.ephemeralEd25519Priv = opts.ephemeralEd25519Priv ?? null;
+    this.peerX25519Pub = opts.peerX25519Pub ?? null;
+    if (opts.mtu !== undefined) this.mtu = opts.mtu;
+    if (opts.mode !== undefined) this.mode = opts.mode;
+    this.lastInboundTime = Date.now();
+    this._status = LinkStatus.PENDING;
   }
 
   /**
@@ -161,10 +201,13 @@ export class Link extends EventTarget {
    * @param {LinkStatus} newStatus
    */
   set status(newStatus) {
-    const tearDown = (newStatus === LinkStatus.CLOSED) ? ` (${getEnumName(LinkTeardownReason, this.tearDownReason)})` : '';
+    const reason =
+      newStatus === LinkStatus.CLOSED
+        ? ` (${getEnumName(LinkTeardownReason, this.teardownReason)})`
+        : "";
     log(
       "Link",
-      `Link ${toHex(this.linkId)} status is now ${getEnumName(LinkStatus, newStatus)}${tearDown}`,
+      `Link ${toHex(this.linkId)} status is now ${getEnumName(LinkStatus, newStatus)}${reason}`,
       LogLevel.DEBUG,
     );
     const oldStatus = this._status;
@@ -175,103 +218,721 @@ export class Link extends EventTarget {
           detail: { status: newStatus, oldStatus },
         }),
       );
-
-      if (newStatus === LinkStatus.CLOSED) {
-        this._stopWatchdog();
-        if (this.transport) {
-          this.transport.removeLink(this.linkId);
-        }
-      } else if (newStatus === LinkStatus.ACTIVE) {
+      if (newStatus === LinkStatus.ACTIVE) {
         this._startWatchdog();
+      } else if (newStatus === LinkStatus.CLOSED) {
+        this._stopWatchdog();
+        if (this.transport) this.transport.removeLink(this.linkId);
       }
     }
   }
 
   /**
-   * Starts the watchdog timer.
-   * @private
+   * Resolves once the Link reaches ACTIVE status (immediately if it already
+   * is). Callers that obtain a Link reference before the handshake finishes —
+   * e.g. right after `Destination.createLink()` resolves — should `await`
+   * this before sending application data, since the session token is only
+   * derived once the handshake completes.
+   *
+   * Mirrors the gating the Python LXMF router applies in `process_outbound`
+   * before sending DIRECT messages.
+   *
+   * @param {number} [timeoutMs=15000] - How long to wait for the handshake.
+   * @returns {Promise<Link>}
    */
-  _startWatchdog() {
-    if (this._watchdogTimer) return;
-    this._watchdogTimer = setInterval(() => this._watchdogJob(), 1000);
-  }
-
-  /**
-   * Stops the watchdog timer.
-   * @private
-   */
-  _stopWatchdog() {
-    if (this._watchdogTimer) {
-      clearInterval(this._watchdogTimer);
-      this._watchdogTimer = null;
+  async whenActive(timeoutMs = 15000) {
+    if (this._status === LinkStatus.ACTIVE) {
+      return this;
     }
+    return new Promise((resolve, reject) => {
+      /** @type {ReturnType<typeof setTimeout> | undefined} */
+      let timer;
+      const onStatusChange = (/** @type {any} */ event) => {
+        if (event.detail.status === LinkStatus.ACTIVE) {
+          clearTimeout(timer);
+          this.removeEventListener("statuschange", onStatusChange);
+          resolve(this);
+        } else if (event.detail.status === LinkStatus.CLOSED) {
+          clearTimeout(timer);
+          this.removeEventListener("statuschange", onStatusChange);
+          reject(new Error("Link closed before it became active"));
+        }
+      };
+      timer = setTimeout(() => {
+        this.removeEventListener("statuschange", onStatusChange);
+        reject(new Error("Link did not become active before timeout"));
+      }, timeoutMs);
+      this.addEventListener("statuschange", onStatusChange);
+    });
   }
 
+  // -----------------------------------------------------------------------
+  // Factories
+  // -----------------------------------------------------------------------
+
   /**
-   * The watchdog job runs every second.
-   * @private
+   * Initiator side: establish a new link to `destination`.
+   *
+   * Generates fresh ephemeral X25519 + Ed25519 keypairs, builds and sends the
+   * LINKREQUEST (dest_type=SINGLE, addressed to the responder's destination
+   * hash), derives the link_id from the serialized packet, registers the link
+   * with the transport, and transitions to HANDSHAKE. The link becomes ACTIVE
+   * once the responder's LRPROOF is validated (`RNS/Link.py:283-328`).
+   *
+   * @param {import("../core/destination.js").Destination} destination - OUT destination whose identity is the responder's.
+   * @param {import("../transport/transport.js").TransportCore} transport
+   * @returns {Promise<Link>}
    */
-  _watchdogJob() {
-    log(
-      "Link",
-      `Link ${toHex(this.linkId)} watchdog activated`,
-      LogLevel.EXTREME,
+  static async initiate(destination, transport) {
+    const ephemeralX25519 = await generateX25519KeyPair();
+    const ephemeralEd25519 = await generateEd25519KeyPair();
+    const x25519Pub = await exportPublicKey(ephemeralX25519.publicKey);
+    const ed25519Pub = await exportPublicKey(ephemeralEd25519.publicKey);
+
+    const signalling = Link.signallingBytes(
+      Link.DEFAULT_MTU,
+      Link.MODE_AES256_CBC,
     );
-    const now = Date.now();
 
-    // 1. Check for staleness
-    if (now >= this.lastInboundTime + this.staleTime * 1000) {
-      this.status = LinkStatus.CLOSED;
-      this.teardownReason = LinkTeardownReason.TIMEOUT;
-      return;
-    }
+    // LINKREQUEST body: initiator_X25519(32) || initiator_Ed25519(32) || signalling(3)
+    const body = new Uint8Array(Link.ECPUBSIZE + Link.LINK_MTU_SIZE);
+    body.set(x25519Pub, 0);
+    body.set(ed25519Pub, 32);
+    body.set(signalling, Link.ECPUBSIZE);
 
-    // 2. Send keepalive if initiator
-    if (
-      this.initiator &&
-      now >= this.lastInboundTime + this.keepaliveInterval * 1000
-    ) {
-      this.sendKeepalive(true).catch(console.error);
-      this.lastInboundTime = now; // Avoid spamming
-    }
+    const packet = new Packet({
+      headerType: HeaderType.HEADER_1,
+      hops: 0,
+      transportType: 0,
+      destinationType: DestType.SINGLE,
+      packetType: PacketType.LINKREQUEST,
+      destinationHash: /** @type {Uint8Array} */ (destination.destinationHash),
+      contextByte: ContextType.NONE,
+      payload: body,
+    });
+    packet.raw = packet.serialize();
+    const linkId = await linkIdFromLrPacket(packet);
+
+    const link = new Link({
+      destination,
+      linkId,
+      transport,
+      initiator: true,
+      ephemeralX25519Priv: ephemeralX25519.privateKey,
+      ephemeralX25519Pub: x25519Pub,
+      ephemeralEd25519Priv: ephemeralEd25519.privateKey,
+      mtu: Link.DEFAULT_MTU,
+      mode: Link.MODE_AES256_CBC,
+    });
+    transport.addLink(linkId, link);
+    link.requestTimeMs = Date.now();
+    link.status = LinkStatus.HANDSHAKE;
+    await link._sendRaw(packet);
+    return link;
   }
 
   /**
-   * Sends a KEEPALIVE packet.
-   * @param {boolean} isPing - True if sending a ping (0xFF), false if pong (0xFE).
+   * Responder side: accept an incoming LINKREQUEST and complete the handshake
+   * up to LRPROOF.
+   *
+   * Derives the link_id, extracts the initiator's ephemeral keys, derives the
+   * session keys, builds and sends the LRPROOF signed with the destination's
+   * long-term identity key, registers the link with the transport, and
+   * transitions to HANDSHAKE. The link becomes ACTIVE once the initiator's
+   * LRRTT arrives (`RNS/Link.py:186-200, 353-394`).
+   *
+   * @param {import("../core/destination.js").Destination} destination - IN destination whose identity is this node's.
+   * @param {import("../transport/transport.js").TransportCore} transport
+   * @param {Packet} requestPacket - The incoming LINKREQUEST (with `raw` populated).
+   * @returns {Promise<Link>}
+   */
+  static async accept(destination, transport, requestPacket) {
+    const linkId = await linkIdFromLrPacket(requestPacket);
+    const data = requestPacket.payload;
+
+    const initiatorX25519Pub = data.subarray(0, 32);
+    // initiatorEd25519Pub is data[32:64] — currently unused on the responder side.
+    let mtu = Link.DEFAULT_MTU;
+    let mode = Link.MODE_AES256_CBC;
+    if (data.length === Link.ECPUBSIZE + Link.LINK_MTU_SIZE) {
+      const signalling = data.subarray(Link.ECPUBSIZE);
+      mode = (signalling[0] & 0xe0) >> 5;
+      mtu =
+        (((signalling[0] << 16) + (signalling[1] << 8) + signalling[2]) &
+          0x1fffff) >>>
+        0;
+    }
+
+    const ephemeral = await generateX25519KeyPair();
+    const responderX25519Pub = await exportPublicKey(ephemeral.publicKey);
+
+    const link = new Link({
+      destination,
+      linkId,
+      transport,
+      initiator: false,
+      ephemeralX25519Priv: ephemeral.privateKey,
+      ephemeralX25519Pub: responderX25519Pub,
+      peerX25519Pub: initiatorX25519Pub,
+      mtu,
+      mode,
+    });
+    await link._deriveKeys(initiatorX25519Pub);
+    link.requestTimeMs = Date.now();
+    link.status = LinkStatus.HANDSHAKE;
+    transport.addLink(linkId, link);
+
+    await link._sendLRProof();
+    return link;
+  }
+
+  // -----------------------------------------------------------------------
+  // Signalling helpers (RNS/Link.py:148-152)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Packs the 3-byte MTU/mode signalling trailer.
+   * @param {number} mtu
+   * @param {number} mode
+   * @returns {Uint8Array}
+   */
+  static signallingBytes(mtu, mode) {
+    const MTU_BYTEMASK = 0x1fffff;
+    const MODE_BYTEMASK = 0xe0;
+    const signallingValue =
+      (mtu & MTU_BYTEMASK) + (((mode << 5) & MODE_BYTEMASK) << 16);
+    const buffer = new ArrayBuffer(4);
+    const view = new DataView(buffer);
+    view.setUint32(0, signallingValue, false); // big-endian
+    return new Uint8Array(buffer).subarray(1); // drop top byte -> 3 bytes
+  }
+
+  // -----------------------------------------------------------------------
+  // Session key derivation (LINKS.md §6.4.1)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Derives the link session keys from the peer's ephemeral X25519 public key.
+   *
+   *   shared       = X25519(my_ephemeral_priv, peer_ephemeral_pub)
+   *   session_key  = HKDF(shared, salt=link_id, info="", L=64)
+   *
+   * @param {Uint8Array} peerX25519PubBytes
    * @returns {Promise<void>}
    */
-  async sendKeepalive(isPing) {
-    const payload = new Uint8Array([isPing ? 0xff : 0xfe]);
-    const keepalivePacket = new Packet({
+  async _deriveKeys(peerX25519PubBytes) {
+    log("Link", "Deriving session keys");
+    const peerPub = await crypto.subtle.importKey(
+      "raw",
+      /** @type {any} */ (peerX25519PubBytes),
+      { name: "X25519" },
+      true,
+      [],
+    );
+    const sharedBits = await crypto.subtle.deriveBits(
+      { name: "X25519", public: peerPub },
+      this.ephemeralX25519Priv,
+      256,
+    );
+    this.derivedKey = await hkdf(
+      new Uint8Array(sharedBits),
+      this.linkId,
+      new Uint8Array(0),
+      64,
+    );
+    this.token = new Token(this.derivedKey);
+  }
+
+  // -----------------------------------------------------------------------
+  // Sending
+  // -----------------------------------------------------------------------
+
+  /**
+   * Sends a packet on the link. The packet is re-addressed to `link_id` and
+   * Token-encrypted unless it is in the not-encrypted set (§6.7.1).
+   *
+   * @param {Packet} packet
+   */
+  async send(packet) {
+    if (!this.transport) throw new Error("Link transport not available.");
+
+    const unencryptedOnLink = isLinkPacketUnencrypted(
+      packet.packetType,
+      packet.contextByte,
+    );
+    const isHandshake =
+      packet.packetType === PacketType.LINKREQUEST ||
+      (packet.packetType === PacketType.PROOF &&
+        packet.contextByte === ContextType.LRPROOF);
+
+    let payload = packet.payload;
+    if (!isHandshake && !unencryptedOnLink) {
+      if (!this.token)
+        throw new Error("Link token not available. Did handshake complete?");
+      log(
+        "Link",
+        `Encrypting ${getEnumName(PacketType, packet.packetType)} (ctx ${getEnumName(ContextType, packet.contextByte)})`,
+      );
+      payload = await this.token.encrypt(
+        /** @type {Uint8Array} */ (packet.payload),
+      );
+    }
+
+    const outbound = new Packet({
+      headerType: packet.headerType ?? HeaderType.HEADER_1,
+      hops: packet.hops ?? 0,
+      transportType: packet.transportType ?? 0,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      packetType: packet.packetType,
+      contextFlag: packet.contextFlag ?? false,
+      contextByte: packet.contextByte ?? ContextType.NONE,
+      payload,
+      transportId: packet.transportId,
+    });
+    await this.transport.sendPacket(outbound);
+  }
+
+  /**
+   * Sends an already-built packet without re-addressing/encrypting. Used for
+   * the LINKREQUEST (addressed to the responder's destination hash, not link_id).
+   * @param {Packet} packet
+   */
+  async _sendRaw(packet) {
+    await this.transport.sendPacket(packet);
+  }
+
+  // -----------------------------------------------------------------------
+  // LRPROOF (responder → initiator), LINKS.md §6.2
+  // -----------------------------------------------------------------------
+
+  /**
+   * Responder: builds and sends the LRPROOF.
+   *
+   *   signed_data = link_id || responder_X25519 || responder_Ed25519 || signalling
+   *   proof_data  = signature(64) || responder_X25519(32) || signalling(3)
+   *
+   * Signed with the destination's long-term identity key.
+   */
+  async _sendLRProof() {
+    if (!this.destination?.identity) {
+      throw new Error("Responder LRPROOF requires a destination identity.");
+    }
+    if (!this.ephemeralX25519Pub) {
+      throw new Error(
+        "Responder LRPROOF requires an ephemeral X25519 public key.",
+      );
+    }
+    const signalling = Link.signallingBytes(this.mtu, this.mode);
+    const responderX25519Pub = this.ephemeralX25519Pub;
+    const responderEd25519Pub = (
+      await this.destination.identity.getPublicKey()
+    ).subarray(32, 64);
+
+    const signedData = new Uint8Array(
+      this.linkId.length +
+        responderX25519Pub.length +
+        responderEd25519Pub.length +
+        signalling.length,
+    );
+    signedData.set(this.linkId, 0);
+    signedData.set(responderX25519Pub, this.linkId.length);
+    signedData.set(
+      responderEd25519Pub,
+      this.linkId.length + responderX25519Pub.length,
+    );
+    signedData.set(
+      signalling,
+      this.linkId.length +
+        responderX25519Pub.length +
+        responderEd25519Pub.length,
+    );
+
+    const signature = await this.destination.identity.sign(signedData);
+
+    const proofPayload = new Uint8Array(
+      signature.length + responderX25519Pub.length + signalling.length,
+    );
+    proofPayload.set(signature, 0);
+    proofPayload.set(responderX25519Pub, signature.length);
+    proofPayload.set(signalling, signature.length + responderX25519Pub.length);
+
+    const proofPacket = new Packet({
+      packetType: PacketType.PROOF,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.LRPROOF,
+      payload: proofPayload,
+    });
+    // LRPROOF rides the wire unencrypted, addressed to link_id.
+    await this.transport.sendPacket(proofPacket);
+  }
+
+  // -----------------------------------------------------------------------
+  // LRPROOF validation (initiator side), LINKS.md §6.2
+  // -----------------------------------------------------------------------
+
+  /**
+   * Initiator: validate the responder's LRPROOF, derive session keys, send
+   * LRRTT, and transition to ACTIVE (`RNS/Link.py:401-442`).
+   * @param {Packet} packet
+   */
+  async _handleLRPROOF(packet) {
+    if (!this.destination?.identity) {
+      throw new Error(
+        "Initiator LRPROOF validation requires the responder identity.",
+      );
+    }
+    const data = packet.payload;
+
+    /** @type {Uint8Array} */
+    let signalling = new Uint8Array(0);
+    let confirmedMtu = this.mtu;
+    if (data.length === 64 + 32 + Link.LINK_MTU_SIZE) {
+      signalling = data.subarray(64 + 32);
+      confirmedMtu =
+        (((signalling[0] << 16) + (signalling[1] << 8) + signalling[2]) &
+          0x1fffff) >>>
+        0;
+      const mode = (signalling[0] & 0xe0) >> 5;
+      if (mode !== this.mode) {
+        throw new TypeError(
+          `Invalid link mode ${mode} in LRPROOF (expected ${this.mode})`,
+        );
+      }
+    } else if (data.length !== 64 + 32) {
+      throw new Error(`Invalid LRPROOF body length ${data.length}`);
+    }
+
+    const signature = data.subarray(0, 64);
+    const responderX25519Pub = data.subarray(64, 96);
+
+    // signed_data = link_id || responder_X25519 || responder_Ed25519 || [signalling]
+    // The responder's long-term Ed25519 pub is known from the prior announce
+    // (destination.identity). RNS/Link.py:417.
+    const responderEd25519Pub = (
+      await this.destination.identity.getPublicKey()
+    ).subarray(32, 64);
+
+    const signedData = new Uint8Array(
+      this.linkId.length +
+        responderX25519Pub.length +
+        responderEd25519Pub.length +
+        signalling.length,
+    );
+    signedData.set(this.linkId, 0);
+    signedData.set(responderX25519Pub, this.linkId.length);
+    signedData.set(
+      responderEd25519Pub,
+      this.linkId.length + responderX25519Pub.length,
+    );
+    signedData.set(
+      signalling,
+      this.linkId.length +
+        responderX25519Pub.length +
+        responderEd25519Pub.length,
+    );
+
+    const valid = await this.destination.identity.validate(
+      signature,
+      signedData,
+    );
+    if (!valid) {
+      throw new Error("LRPROOF signature verification failed.");
+    }
+
+    this.peerX25519Pub = responderX25519Pub;
+    await this._deriveKeys(responderX25519Pub);
+    this.mtu = confirmedMtu;
+    this.rtt = (Date.now() - this.requestTimeMs) / 1000;
+    this._updateKeepalive();
+
+    await this._sendLRRTT();
+
+    this.status = LinkStatus.ACTIVE;
+    this.dispatchEvent(
+      new CustomEvent("established", { detail: { link: this.linkId } }),
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // LRRTT (initiator → responder), LINKS.md §6.4.2
+  // -----------------------------------------------------------------------
+
+  /**
+   * Initiator: send the RTT packet. Body is `umsgpack.packb(rtt_seconds)` (a
+   * 9-byte msgpack float64), Token-encrypted with the link session key.
+   */
+  async _sendLRRTT() {
+    const body = MicroMsgPack.encode(this.rtt);
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.LRRTT,
+      payload: body,
+    });
+    await this.send(packet);
+  }
+
+  /**
+   * Responder: process the initiator's LRRTT, settle RTT, transition to ACTIVE
+   * (`RNS/Link.py:534-553`). This is the only path that fires `established` on
+   * the responder side.
+   * @param {Packet} packet
+   */
+  async _handleLRRTT(packet) {
+    // packet.payload is already decrypted by _processPacket.
+    const reportedRtt = MicroMsgPack.decode(
+      /** @type {Uint8Array} */ (packet.payload),
+    );
+    const measuredRtt = (Date.now() - this.requestTimeMs) / 1000;
+    this.rtt = Math.max(measuredRtt, reportedRtt);
+    this._updateKeepalive();
+
+    this.status = LinkStatus.ACTIVE;
+    this.dispatchEvent(
+      new CustomEvent("established", { detail: { link: this.linkId } }),
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // Regular link DATA proofs (LINKS.md §6.5)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Returns the Ed25519 private key used to sign link DATA proofs.
+   * Responder signs with its long-term identity key; initiator signs with its
+   * fresh ephemeral Ed25519 key (LINKS.md §6.5.1).
+   * @returns {Promise<CryptoKey>}
+   */
+  async _linkSigningKey() {
+    if (this.initiator) {
+      if (!this.ephemeralEd25519Priv) {
+        throw new Error("Initiator link has no ephemeral Ed25519 signing key.");
+      }
+      return this.ephemeralEd25519Priv;
+    }
+    if (!this.destination?.identity?.ed25519Priv) {
+      throw new Error("Responder link has no identity signing key.");
+    }
+    return this.destination.identity.ed25519Priv;
+  }
+
+  /**
+   * Emits the 96-byte explicit-form PROOF for a DATA packet we just received.
+   *   proof_data = packet_hash(32) || signature(64)
+   * Addressed to link_id, unencrypted. Always explicit on links (§6.5.2).
+   * @param {Packet} packet
+   */
+  async _provePacket(packet) {
+    const packetHash = await packet.getHash();
+    const signingKey = await this._linkSigningKey();
+    const signature = new Uint8Array(
+      await crypto.subtle.sign(
+        "Ed25519",
+        signingKey,
+        /** @type {any} */ (packetHash),
+      ),
+    );
+
+    const proofPayload = new Uint8Array(96);
+    proofPayload.set(packetHash, 0);
+    proofPayload.set(signature, 32);
+
+    const proofPacket = new Packet({
+      packetType: PacketType.PROOF,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.NONE,
+      payload: proofPayload,
+    });
+    // Link PROOFs are unencrypted (RNS/Packet.py:200-201).
+    await this.transport.sendPacket(proofPacket);
+  }
+
+  // -----------------------------------------------------------------------
+  // KEEPALIVE (LINKS.md §6.7.1)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Sends a KEEPALIVE packet. Ping body is 0xFF, pong is 0xFE. KEEPALIVE bodies
+   * are NOT Token-encrypted (§6.7.1).
+   * @param {boolean} isPing
+   */
+  async _sendKeepalive(isPing) {
+    const packet = new Packet({
       packetType: PacketType.DATA,
       destinationType: DestType.LINK,
       destinationHash: this.linkId,
       contextByte: ContextType.KEEPALIVE,
-      payload: payload,
+      payload: new Uint8Array([isPing ? 0xff : 0xfe]),
     });
-
-    await this.send(keepalivePacket);
+    // KEEPALIVE is unencrypted — bypass Link.send's token requirement.
+    await this.transport.sendPacket(packet);
   }
 
+  // -----------------------------------------------------------------------
+  // Teardown (LINKS.md §6.7.3)
+  // -----------------------------------------------------------------------
+
   /**
-   * Updates keepalive and staleness parameters based on RTT.
-   * @private
+   * Cleanly tears down the link by sending a LINKCLOSE whose encrypted body is
+   * the link_id, then transitioning to CLOSED locally.
    */
-  _updateKeepalive() {
-    const KEEPALIVE_MAX = 360;
-    const KEEPALIVE_MAX_RTT = 1.75;
-    const STALE_FACTOR = 2;
-    const KEEPALIVE_MIN = 5;
-
-    this.keepaliveInterval = Math.max(
-      Math.min(this.rtt * (KEEPALIVE_MAX / KEEPALIVE_MAX_RTT), KEEPALIVE_MAX),
-      KEEPALIVE_MIN,
+  async teardown() {
+    if (this.status === LinkStatus.CLOSED) return;
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.LINKCLOSE,
+      payload: this.linkId,
+    });
+    await this.send(packet);
+    this.teardownReason = this.initiator
+      ? LinkTeardownReason.INITIATOR_CLOSED
+      : LinkTeardownReason.DESTINATION_CLOSED;
+    this.status = LinkStatus.CLOSED;
+    this.dispatchEvent(
+      new CustomEvent("close", { detail: { link: this.linkId } }),
     );
-    this.staleTime = this.keepaliveInterval * STALE_FACTOR;
   }
 
   /**
+   * Receiver side of LINKCLOSE: decrypt, verify body equals link_id, close.
+   * @param {Packet} packet
+   */
+  async _handleLinkClose(packet) {
+    // packet.payload is already decrypted by _processPacket; the sole auth
+    // check is plaintext == link_id (RNS/Link.py:713).
+    const plaintext = /** @type {Uint8Array} */ (packet.payload);
+    if (plaintext.length !== this.linkId.length) return;
+    let diff = 0;
+    for (let i = 0; i < plaintext.length; i++)
+      diff |= plaintext[i] ^ this.linkId[i];
+    if (diff !== 0) return; // auth check failed; ignore
+    this.teardownReason = this.initiator
+      ? LinkTeardownReason.DESTINATION_CLOSED
+      : LinkTeardownReason.INITIATOR_CLOSED;
+    this.status = LinkStatus.CLOSED;
+    this.dispatchEvent(
+      new CustomEvent("close", { detail: { link: this.linkId } }),
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // LINKIDENTIFY (LINKS.md §6.7.6)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Initiator: prove which long-term identity owns this link to the responder.
+   *
+   * Must be called AFTER the link is ACTIVE and BEFORE sending any application
+   * DATA. This is load-bearing for Python-LXMF interop: Python's LXMRouter does
+   * not install its link-data listener until it has processed LINKIDENTIFY, so a
+   * DATA/RESOURCE sent before LINKIDENTIFY is silently dropped on the Python
+   * side. Wire body (link-encrypted):
+   *
+   *   public_key(64) || signature(64)
+   *
+   * where `signature = identity.sign(link_id || public_key)` (`RNS/Link.py:459-475`).
+   *
+   * @param {import("../core/identity.js").Identity} identity - The initiator's long-term identity.
+   */
+  async identify(identity) {
+    if (!this.initiator || this.status !== LinkStatus.ACTIVE) {
+      throw new Error(
+        "identify() can only be called by an ACTIVE initiator link.",
+      );
+    }
+    const publicKey = await identity.getPublicKey();
+    const signedData = new Uint8Array(this.linkId.length + publicKey.length);
+    signedData.set(this.linkId, 0);
+    signedData.set(publicKey, this.linkId.length);
+    const signature = await identity.sign(signedData);
+
+    const payload = new Uint8Array(publicKey.length + signature.length);
+    payload.set(publicKey, 0);
+    payload.set(signature, publicKey.length);
+
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.LINKIDENTIFY,
+      payload,
+    });
+    await this.send(packet);
+  }
+
+  /**
+   * Responder: verify an initiator's LINKIDENTIFY and record the remote identity.
+   *
+   * Body = public_key(64) || signature(64), where signature is over
+   * `link_id || public_key`. The whole packet is link-encrypted.
+   * @param {Packet} packet
+   */
+  async _handleIdentify(packet) {
+    const { Identity } = await import("../core/identity.js");
+    // packet.payload is already decrypted by _processPacket.
+    const plaintext = /** @type {Uint8Array} */ (packet.payload);
+    if (plaintext.length !== 128) return;
+    const publicKey = plaintext.subarray(0, 64);
+    const signature = plaintext.subarray(64, 128);
+
+    const signedData = new Uint8Array(this.linkId.length + publicKey.length);
+    signedData.set(this.linkId, 0);
+    signedData.set(publicKey, this.linkId.length);
+
+    const peerIdentity = await Identity.fromPublicKey(publicKey);
+    const valid = await peerIdentity.validate(signature, signedData);
+    if (!valid) return;
+
+    this.remoteIdentity = peerIdentity;
+    this.dispatchEvent(
+      new CustomEvent("identify", {
+        detail: { identity: peerIdentity, link: this.linkId },
+      }),
+    );
+  }
+
+  // -----------------------------------------------------------------------
+  // Resources ( LXMF RESOURCE_ADV / RESOURCE_REQ )
+  // -----------------------------------------------------------------------
+
+  /**
+   * Advertises a resource over the link and parks its payload for a later
+   * RESOURCE_REQ. Returns the 32-byte resource hash.
+   * @param {Uint8Array} data
+   * @returns {Promise<Uint8Array>}
+   */
+  async sendResourceAdvertisement(data) {
+    const dataHash = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", /** @type {any} */ (data)),
+    );
+    // RESOURCE_ADV payload: hash(32) || size_be64(8)
+    const sizeBuffer = new ArrayBuffer(8);
+    new DataView(sizeBuffer).setBigUint64(0, BigInt(data.length), false);
+    const adv = new Uint8Array(40);
+    adv.set(dataHash, 0);
+    adv.set(new Uint8Array(sizeBuffer), 32);
+    this.pendingResources.set(toHex(dataHash), data);
+
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.RESOURCE_ADV,
+      payload: adv,
+    });
+    await this.send(packet);
+    return dataHash;
+  }
+
+  /**
+   * Registers a resource to receive incoming parts dispatched via the link's
+   * `resource` event.
    * @param {any} resource
    */
   registerIncomingResource(resource) {
@@ -286,261 +947,60 @@ export class Link extends EventTarget {
     });
   }
 
-  /**
-   * Encrypts and sends a packet.
-   * CRITICAL FIX: Forces link-layer routing.
-   * @param {Packet} packet
-   */
-  async send(packet) {
-    const isUnencrypted =
-      packet.packetType === PacketType.LINKREQUEST ||
-      (packet.packetType === PacketType.PROOF &&
-        packet.contextByte === ContextType.LRPROOF);
-
-    if (!this.token && !isUnencrypted) {
-      throw new Error("Link token not available. Did you call deriveKeys()?");
-    }
-    if (!this.transport) {
-      throw new Error("Link transport not available.");
-    }
-
-    let payload = packet.payload;
-    if (
-      !isUnencrypted &&
-      packet.packetType !== PacketType.PROOF &&
-      !Link.UNENCRYPTED_CONTEXTS.has(packet.contextByte)
-    ) {
-      log("Link", `Encrypting packet ${getEnumName(PacketType, packet.packetType)} (ctx ${getEnumName(ContextType, packet.contextByte)})`);
-      payload = await this.encrypt(/** @type {any} */ (packet.payload));
-    }
-
-    // FIX: Regardless of what the application requested, if this packet
-    // goes over a Link, the outer transport frame MUST be addressed to the Link.
-    // This prevents the "Ratchet HMAC" error on the receiving end.
-    const encryptedPacket = new Packet({
-      headerType: packet.headerType,
-      hops: packet.hops,
-      transportType: packet.transportType,
-      destinationType: DestType.LINK,
-      destinationHash: this.linkId,
-      packetType: packet.packetType,
-      contextFlag: packet.contextFlag,
-      contextByte: packet.contextByte,
-      payload: payload,
-      transportId: packet.transportId,
-    });
-
-    await this.transport.sendPacket(encryptedPacket);
-  }
+  // -----------------------------------------------------------------------
+  // Inbound dispatch
+  // -----------------------------------------------------------------------
 
   /**
-   * Initiates a Resource transfer over the link.
-   * LXMF strictly requires all link-based payloads to be wrapped as Resources.
-   * @param {Uint8Array} msgpackData - The serialized LXMF message buffer
-   * @returns {Promise<Uint8Array>} The 32-byte resource hash
-   */
-  async sendResourceAdvertisement(msgpackData) {
-    // 1. Calculate SHA-256 hash of the payload
-    const dataHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", /** @type {any} */ (msgpackData)),
-    );
-
-    // 2. Pack the payload size as a 64-bit big-endian integer (8 bytes)
-    const sizeBuffer = new ArrayBuffer(8);
-    const sizeView = new DataView(sizeBuffer);
-    sizeView.setBigUint64(0, BigInt(msgpackData.length), false);
-
-    // 3. Construct Reticulum RESOURCE_ADV payload: [32-byte hash][8-byte size]
-    const advPayload = new Uint8Array(40);
-    advPayload.set(dataHash, 0);
-    advPayload.set(new Uint8Array(sizeBuffer), 32);
-
-    // 4. Save the payload in memory to respond when NomadNet requests it
-    this.pendingResources.set(toHex(dataHash), msgpackData);
-
-    // 5. Send the Advertisement packet over the link
-    const advPacket = new Packet({
-      packetType: PacketType.DATA,
-      destinationType: DestType.LINK,
-      destinationHash: this.linkId,
-      contextByte: ContextType.RESOURCE_ADV,
-      payload: advPayload,
-    });
-
-    await this.send(advPacket);
-
-    return dataHash;
-  }
-
-  /**
-   * Proves the identity of this link.
-   */
-  async prove() {
-    if ((!this.sigPrv && !this.sigPubBytes) || !this.destination?.identity) {
-      throw new Error(
-        "Link identity proof requires an identity's signing key.",
-      );
-    }
-
-    const signallingBytes = this.signallingBytes(this.mtu, this.mode);
-    const pubBytes = await exportPublicKey(this.ephemeralKeyPair.publicKey);
-
-    const signedData = new Uint8Array(
-      this.linkId.length +
-        pubBytes.length +
-        this.sigPubBytes.length +
-        signallingBytes.length,
-    );
-    signedData.set(this.linkId, 0);
-    signedData.set(pubBytes, this.linkId.length);
-    signedData.set(this.sigPubBytes, this.linkId.length + pubBytes.length);
-    signedData.set(
-      signallingBytes,
-      this.linkId.length + pubBytes.length + this.sigPubBytes.length,
-    );
-
-    const signature = await this.destination.identity.sign(signedData);
-
-    const proofPayload = new Uint8Array(
-      signature.length + pubBytes.length + signallingBytes.length,
-    );
-    proofPayload.set(signature, 0);
-    proofPayload.set(pubBytes, signature.length);
-    proofPayload.set(signallingBytes, signature.length + pubBytes.length);
-
-    const proofPacket = new Packet({
-      packetType: PacketType.PROOF,
-      destinationType: DestType.LINK,
-      destinationHash: this.linkId,
-      contextByte: ContextType.LRPROOF,
-      payload: proofPayload,
-    });
-
-    // Proof packets are not encrypted
-    await this.transport.sendPacket(proofPacket);
-  }
-
-  /**
-   * @param {number} mtu
-   * @param {number} mode
-   * @returns {Uint8Array}
-   */
-  signallingBytes(mtu, mode) {
-    const MTU_BYTEMASK = 0x1fffff;
-    const MODE_BYTEMASK = 0xe0;
-    const signallingValue =
-      (mtu & MTU_BYTEMASK) + (((mode << 5) & MODE_BYTEMASK) << 16);
-    const buffer = new ArrayBuffer(4);
-    const view = new DataView(buffer);
-    view.setUint32(0, signallingValue, false);
-    return new Uint8Array(buffer.slice(1));
-  }
-
-  /**
-   * @param {Uint8Array} data
-   * @return {Promise<Uint8Array>}
-   */
-  async encrypt(data) {
-    return await this.token.encrypt(/** @type {any} */ (data));
-  }
-
-  /**
-   * @param {Uint8Array} data
-   * @return {Promise<Uint8Array>}
-   */
-  async sign(data) {
-    if (!this.sigPrv || !this.sigPubBytes) {
-      throw new Error("Link proof requires a signing key.");
-    }
-    if (this.sigPrv) {
-      const signature = await crypto.subtle.sign(
-        "Ed25519",
-        this.sigPrv,
-        /** @type {any} */ (data),
-      );
-      return new Uint8Array(signature);
-    }
-  }
-
-  /**
-   * @param {Packet} packet
-   */
-  async provePacket(packet) {
-    const packetHash = await packet.getHash();
-    const signature = await this.sign(packetHash);
-
-    const proofPayload = new Uint8Array(96);
-    proofPayload.set(packetHash, 0);
-    proofPayload.set(signature, 32);
-    const proofPacket = new Packet({
-      packetType: PacketType.PROOF,
-      destinationType: DestType.LINK,
-      destinationHash: this.linkId,
-      payload: proofPayload,
-    });
-    // Packet PROOFs are not encrypted
-    await this.transport.sendPacket(proofPacket);
-  }
-
-  /**
+   * Queues and processes an inbound packet addressed to this link.
    * @param {Packet} packet
    */
   async receive(packet) {
     this._rxQueue = this._rxQueue
       .then(() => this._processPacket(packet))
       .catch((err) => {
-        console.error("[LINK] Error processing packet in queue:", err);
+        log("Link", `Error processing packet: ${err}`, LogLevel.ERROR);
       });
     await this._rxQueue;
   }
 
   /**
-   * @private
    * @param {Packet} packet
+   * @private
    */
   async _processPacket(packet) {
-    const isUnencrypted =
-      packet.packetType === PacketType.LINKREQUEST ||
-      (packet.packetType === PacketType.PROOF &&
-        packet.contextByte === ContextType.LRPROOF) ||
-      (packet.packetType === PacketType.PROOF &&
-        packet.contextByte === ContextType.NONE);
-
-    if (!this.token && !isUnencrypted) {
-      throw new Error("Link token not available. Did you call deriveKeys()?");
-    }
     log(
       "Link",
       `Processing ${getEnumName(PacketType, packet.packetType)} packet (ctx ${getEnumName(ContextType, packet.contextByte)}) for link ${toHex(this.linkId)}`,
       LogLevel.DEBUG,
     );
-
     this.lastInboundTime = Date.now();
 
-    const unencryptedContexts = new Set([
-      ContextType.RESOURCE,
-      ContextType.RESOURCE_ADV,
-      ContextType.RESOURCE_HMU,
-      ContextType.RESOURCE_ICL,
-      ContextType.RESOURCE_RCL,
-      ContextType.RESOURCE_PRF,
-      ContextType.KEEPALIVE,
-      ContextType.LINKIDENTIFY,
-      ContextType.LINKCLOSE,
-      ContextType.LRRTT,
-      ContextType.LRPROOF,
-    ]);
+    // LRPROOF is processed before keys exist (it's the handshake step that
+    // triggers key derivation on the initiator side).
+    if (
+      packet.packetType === PacketType.PROOF &&
+      packet.contextByte === ContextType.LRPROOF
+    ) {
+      if (this.initiator) await this._handleLRPROOF(packet);
+      return;
+    }
 
-    let decryptedPayload;
-    if (isUnencrypted || unencryptedContexts.has(packet.contextByte)) {
-      decryptedPayload = packet.payload;
-    } else {
-      decryptedPayload = await /** @type {any} */ (this.token).decrypt(
-        packet.payload,
+    const unencrypted = isLinkPacketUnencrypted(
+      packet.packetType,
+      packet.contextByte,
+    );
+    let payload = packet.payload;
+    if (!unencrypted) {
+      if (!this.token) {
+        throw new Error("Encrypted link packet received before handshake.");
+      }
+      payload = await this.token.decrypt(
+        /** @type {Uint8Array} */ (packet.payload),
       );
     }
 
-    const decryptedPacket = new Packet({
+    const decrypted = new Packet({
       headerType: packet.headerType,
       hops: packet.hops,
       transportType: packet.transportType,
@@ -549,43 +1009,36 @@ export class Link extends EventTarget {
       contextFlag: packet.contextFlag,
       destinationHash: packet.destinationHash,
       contextByte: packet.contextByte,
-      payload: decryptedPayload,
+      payload,
       transportId: packet.transportId,
       raw: packet.raw,
     });
 
-    switch (decryptedPacket.contextByte) {
+    switch (decrypted.contextByte) {
       case ContextType.NONE:
-        if (decryptedPacket.packetType === PacketType.LINKREQUEST) {
-          await this.handleLinkRequest(decryptedPacket);
-          return;
-        }
-        if (this.transport && decryptedPacket.packetType !== PacketType.PROOF) {
-          await this.provePacket(packet);
-        }
-        if (decryptedPacket.packetType !== PacketType.PROOF) {
+        if (decrypted.packetType === PacketType.DATA) {
+          // Emit the explicit-form PROOF receipt for this DATA packet.
+          if (this.transport) await this._provePacket(packet);
           this.dispatchEvent(
             new CustomEvent("data", {
-              detail: { packet: decryptedPacket, link: this.linkId },
+              detail: { packet: decrypted, link: this.linkId },
             }),
           );
-        } else {
+        } else if (decrypted.packetType === PacketType.PROOF) {
           this.dispatchEvent(
-            new CustomEvent("proof", { detail: { packet: decryptedPacket } }),
+            new CustomEvent("proof", { detail: { packet: decrypted } }),
           );
         }
         break;
 
       case ContextType.RESOURCE_REQ: {
-        // When NomadNet receives your ADV, it responds here.
-        // Extract the requested hash and begin sending MTU-sized chunks.
-        const requestedHashHex = toHex(decryptedPacket.payload);
+        const requestedHashHex = toHex(decrypted.payload);
         const resourceData = this.pendingResources.get(requestedHashHex);
         if (resourceData) {
-          console.log(
-            `[LINK] Remote requested resource ${requestedHashHex}, starting transfer...`,
+          log(
+            "Link",
+            `Remote requested resource ${requestedHashHex}; transfer not yet implemented`,
           );
-          // TODO: Implement the chunking loop using ContextType.RESOURCE
         }
         break;
       }
@@ -597,322 +1050,89 @@ export class Link extends EventTarget {
       case ContextType.RESOURCE_RCL:
       case ContextType.RESOURCE_PRF:
         this.dispatchEvent(
-          new CustomEvent("resource", { detail: { packet: decryptedPacket } }),
+          new CustomEvent("resource", { detail: { packet: decrypted } }),
         );
         break;
 
       case ContextType.KEEPALIVE:
+        // Responder answers a 0xFF ping with a 0xFE pong.
         if (
           !this.initiator &&
-          decryptedPacket.payload.length === 1 &&
-          decryptedPacket.payload[0] === 0xff
+          decrypted.payload.length === 1 &&
+          decrypted.payload[0] === 0xff
         ) {
-          const pongPacket = new Packet({
-            packetType: PacketType.DATA,
-            destinationType: DestType.LINK,
-            destinationHash: this.linkId,
-            contextByte: ContextType.KEEPALIVE,
-            payload: new Uint8Array([0xfe]),
-          });
-          await this.send(pongPacket);
+          await this._sendKeepalive(false);
         }
         this.dispatchEvent(
-          new CustomEvent("keepalive", { detail: { packet: decryptedPacket } }),
+          new CustomEvent("keepalive", { detail: { packet: decrypted } }),
         );
-        break;
-
-      case ContextType.LRPROOF:
-        await this.handleLRPROOF(decryptedPacket);
         break;
 
       case ContextType.LRRTT:
-        await this.handleLRRTT(decryptedPacket);
+        if (!this.initiator) await this._handleLRRTT(decrypted);
         break;
 
-      case ContextType.LINKIDENTIFY: {
-        const peerPublicKey = decryptedPacket.payload;
-        const peerIdentity = await Identity.fromPublicKey(peerPublicKey);
-        const identityHash = await Identity.truncatedHash(
-          peerIdentity.publicKey,
-        );
-        const packetHash = await Identity.truncatedHash(packet.raw);
-
-        await Destination.remember(packetHash, identityHash, peerPublicKey);
-
-        this.dispatchEvent(
-          new CustomEvent("identify", {
-            detail: {
-              identity: peerIdentity,
-              link: this.linkId,
-            },
-          }),
-        );
+      case ContextType.LINKCLOSE:
+        await this._handleLinkClose(decrypted);
         break;
-      }
 
-      case ContextType.LINKCLOSE: {
-        this.dispatchEvent(
-          new CustomEvent("close", { detail: { packet: decryptedPacket } }),
-        );
+      case ContextType.LINKIDENTIFY:
+        await this._handleIdentify(decrypted);
         break;
-      }
 
       default:
-        console.warn(
-          `[LINK] Ignored packet with unknown context: 0x${decryptedPacket.contextByte.toString(16)}`,
+        log(
+          "Link",
+          `Ignored packet with unknown context: 0x${decrypted.contextByte.toString(16)}`,
+          LogLevel.WARN,
         );
     }
   }
 
-  async deriveKeys() {
-    log("Link", "Deriving keys");
-    const peerPub = await crypto.subtle.importKey(
-      "raw",
-      this.peerPubBytes,
-      { name: "X25519" },
-      true,
-      [],
-    );
+  // -----------------------------------------------------------------------
+  // Watchdog (LINKS.md §6.7)
+  // -----------------------------------------------------------------------
 
-    const sharedBits = await crypto.subtle.deriveBits(
-      {
-        name: "X25519",
-        public: peerPub,
-      },
-      this.ephemeralKeyPair.privateKey,
-      256,
-    );
-    const sharedSecret = new Uint8Array(sharedBits);
-
-    const derivedKey = await hkdf(
-      sharedSecret,
-      /** @type {any} */ (this.linkId),
-      new Uint8Array(0),
-      64,
-    );
-
-    this.derivedKey = derivedKey;
-    this.token = new Token(derivedKey);
+  _startWatchdog() {
+    if (this._watchdogTimer) return;
+    this._watchdogTimer = setInterval(() => this._watchdogJob(), 1000);
   }
 
-  /**
-   * Derives keys using the responder's ephemeral public key.
-   * @param {Uint8Array} responderX25519Pub
-   */
-  async deriveKeysFromEphemeral(responderX25519Pub) {
-    log("Link", "Deriving keys from ephemeral");
-    const peerPub = await crypto.subtle.importKey(
-      "raw",
-      responderX25519Pub,
-      { name: "X25519" },
-      true,
-      [],
-    );
-
-    const sharedBits = await crypto.subtle.deriveBits(
-      {
-        name: "X25519",
-        public: peerPub,
-      },
-      this.ephemeralKeyPair.privateKey,
-      256,
-    );
-    const sharedSecret = new Uint8Array(sharedBits);
-
-    const derivedKey = await hkdf(
-      sharedSecret,
-      /** @type {any} */ (this.linkId),
-      new Uint8Array(0),
-      64,
-    );
-
-    this.derivedKey = derivedKey;
-    this.token = new Token(derivedKey);
-  }
-
-  /**
-   * Initiates the handshake.
-   */
-  async startHandshake() {
-    if (this.status !== LinkStatus.PENDING) {
-      throw new Error("Handshake can only be started from PENDING status.");
+  _stopWatchdog() {
+    if (this._watchdogTimer) {
+      clearInterval(this._watchdogTimer);
+      this._watchdogTimer = null;
     }
-
-    this.status = LinkStatus.HANDSHAKE;
-
-    const signalling = this.signallingBytes(this.mtu, this.mode);
-    const x25519Pub = await exportPublicKey(this.ephemeralKeyPair.publicKey);
-    const ed25519Pub = this.ephemeralEd25519KeyPair
-      ? await exportPublicKey(this.ephemeralEd25519KeyPair.publicKey)
-      : new Uint8Array(32);
-
-    const payload = new Uint8Array(32 + 32 + 3);
-    payload.set(x25519Pub, 0);
-    payload.set(ed25519Pub, 32);
-    payload.set(signalling, 64);
-
-    const packet = new Packet({
-      packetType: PacketType.LINKREQUEST,
-      destinationType: DestType.LINK,
-      destinationHash: this.linkId,
-      contextByte: ContextType.NONE,
-      payload: payload,
-    });
-
-    await this.send(packet);
   }
 
-  /**
-   * Handles an incoming LINKREQUEST.
-   * @param {Packet} packet
-   */
-  async handleLinkRequest(packet) {
-    const payload = packet.payload;
-    if (payload.length < 67) {
-      throw new Error("Invalid LINKREQUEST payload length.");
+  _watchdogJob() {
+    log("Link", `Watchdog tick for ${toHex(this.linkId)}`, LogLevel.EXTREME);
+    const now = Date.now();
+    if (now >= this.lastInboundTime + this.staleTime * 1000) {
+      this.teardownReason = LinkTeardownReason.TIMEOUT;
+      this.status = LinkStatus.CLOSED;
+      this.dispatchEvent(
+        new CustomEvent("close", { detail: { link: this.linkId } }),
+      );
+      return;
     }
-
-    const initiatorX25519Pub = payload.slice(0, 32);
-    const initiatorEd25519Pub = payload.slice(32, 64);
-    const signalling = payload.slice(64, 67);
-
-    await this.deriveKeysFromEphemeral(initiatorX25519Pub);
-
-    // Parse signalling
-    const signallingValue =
-      (signalling[0] << 16) | (signalling[1] << 8) | signalling[2];
-    const mode = (signallingValue >> 21) & 0x07;
-    const mtu = signallingValue & 0x1fffff;
-    this.mode = mode;
-    this.mtu = mtu;
-
-    const responderX25519Pub = await exportPublicKey(
-      this.ephemeralKeyPair.publicKey,
-    );
-
-    const signedData = new Uint8Array(
-      this.linkId.length + 32 + 32 + signalling.length,
-    );
-    signedData.set(this.linkId, 0);
-    signedData.set(responderX25519Pub, this.linkId.length);
-    signedData.set(this.sigPubBytes, this.linkId.length + 32);
-    signedData.set(signalling, this.linkId.length + 32 + 32);
-
-    const signature = await this.destination.identity.sign(signedData);
-
-    const proofPayload = new Uint8Array(64 + 32 + 3);
-    proofPayload.set(signature, 0);
-    proofPayload.set(responderX25519Pub, 64);
-    proofPayload.set(signalling, 96);
-
-    const proofPacket = new Packet({
-      packetType: PacketType.PROOF,
-      destinationType: DestType.LINK,
-      destinationHash: this.linkId,
-      contextByte: ContextType.LRPROOF,
-      payload: proofPayload,
-    });
-
-    await this.send(proofPacket);
-    this.status = LinkStatus.HANDSHAKE;
+    if (
+      this.initiator &&
+      now >= this.lastInboundTime + this.keepaliveInterval * 1000
+    ) {
+      this._sendKeepalive(true).catch((e) =>
+        log("Link", `Keepalive failed: ${e}`, LogLevel.ERROR),
+      );
+      this.lastInboundTime = now;
+    }
   }
 
-  /**
-   * Handles an incoming LRPROOF.
-   * @param {Packet} packet
-   */
-  async handleLRPROOF(packet) {
-    const payload = packet.payload;
-    if (payload.length < 99) {
-      throw new Error("Invalid LRPROOF payload length.");
-    }
-
-    const signature = payload.slice(0, 64);
-    const responderX25519Pub = payload.slice(64, 96);
-    const signalling = payload.slice(96, 99);
-
-    // Verify signature.
-    const x25519Pub = await exportPublicKey(this.ephemeralKeyPair.publicKey);
-    const signedData = new Uint8Array(32 + 32 + 3);
-    signedData.set(x25519Pub, 0);
-    signedData.set(responderX25519Pub, 32);
-    signedData.set(signalling, 64);
-
-    const isValid = await this.destination.identity.validate(
-      signature,
-      signedData,
+  _updateKeepalive() {
+    const interval = this.rtt * (Link.KEEPALIVE_MAX / Link.KEEPALIVE_MAX_RTT);
+    this.keepaliveInterval = Math.max(
+      Math.min(interval, Link.KEEPALIVE_MAX),
+      Link.KEEPALIVE_MIN,
     );
-    if (!isValid) {
-      throw new Error("LRPROOF signature verification failed.");
-    }
-
-    await this.deriveKeysFromEphemeral(responderX25519Pub);
-
-    // Parse signalling
-    const signallingValue =
-      (signalling[0] << 16) | (signalling[1] << 8) | signalling[2];
-    const mode = (signallingValue >> 21) & 0x07;
-    const mtu = signallingValue & 0x1fffff;
-    this.mode = mode;
-    this.mtu = mtu;
-
-    // Send LRRTT
-    await this.sendLRRTT();
-
-    this.status = LinkStatus.ACTIVE;
-    this._updateKeepalive();
-    this.dispatchEvent(
-      new CustomEvent("established", { detail: { link: this.linkId } }),
-    );
-  }
-
-  /**
-   * Handles an incoming LRRTT.
-   * @param {Packet} packet
-   */
-  async handleLRRTT(packet) {
-    const payload = packet.payload;
-    if (payload.length < 8) {
-      throw new Error("Invalid LRRTT payload length.");
-    }
-
-    const view = new DataView(
-      payload.buffer,
-      payload.byteOffset,
-      payload.byteLength,
-    );
-    const remoteTimestamp = view.getBigUint64(0, false);
-    const localTimestamp = BigInt(Date.now());
-    this.rtt = Number(localTimestamp - remoteTimestamp);
-
-    this.status = LinkStatus.ACTIVE;
-    this._updateKeepalive();
-    this.dispatchEvent(
-      new CustomEvent("established", { detail: { link: this.linkId } }),
-    );
-  }
-
-  /**
-   * Sends an LRRTT packet.
-   */
-  async sendLRRTT() {
-    const timestamp = BigInt(Date.now());
-    const payload = new Uint8Array(8);
-    const view = new DataView(
-      payload.buffer,
-      payload.byteOffset,
-      payload.byteLength,
-    );
-    view.setBigUint64(0, timestamp, false);
-
-    const packet = new Packet({
-      packetType: PacketType.DATA,
-      destinationType: DestType.LINK,
-      destinationHash: this.linkId,
-      contextByte: ContextType.LRRTT,
-      payload: payload,
-    });
-
-    await this.send(packet);
+    this.staleTime = this.keepaliveInterval * Link.STALE_FACTOR;
   }
 }

@@ -113,45 +113,50 @@ export class LXMRouter extends EventTarget {
             this.processPendingMessages(link.linkId);
           }, 10000);
 
-
           // Listen for identity on the link
-          link.addEventListener("identify", async (/** @type {any} */ event) => {
-            try {
-              if (timer) {
-                clearTimeout(timer);
+          link.addEventListener(
+            "identify",
+            async (/** @type {any} */ event) => {
+              try {
+                if (timer) {
+                  clearTimeout(timer);
+                }
+
+                const peerIdentity = event.detail.identity;
+                const identityHash = await Identity.truncatedHash(
+                  peerIdentity.publicKey,
+                );
+                log(
+                  "LXMF",
+                  `Received LINKIDENTIFY for ${toHex(identityHash)} (${linkHex})`,
+                );
+
+                // 2. CRITICAL: Derive and store by the LXMF Address (sourceHash)
+                const peerDeliveryDest = await Destination.OUT(
+                  "lxmf.delivery",
+                  DestType.SINGLE,
+                  peerIdentity,
+                  this.rns,
+                );
+
+                // Map the LXMF Address to the Identity Key
+                await Destination.remember(
+                  identityHash,
+                  peerDeliveryDest.destinationHash,
+                  peerIdentity.publicKey,
+                );
+
+                this.pendingLinks.delete(linkHex);
+                this.processPendingMessages(link.linkId);
+              } catch (e) {
+                log(
+                  "ROUTER",
+                  `Failed to derive LXMF destination for peer from link: ${e}`,
+                  LogLevel.ERROR,
+                );
               }
-
-              const peerIdentity = event.detail.identity;
-              const identityHash = await Identity.truncatedHash(
-                peerIdentity.publicKey,
-              );
-              log("LXMF", `Received LINKIDENTIFY for ${toHex(identityHash)} (${linkHex})`);
-
-              // 2. CRITICAL: Derive and store by the LXMF Address (sourceHash)
-              const peerDeliveryDest = await Destination.OUT(
-                "lxmf.delivery",
-                DestType.SINGLE,
-                peerIdentity,
-                this.rns,
-              );
-
-              // Map the LXMF Address to the Identity Key
-              await Destination.remember(
-                identityHash,
-                peerDeliveryDest.destinationHash,
-                peerIdentity.publicKey,
-              );
-
-              this.pendingLinks.delete(linkHex);
-              this.processPendingMessages(link.linkId);
-            } catch (e) {
-              log(
-                "ROUTER",
-                `Failed to derive LXMF destination for peer from link: ${e}`,
-                LogLevel.ERROR,
-              );
-            }
-          });
+            },
+          );
         } catch (e) {
           log(
             "LXMF",
@@ -256,6 +261,20 @@ export class LXMRouter extends EventTarget {
    */
   async send(message, senderIdentity, linkId) {
     const { messageId, wireData } = await message.serialize(senderIdentity);
+    log("LXMF", `DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
+    log("LXMF", `DEBUG: Sending to ${toHex(message.destinationHash)}`);
+
+    // Direct delivery happens over a Link. `createLink()` resolves as soon as
+    // the handshake is *initiated*, but the session token is only derived once
+    // the handshake completes and the Link becomes ACTIVE. Wait for that so we
+    // don't try to encrypt with a token that doesn't exist yet.
+    if (linkId) {
+      const link = this.rns.transport.activeLinks.get(toHex(linkId));
+      if (link) {
+        await link.whenActive();
+      }
+    }
+
     const packet = new Packet({
       packetType: PacketType.DATA,
       contextFlag: true,

@@ -53,8 +53,12 @@ export class Message {
     // Title and content MUST be encoded as msgpack BINARY (bin) types.
     const encoder = new TextEncoder();
     const timestampBytes = MicroMsgPack.encodeFloat64(this.timestamp);
-    const titleBytes = MicroMsgPack.encode(new Uint8Array(encoder.encode(this.title)));
-    const contentBytes = MicroMsgPack.encode(new Uint8Array(encoder.encode(this.content)));
+    const titleBytes = MicroMsgPack.encode(
+      new Uint8Array(encoder.encode(this.title)),
+    );
+    const contentBytes = MicroMsgPack.encode(
+      new Uint8Array(encoder.encode(this.content)),
+    );
     const fieldsBytes = MicroMsgPack.encode(this.fields);
 
     const msgpackPayload = new Uint8Array(

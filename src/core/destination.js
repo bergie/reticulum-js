@@ -3,23 +3,11 @@
  * @description Routing targets (EventTargets)
  */
 
-import {
-  exportPublicKey,
-  generateEd25519KeyPair,
-  generateX25519KeyPair,
-} from "../crypto/keys.js";
-import { Link, LinkEncryption } from "../transport/link.js";
+import { Link } from "../transport/link.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { Identity } from "./identity.js";
-import {
-  ContextType,
-  DestType,
-  HeaderType,
-  Packet,
-  PacketType,
-  TransportType,
-} from "./packet.js";
+import { DestType, Packet, PacketType, TransportType } from "./packet.js";
 
 /**
  * @enum {number}
@@ -303,144 +291,22 @@ export class Destination extends EventTarget {
   }
 
   /**
-   * Requests an encrypted link to this remote destination.
-   * @param {Uint8Array} appData - Optional contextual data (e.g., Graph ID, Auth Token)
-   * @param {number} timeoutMs - How long to wait for the remote node to accept
-   * @returns {Promise<import('../transport/link.js').Link>} Resolves when the secure tunnel is established
+   * Initiates an encrypted link to this remote (OUT) destination.
+   *
+   * Delegates to `Link.initiate`, which generates the ephemeral keypair, builds
+   * and sends the LINKREQUEST, registers the link with the transport, and
+   * resolves once the responder's LRPROOF is validated (link becomes ACTIVE).
+   *
+   * @returns {Promise<import('../transport/link.js').Link>}
    */
-  async createLink(appData = new Uint8Array(0), timeoutMs = 15000) {
+  async createLink() {
     if (this.direction !== Direction.OUT) {
       throw new Error("Can only initiate links to OUT destinations.");
     }
     if (!this.interfaceLayer) {
       throw new Error("Destination not bound to an RNS instance.");
     }
-    if (!this.destinationHash) {
-      throw new Error("Destination hash not computed.");
-    }
-
-    // 1. Generate ephemeral keys first
-    /** @type {{privateKey: CryptoKey, publicKey: CryptoKey}} */
-    const localEphemeralKeyPair = await generateX25519KeyPair();
-    /** @type {CryptoKey} */
-    const localX25519Priv = localEphemeralKeyPair.privateKey;
-    // We also need signing key
-    const localSigningKeyPair = await generateEd25519KeyPair();
-    const localSigningPub = await exportPublicKey(
-      localSigningKeyPair.publicKey,
-    );
-
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.removeEventListener("link_established", onLinkEstablished);
-        this.removeEventListener("link_response", onLinkResponse);
-        reject(new Error("Link request timed out."));
-      }, timeoutMs);
-
-      /** @param {any} event */
-      const onLinkEstablished = (event) => {
-        clearTimeout(timer);
-        this.removeEventListener("link_response", onLinkResponse);
-        resolve(event.detail.link);
-      };
-
-      /** @param {any} event */
-      const onLinkResponse = async (event) => {
-        clearTimeout(timer);
-        this.removeEventListener("link_established", onLinkEstablished);
-
-        try {
-          const { packet } = event.detail;
-          if (packet.packetType !== PacketType.LINKRESPONSE) {
-            throw new Error("Expected LINKRESPONSE packet");
-          }
-
-          const linkId = packet.destinationHash;
-          const peerX25519PubBytes = packet.payload.slice(64, 96);
-          const peerEd25519PubBytes = packet.payload.slice(32, 64);
-
-          const peerX25519Pub = await crypto.subtle.importKey(
-            "raw",
-            peerX25519PubBytes,
-            { name: "X25519" },
-            true,
-            [],
-          );
-
-          const linkKey = await LinkEncryption.deriveLinkKey(
-            localX25519Priv,
-            peerX25519Pub,
-            this.getSalt(),
-          );
-
-          const link = new Link(
-            this,
-            linkId,
-            localEphemeralKeyPair,
-            peerX25519PubBytes,
-            undefined,
-            localSigningKeyPair.privateKey,
-            localSigningPub,
-            this.interfaceLayer.transport,
-            true,
-          );
-          await link.deriveKeys();
-
-          this.dispatchEvent(
-            new CustomEvent("link_established", {
-              detail: { link },
-            }),
-          );
-
-          resolve(link);
-        } catch (e) {
-          reject(e);
-        }
-      };
-
-      this.addEventListener("link_established", onLinkEstablished, {
-        once: true,
-      });
-
-      this.addEventListener("link_response", onLinkResponse, {
-        once: true,
-      });
-
-      (async () => {
-        try {
-          const ed25519 = await generateEd25519KeyPair();
-          const x25519PubBytes = await exportPublicKey(
-            localEphemeralKeyPair.publicKey,
-          );
-          const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
-
-          const payload = new Uint8Array(64 + appData.length);
-          payload.set(x25519PubBytes, 0);
-          payload.set(ed25519PubBytes, 32);
-          payload.set(appData, 64);
-
-          const packet = new Packet({
-            headerType: HeaderType.HEADER_1,
-            hops: 0,
-            transportType: 0,
-            destinationType: this.type,
-            packetType: PacketType.LINKREQUEST,
-            contextFlag: false,
-            /** @type {any} */
-            destinationHash: this.destinationHash,
-            contextByte: 0,
-            payload: payload,
-          });
-
-          await this.interfaceLayer.transport.sendPacket(packet);
-        } catch (e) {
-          clearTimeout(timer);
-          this.removeEventListener("link_established", onLinkEstablished);
-          this.removeEventListener("link_response", onLinkResponse);
-          reject(e);
-        }
-      })();
-    });
+    return await Link.initiate(this, this.interfaceLayer.transport);
   }
 
   /**
@@ -495,119 +361,31 @@ export class Destination extends EventTarget {
   }
 
   /**
-   * Responds to a link request.
+   * Responds to an incoming LINKREQUEST by accepting the link.
+   *
+   * Delegates to `Link.accept`, which derives the link_id, generates the
+   * responder ephemeral key, derives the session keys, builds and sends the
+   * LRPROOF, and registers the link with the transport.
+   *
    * @param {import('../core/packet.js').Packet} requestPacket
-   * @returns {Promise<import('../transport/link.js').Link>} Resolves when the secure tunnel is established
+   * @returns {Promise<import('../transport/link.js').Link>}
    */
   async respondToLinkRequest(requestPacket) {
-    // ---------------------------------------------------------
-    // 1. DERIVE THE LINK ID
-    // Spec: link_id = SHA256(hashable_part_of_LINKREQUEST)[:16]
-    // ---------------------------------------------------------
-    const n = requestPacket.headerType === HeaderType.HEADER_1 ? 2 : 18;
-    const maskedFlag = requestPacket.raw[0] & 0x0f;
-
-    let hashableLength = 1 + requestPacket.raw.length - n;
-
-    // Strip signalling bytes if payload > 64 bytes (Link.ECPUBSIZE)
-    if (requestPacket.payload.length > 64) {
-      const signallingLength = requestPacket.payload.length - 64;
-      hashableLength -= signallingLength;
-    }
-
-    const hashablePart = new Uint8Array(hashableLength);
-    hashablePart[0] = maskedFlag;
-    hashablePart.set(requestPacket.raw.subarray(n, n + hashableLength - 1), 1);
-
-    const linkId = await Identity.truncatedHash(hashablePart);
-
-    // ---------------------------------------------------------
-    // 2. GENERATE EPHEMERAL KEY
-    // ---------------------------------------------------------
-    const ephemeralKey = await generateX25519KeyPair();
-    const ephemeralPubBytes = await exportPublicKey(ephemeralKey.publicKey); // 32 bytes
-
-    // ---------------------------------------------------------
-    // 3. CONSTRUCT SIGNED DATA
-    // Spec: link_id || responder_X25519_pub || responder_long_term_Ed25519_pub
-    // ---------------------------------------------------------
-    // Exporting directly to avoid any previous byte-order slicing issues
-    if (!this.identity) {
-      throw new Error(
-        "Destination requires an identity to respond to a link request.",
-      );
-    }
-    const ed25519PubBytes = await exportPublicKey(this.identity.ed25519Pub);
-
-    const signedData = new Uint8Array(16 + 32 + 32);
-    signedData.set(linkId, 0);
-    signedData.set(ephemeralPubBytes, 16);
-    signedData.set(ed25519PubBytes, 48);
-
-    // ---------------------------------------------------------
-    // 4. SIGN THE DATA
-    // ---------------------------------------------------------
-    const signature = await this.identity.sign(signedData); // 64 bytes
-
-    // ---------------------------------------------------------
-    // 5. CONSTRUCT LRPROOF PAYLOAD
-    // Spec: signature(64) || responder_X25519_pub(32)
-    // ---------------------------------------------------------
-    const responsePayload = new Uint8Array(96);
-    responsePayload.set(signature, 0); // Signature MUST be first
-    responsePayload.set(ephemeralPubBytes, 64); // Ephemeral key MUST be second
-
-    // ---------------------------------------------------------
-    // 6. CREATE LRPROOF PACKET
-    // ---------------------------------------------------------
-    const responsePacket = new Packet({
-      headerType: HeaderType.HEADER_1,
-      hops: 0, // Outgoing packets start at 0
-      transportType: 0,
-      destinationType: DestType.LINK,
-      packetType: PacketType.PROOF,
-      contextFlag: true,
-      contextByte: ContextType.LRPROOF,
-      destinationHash: linkId, // MUST be addressed to the link_id
-      payload: responsePayload,
-    });
-
-    // ---------------------------------------------------------
-    // 7. REGISTER LINK & SEND
-    // ---------------------------------------------------------
-    // The initiator's X25519 pubkey is the first 32 bytes of the LINKREQUEST payload
-    const initiatorPubBytes = requestPacket.payload.slice(0, 32);
-
     if (!this.interfaceLayer || !this.interfaceLayer.transport) {
       throw new Error(
         "Destination not bound to an RNS instance with a transport.",
       );
     }
-
-    const link = new Link(
+    const link = await Link.accept(
       this,
-      linkId,
-      ephemeralKey,
-      initiatorPubBytes,
-      undefined,
-      this.identity.ed25519Priv,
-      await exportPublicKey(this.identity.ed25519Pub),
       this.interfaceLayer.transport,
+      requestPacket,
     );
-    await link.deriveKeys();
-
-    // Register the ephemeral link_id with the router so follow-up packets reach the Link instance
-    // transport.localDestinations.set(toHex(linkId), link);
-    this.interfaceLayer.transport.addLink(linkId, link);
-
-    await this.interfaceLayer.transport.sendPacket(responsePacket);
-
     log(
       "Destination",
-      `[LINK] Handshake response sent to link_id: ${toHex(linkId)}`,
+      `[LINK] Handshake response sent to link_id: ${toHex(link.linkId)}`,
       LogLevel.DEBUG,
     );
-
     return link;
   }
 
