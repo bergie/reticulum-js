@@ -27,6 +27,9 @@ export class LXMRouter extends EventTarget {
     this.deliveryDest = null;
     this.pendingMessages = new Map();
     this.pendingLinks = new Map();
+    // Tracks outbound links (by hex link_id) we have already sent LINKIDENTIFY
+    // on, so we identify once per link rather than on every message.
+    this.identifiedLinks = new Set();
   }
 
   /**
@@ -206,23 +209,16 @@ export class LXMRouter extends EventTarget {
         `Identity unknown for ${toHex(message.sourceHash)}. Requesting...`,
       );
 
-      // Park the message for a limited time (e.g., 5 seconds)
+      // Park the message until the link identifies (or the pending-link
+      // timeout fires), which is when we can learn the sender's identity.
       this.pendingMessages.set(linkId, wireData);
 
       return;
     }
-    if (linkHex && this.pendingLinks.has(linkHex)) {
-      log(
-        "LXMF",
-        `Link ${linkHex} is pending identification, parking incoming message.`,
-      );
 
-      // Park the message for a limited time (e.g., 5 seconds)
-      this.pendingMessages.set(linkId, wireData);
-      return;
-    }
-
-    // If we reach here, we have the identity, clear any pending message
+    // The sender identity is already known, so there is no need to wait for
+    // LINKIDENTIFY. Python's lxmf_delivery delivers immediately in this case;
+    // we match that behaviour and only park when the identity is unknown.
     this.pendingMessages.delete(linkId);
 
     // 3. Verify the signature with §5.6 msgpack-variant tolerance.
@@ -265,8 +261,11 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
-   * Serializes and sends an LXMF message, waiting for the link to become
-   * active before delivery when a link id is given.
+   * Serializes and sends an LXMF message.
+   *
+   * When delivering over a link, this waits for the link to become ACTIVE and
+   * then sends LINKIDENTIFY (once per initiator link) *before* the message
+   * DATA — Python LXMF otherwise drops packets that arrive before identify.
    * @param {Message} message
    * @param {Identity} senderIdentity
    * @param {Uint8Array|null} linkId
@@ -282,9 +281,18 @@ export class LXMRouter extends EventTarget {
     // the handshake completes and the Link becomes ACTIVE. Wait for that so we
     // don't try to encrypt with a token that doesn't exist yet.
     if (linkId) {
-      const link = this.rns.transport.activeLinks.get(toHex(linkId));
+      const linkKey = toHex(linkId);
+      const link = this.rns.transport.activeLinks.get(linkKey);
       if (link) {
         await link.whenActive();
+        // Python LXMF will not process application DATA on a link until the
+        // initiator has sent LINKIDENTIFY (it drops anything arriving before
+        // that). We enforce the counterpart on our side: identify ourselves to
+        // the responder before sending the message, once per initiator link.
+        if (link.initiator && !this.identifiedLinks.has(linkKey)) {
+          await link.identify(senderIdentity);
+          this.identifiedLinks.add(linkKey);
+        }
       }
     }
 

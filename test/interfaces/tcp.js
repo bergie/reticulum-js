@@ -89,6 +89,15 @@ test("TCP interface lifecycle events (packet, closed, error)", async () => {
   const server = new TCPServerInterface({ port });
   const client = new TCPClientInterface({ host: "127.0.0.1", port });
 
+  // The server emits its `connection` event during the client's connect()
+  // handshake, so the listener must be registered before connecting to avoid
+  // missing it (which would hang the test until timeout).
+  const connectionPromise = new Promise((resolve) => {
+    server.addEventListener("connection", (event) => {
+      resolve(event.detail);
+    });
+  });
+
   await server.connect();
   await client.connect();
 
@@ -113,11 +122,6 @@ test("TCP interface lifecycle events (packet, closed, error)", async () => {
   });
 
   // Send packet from server to client
-  const connectionPromise = new Promise((resolve) => {
-    server.addEventListener("connection", (event) => {
-      resolve(event.detail);
-    });
-  });
   const connectedClient = await connectionPromise;
   const serverClientWriter = connectedClient.writable.getWriter();
   await serverClientWriter.write(packet);

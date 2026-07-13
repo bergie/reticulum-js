@@ -6,6 +6,7 @@ import { Identity } from "../../src/core/identity.js";
 import { DestType, PacketType } from "../../src/core/packet.js";
 import { Message } from "../../src/lxmf/message.js";
 import { LXMRouter } from "../../src/lxmf/router.js";
+import { toHex } from "../../src/utils/encoding.js";
 
 test("LXMRouter", async (t) => {
   const identity = await Identity.generate();
@@ -266,6 +267,66 @@ test("LXMRouter", async (t) => {
       assert.strictEqual(messageReceived.message.title, title);
 
       router.deliveryDest.respondToLinkRequest = originalRespond;
+    },
+  );
+
+  await t.test(
+    "send() identifies on the initiator link before sending the message",
+    async () => {
+      const transport = {
+        bindLocalDestination: () => {},
+        addLink: () => {},
+        sendPacket: async () => {},
+        activeLinks: new Map(),
+      };
+      const sendInterfaceLayer = {
+        registerDestination: () => {},
+        transport,
+      };
+
+      const router = new LXMRouter(identity, sendInterfaceLayer);
+      await router.init();
+
+      // Record the order of operations across the link and transport.
+      const order = [];
+      const link = {
+        initiator: true,
+        whenActive: async () => {
+          order.push("active");
+        },
+        identify: async () => {
+          order.push("identify");
+        },
+      };
+      const linkId = new Uint8Array(16).fill(0x33);
+      transport.activeLinks.set(toHex(linkId), link);
+      transport.sendPacket = async () => {
+        order.push("send");
+      };
+
+      const destHash = new Uint8Array(16).fill(0x11);
+      const msg = new Message({
+        sourceHash: new Uint8Array(16).fill(0x22),
+        destinationHash: destHash,
+        content: "out",
+        fields: {},
+      });
+
+      await router.send(msg, identity, linkId);
+
+      // Python LXMF drops DATA that arrives before LINKIDENTIFY, so identify
+      // must run (exactly once) before the message is sent.
+      assert.deepStrictEqual(order, ["active", "identify", "send"]);
+
+      // A second send over the same link must not identify again.
+      await router.send(msg, identity, linkId);
+      assert.deepStrictEqual(order, [
+        "active",
+        "identify",
+        "send",
+        "active",
+        "send",
+      ]);
     },
   );
 });
