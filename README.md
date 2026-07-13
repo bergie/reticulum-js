@@ -11,7 +11,7 @@ Some principles:
 
 ## Status
 
-Early stages, but we are able to receive LXMF messages.
+Early stages, but we are able to send and receive LXMF messages.
 
 ## License
 
