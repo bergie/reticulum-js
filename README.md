@@ -13,6 +13,63 @@ Some principles:
 
 Early stages, but we are able to send and receive LXMF messages.
 
+## Usage
+
+The quickest way to use Reticulum.js is to connect to a Reticulum transport
+node (for example, the local `rnsd` daemon over TCP), set up an identity, and
+exchange [LXMF](https://reticulum.network/manual/lxmf.html) messages:
+
+```js
+import {
+  fromHex,
+  Identity,
+  LXMessage,
+  LXMRouter,
+  Reticulum,
+  TCPClientInterface,
+  toHex,
+} from "reticulum-js";
+
+// 1. Start the engine and connect to a transport node over TCP
+const rns = new Reticulum();
+
+const tcp = new TCPClientInterface({ host: "127.0.0.1", port: 42424 });
+await tcp.connect();
+rns.addInterface(tcp, true);
+
+// 2. Create an identity for this peer (persist it between runs in real apps)
+const identity = await Identity.generate();
+identity.setAppData("reticulum-js example");
+
+// 3. Register the standard LXMF delivery destination and announce our presence
+const lxmf = new LXMRouter(identity, rns);
+await lxmf.init();
+await lxmf.deliveryDest.announce();
+
+console.log("My LXMF address:", toHex(lxmf.deliveryDest.destinationHash));
+
+// 4. Receive incoming messages
+lxmf.addEventListener("message", (event) => {
+  const { message } = event.detail;
+  console.log(`From ${toHex(message.sourceHash)}: ${message.content}`);
+});
+
+// 5. Send a message to a known peer LXMF address (16 bytes)
+const outgoing = new LXMessage({
+  sourceHash: lxmf.deliveryDest.destinationHash,
+  destinationHash: fromHex("00112233445566778899aabbccddeeff"),
+  content: "Hello over Reticulum!",
+});
+await lxmf.send(outgoing, identity, null);
+```
+
+> The destination address is the peer's `lxmf.delivery` destination hash. You
+> typically learn it from an announce or out-of-band; substitute a real
+> 16-byte hex address before sending.
+
+A complete runnable version (with identity persistence and echo replies) lives
+in [`examples/lxmf_echobot.js`](examples/lxmf_echobot.js).
+
 ## License
 
 Licensed under the [EUPL 1.2](https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12).
