@@ -12,6 +12,7 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
+    "docs": "npx typedoc src/index.js",
     "lint": "npx @biomejs/biome check src/",
     "format": "npx @biomejs/biome check --use-editorconfig=true --write src/ test/ examples/",
     "types": "npx tsc",

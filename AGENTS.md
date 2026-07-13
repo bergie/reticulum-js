@@ -54,6 +54,7 @@ https://min-common-api.proposal.wintertc.org/
 - ✅ **Always**: compare implementation with how the Python reference implementation works and adapt to be compatible with it
 - ✅ **Always**: Use `git mv` instead of `mv' for renaming files
 - ✅ **Always**: Remove ambiguity and legacy support from APIs you modify. Right now there are no API consumers outside this repo so we can keep things fluid
+- ✅ **Always**: Use the logging helper from `src/utils/log.js` instead of `console.log` (and `.warn/.error`)
 - ⚠️ **Ask first**: adding dependencies
 - ⚠️ **Ask first**: modify CI config
 - ⚠️ **Ask first**: allow an optional input to a method
