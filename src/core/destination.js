@@ -295,7 +295,10 @@ export class Destination extends EventTarget {
    *
    * Delegates to `Link.initiate`, which generates the ephemeral keypair, builds
    * and sends the LINKREQUEST, registers the link with the transport, and
-   * resolves once the responder's LRPROOF is validated (link becomes ACTIVE).
+   * transitions to HANDSHAKE. This method then awaits `Link.whenActive()` so
+   * that the returned link is fully established (LRPROOF validated, session
+   * keys derived) and ready to carry application DATA — e.g. it is safe to call
+   * `link.identify(...)` immediately on the resolved value.
    *
    * @returns {Promise<import('../transport/link.js').Link>}
    */
@@ -306,7 +309,8 @@ export class Destination extends EventTarget {
     if (!this.interfaceLayer) {
       throw new Error("Destination not bound to an RNS instance.");
     }
-    return await Link.initiate(this, this.interfaceLayer.transport);
+    const link = await Link.initiate(this, this.interfaceLayer.transport);
+    return await link.whenActive();
   }
 
   /**

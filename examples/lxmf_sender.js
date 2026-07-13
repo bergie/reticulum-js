@@ -189,6 +189,13 @@ async function sendDirectOverLink(
     const link = await peerDestination.createLink();
     console.log(`[*] Link established (link_id: ${toHex(link.linkId)})`);
 
+    // CRITICAL: Identify ourselves over the link before sending any data.
+    // Python's LXMRouter (and ours) won't process incoming link messages
+    // until LINKIDENTIFY has been received — sending earlier would have the
+    // message parked or silently dropped. See LINKS.md §6.7.6.
+    console.log("[*] Sending LINKIDENTIFY...");
+    await link.identify(senderIdentity);
+
     const message = new LXMessage({
       sourceHash: lxmf.deliveryDest.destinationHash,
       destinationHash: targetHash,
