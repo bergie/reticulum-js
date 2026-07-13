@@ -225,12 +225,8 @@ export class LXMRouter extends EventTarget {
     // If we reach here, we have the identity, clear any pending message
     this.pendingMessages.delete(linkId);
 
-    // 3. Verify using the identity helper method
-    if (
-      !message.signature ||
-      !message.signedPart ||
-      !(await senderIdentity.validate(message.signature, message.signedPart))
-    ) {
+    // 3. Verify the signature with §5.6 msgpack-variant tolerance.
+    if (!(await message.verifySignature(senderIdentity))) {
       throw new Error(
         "Invalid LXMF message signature: Cryptographic proof failed.",
       );

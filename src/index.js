@@ -23,11 +23,12 @@ export { Reticulum } from "./core/reticulum.js";
 // --- 3. Network Interfaces ---
 // The physical and virtual pathways into the mesh.
 export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
-export { Message as LXMessage } from "./lxmf/message.js";
-
+export * as LXMFConstants from "./lxmf/constants.js";
 // --- 5. LXMF (Lightweight Extensible Message Format) ---
 // Asynchronous, store-and-forward messaging primitives.
+export { Message as LXMessage } from "./lxmf/message.js";
 export { LXMRouter } from "./lxmf/router.js";
+export * as LXStamper from "./lxmf/stamper.js";
 // --- 4. Application Protocols (RPC & Streams) ---
 // The primitives for building Yjs sync, rngit, and NomadNet layers.
 export { Link } from "./transport/link.js";
