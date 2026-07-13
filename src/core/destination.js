@@ -476,6 +476,9 @@ export class Destination extends EventTarget {
    * @return {Promise<Uint8Array>}
    */
   async encrypt(data) {
+    if (!this.identity) {
+      throw new Error("Destination requires an identity to encrypt.");
+    }
     return await this.identity.encrypt(data);
   }
 
@@ -483,6 +486,9 @@ export class Destination extends EventTarget {
    * @param {Packet} packet
    */
   async send(packet) {
+    if (!this.interfaceLayer) {
+      throw new Error("Destination not bound to an RNS instance.");
+    }
     const encryptedPayload = await this.encrypt(packet.payload);
     const encryptedPacket = new Packet({
       headerType: packet.headerType,

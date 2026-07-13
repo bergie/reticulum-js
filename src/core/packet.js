@@ -119,7 +119,7 @@ export class Packet {
   }
 
   /**
-   * @returns {Uint8Array}
+   * @returns {Uint8Array<ArrayBuffer>}
    */
   getHashablePart() {
     if (!this.raw || this.raw.length === 0) {

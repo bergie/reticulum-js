@@ -16,7 +16,11 @@
  * @extends EventTarget
  */
 export class Interface extends EventTarget {
-  socket = undefined;
+  /**
+   * The underlying socket, when this interface is backed by a Node.js stream.
+   * @type {import('node:net').Socket | null}
+   */
+  socket = null;
   /**
    * @type {import('node:stream/web').WritableStreamDefaultWriter | null}
    */
@@ -86,8 +90,7 @@ export class Interface extends EventTarget {
 
     // FORCE DRAIN:
     // If the socket has a buffer, wait for it to empty
-    const socket =
-      /** @type {import('node:net').Socket | undefined} */ this.socket;
+    const socket = this.socket;
     if (socket && socket.writable) {
       // This forces Node to push the buffered data out of the NIC
       await new Promise((resolve) => socket.write("", resolve));

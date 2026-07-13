@@ -61,17 +61,21 @@ export class LXMRouter extends EventTarget {
    * @private
    */
   _setupListeners() {
+    const deliveryDest = this.deliveryDest;
+    const expectedDestHash = deliveryDest?.destinationHash;
+    if (!expectedDestHash) {
+      throw new Error(
+        "Cannot set up listeners: delivery destination not initialized",
+      );
+    }
+
     // 1. Listen for standard Single-Packet LXMF Messages
     /** @type {any} */ (this.deliveryDest).addEventListener(
       "data",
       async (/** @type {any} */ event) => {
         const { plaintext } = /** @type {any} */ (event).detail;
         try {
-          await this._processIncomingMessage(
-            plaintext,
-            null,
-            this.deliveryDest.destinationHash,
-          );
+          await this._processIncomingMessage(plaintext, null, expectedDestHash);
         } catch (e) {
           log(
             "LXMF",
@@ -99,7 +103,7 @@ export class LXMRouter extends EventTarget {
             await this._processIncomingMessage(
               /** @type {any} */ (pktEvent).detail.packet.payload,
               pktEvent.detail.link,
-              this.deliveryDest.destinationHash,
+              expectedDestHash,
             );
           });
 
@@ -140,6 +144,11 @@ export class LXMRouter extends EventTarget {
                 );
 
                 // Map the LXMF Address to the Identity Key
+                if (!peerDeliveryDest.destinationHash) {
+                  throw new Error(
+                    "Failed to derive peer delivery destination hash",
+                  );
+                }
                 await Destination.remember(
                   identityHash,
                   peerDeliveryDest.destinationHash,
@@ -180,6 +189,8 @@ export class LXMRouter extends EventTarget {
       throw new Error("LXMF message too short to contain required headers");
     }
 
+    const linkHex = linkId ? toHex(linkId) : null;
+
     // 1. Deserialize the message immediately
     const message = await Message.deserialize(wireData, expectedDestHash);
 
@@ -199,10 +210,10 @@ export class LXMRouter extends EventTarget {
 
       return;
     }
-    if (this.pendingLinks.has(toHex(linkId))) {
+    if (linkHex && this.pendingLinks.has(linkHex)) {
       log(
         "LXMF",
-        `Link ${toHex(linkId)} is pending identification, parking incoming message.`,
+        `Link ${linkHex} is pending identification, parking incoming message.`,
       );
 
       // Park the message for a limited time (e.g., 5 seconds)
@@ -215,6 +226,8 @@ export class LXMRouter extends EventTarget {
 
     // 3. Verify using the identity helper method
     if (
+      !message.signature ||
+      !message.signedPart ||
       !(await senderIdentity.validate(message.signature, message.signedPart))
     ) {
       throw new Error(
@@ -240,17 +253,17 @@ export class LXMRouter extends EventTarget {
    */
   async processPendingMessages(linkId) {
     const hashHex = toHex(linkId);
+    const expectedDestHash = this.deliveryDest?.destinationHash;
+    if (!expectedDestHash) {
+      return;
+    }
     if (this.pendingMessages.has(linkId)) {
       log(
         "LXMF",
         `Identity acquired. Re-processing parked message for ${hashHex}`,
       );
       const wireData = this.pendingMessages.get(linkId);
-      await this._processIncomingMessage(
-        wireData,
-        linkId,
-        this.deliveryDest.destinationHash,
-      );
+      await this._processIncomingMessage(wireData, linkId, expectedDestHash);
     }
   }
 

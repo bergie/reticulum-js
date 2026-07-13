@@ -140,6 +140,10 @@ export class Message {
       throw new Error("LXMF message too short or format unrecognized");
     }
 
+    if (!destinationHash) {
+      throw new Error("Could not determine destination hash for LXMF message");
+    }
+
     // Calculate the Message ID exactly as LXMF expects
     // SHA-256 of: Dest (16) + Source (16) + Payload (N)
     const idBuffer = new Uint8Array(16 + 16 + payload.length);

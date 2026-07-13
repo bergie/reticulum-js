@@ -23,6 +23,7 @@ export class MicroMsgPack {
    * @returns {Uint8Array}
    */
   static encodeFloat64(value) {
+    /** @type {number[]} */
     const bytes = [];
     MicroMsgPack._encodeFloat64(value, bytes);
     return new Uint8Array(bytes);
