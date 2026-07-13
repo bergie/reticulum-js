@@ -96,7 +96,6 @@ export class LXMRouter extends EventTarget {
 
           // Listen for data streaming over the established link
           link.addEventListener("data", async (/** @type {any} */ pktEvent) => {
-            //console.log("RECV", pktEvent.detail.packet, pktEvent.detail.link);
             await this._processIncomingMessage(
               /** @type {any} */ (pktEvent).detail.packet.payload,
               pktEvent.detail.link,
@@ -185,7 +184,10 @@ export class LXMRouter extends EventTarget {
     const senderIdentity = await Destination.recall(message.sourceHash);
 
     if (!senderIdentity) {
-      log("LXMF", `Identity unknown for ${toHex(message.sourceHash)}. Requesting...`);
+      log(
+        "LXMF",
+        `Identity unknown for ${toHex(message.sourceHash)}. Requesting...`,
+      );
 
       // Park the message for a limited time (e.g., 5 seconds)
       this.pendingMessages.set(linkId, wireData);
@@ -193,11 +195,14 @@ export class LXMRouter extends EventTarget {
       return;
     }
     if (this.pendingLinks.has(toHex(linkId))) {
-      log("LXMF", `Link ${toHex(linkId)} is pending identification, parking incoming message.`);
+      log(
+        "LXMF",
+        `Link ${toHex(linkId)} is pending identification, parking incoming message.`,
+      );
 
       // Park the message for a limited time (e.g., 5 seconds)
       this.pendingMessages.set(linkId, wireData);
-      return
+      return;
     }
 
     // If we reach here, we have the identity, clear any pending message
@@ -260,8 +265,6 @@ export class LXMRouter extends EventTarget {
       transportType: 0,
       payload: wireData,
     });
-    log("LXMF", `DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
-    log("LXMF", `DEBUG: Sending to ${toHex(message.destinationHash)}`);
     await this.rns.transport.sendPacket(packet, linkId);
   }
 }
