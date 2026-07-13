@@ -4,10 +4,17 @@
  */
 
 export { Destination } from "./core/destination.js";
-
 // --- 2. Cryptography & Identity ---
 // Everything needed to create, load, and sign data as an RNS node.
 export { Identity } from "./core/identity.js";
+// Packet-level primitives: enums consumers reference when building packets/destinations.
+export {
+  ContextType,
+  DestType,
+  HeaderType,
+  PacketType,
+  TransportType,
+} from "./core/packet.js";
 export { Resource } from "./core/resource.js";
 // --- 1. Core Orchestration ---
 // The primary client class that wires the transport router, interfaces, and compression together.

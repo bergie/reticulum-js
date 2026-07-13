@@ -2,7 +2,7 @@
 
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
-import { ContextType, PacketType, getEnumName } from "../core/packet.js";
+import { ContextType, getEnumName, PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { RoutingTable } from "./router.js";

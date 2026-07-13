@@ -10,7 +10,10 @@
  * @returns {string}
  */
 export function getEnumName(enumObj, value) {
-  return Object.keys(enumObj).find((key) => enumObj[key] === value) || value.toString();
+  return (
+    Object.keys(enumObj).find((key) => enumObj[key] === value) ||
+    value.toString()
+  );
 }
 
 /**
