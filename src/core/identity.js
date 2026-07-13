@@ -133,6 +133,22 @@ export class Identity extends EventTarget {
   }
 
   /**
+   * Returns 16 fresh random bytes (`TRUNCATED_HASHLENGTH//8`).
+   *
+   * Mirrors `RNS.Identity.get_random_hash()`. Despite the name this is plain
+   * randomness, not a hash of anything. It is the source of the random half
+   * of the announce `random_hash` (SPEC.md §4.1) and the Resource random-hash
+   * prefix (§10.2 step 3).
+   *
+   * @returns {Uint8Array} 16 random bytes.
+   */
+  static getRandomHash() {
+    return crypto.getRandomValues(
+      new Uint8Array(Identity.TRUNCATED_HASHLENGTH / 8),
+    );
+  }
+
+  /**
    * Load an identity from a public key.
    * @param {Uint8Array} publicKey
    * @returns {Promise<Identity>}

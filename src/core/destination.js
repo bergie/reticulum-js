@@ -18,6 +18,47 @@ export const Direction = {
 };
 
 /**
+ * Builds the 10-byte announce `random_hash` (SPEC.md §4.1):
+ *
+ * ```
+ * random_hash = get_random_hash()[:5] + int(time.time()).to_bytes(5, "big")
+ * ```
+ *
+ * The trailing 5 bytes are a big-endian uint40 of Unix seconds. Transit relays
+ * read `random_hash[5:10]` via `timebase_from_random_blob` for path-table
+ * replacement ordering (§4.5 step 6.3): only newer-emitted announces can
+ * refresh a cached path. Emitting 10 fully-random bytes (the microReticulum
+ * bug, §9.10) makes announces appear "far-future" and freezes the path table
+ * against fresher entries from real-timestamped peers.
+ *
+ * @param {Uint8Array} randomBytes - Fresh random bytes; only the first 5 are used.
+ * @param {number} timestampSec - Unix seconds to embed in the trailing 5 bytes.
+ * @returns {Uint8Array} 10-byte announce `random_hash`.
+ */
+export function createAnnounceRandomHash(randomBytes, timestampSec) {
+  if (!Number.isInteger(timestampSec) || timestampSec < 0) {
+    throw new RangeError(
+      `announce timestamp must be a non-negative integer, got ${timestampSec}`,
+    );
+  }
+  if (timestampSec > 0xffffffffff) {
+    throw new RangeError(
+      `announce timestamp ${timestampSec} does not fit in a uint40`,
+    );
+  }
+  const out = new Uint8Array(10);
+  out.set(randomBytes.subarray(0, 5), 0);
+  // Encode the timestamp as a 5-byte big-endian uint40 by writing it into the
+  // low 5 bytes of an 8-byte big-endian uint64. The value always fits (validated
+  // above), so the top 3 bytes are zero and subarray(3) yields exactly the 5
+  // bytes a receiver reconstructs via int.from_bytes(blob[5:10], "big").
+  const buffer = new ArrayBuffer(8);
+  new DataView(buffer).setBigUint64(0, BigInt(timestampSec), false);
+  out.set(new Uint8Array(buffer).subarray(3), 5);
+  return out;
+}
+
+/**
  * Represents a Reticulum destination — an addressable endpoint that can
  * announce, receive packets, encrypt/decrypt, and establish Links.
  * @extends EventTarget
@@ -82,9 +123,15 @@ export class Destination extends EventTarget {
       throw new Error("nameHash must be 10 bytes");
     }
 
-    // 1. Generate a 10-byte Random Hash (Required by RNS to prevent replay attacks)
-    const randomHash = new Uint8Array(10);
-    crypto.getRandomValues(randomHash);
+    // 1. Announce random_hash (SPEC.md §4.1):
+    //    5 random bytes || big-endian uint40 Unix-seconds.
+    //    Transit relays decode bytes [5:10] as the emission timestamp for
+    //    path-table replacement ordering (§4.5 step 6.3). 10 fully-random
+    //    bytes would be the microReticulum bug (§9.10).
+    const randomHash = createAnnounceRandomHash(
+      Identity.getRandomHash(),
+      Math.floor(Date.now() / 1000),
+    );
 
     // 2. Fetch the 64-byte Public Key (32 bytes X25519 + 32 bytes Ed25519)
     const pubKey = await this.identity.getPublicKey();

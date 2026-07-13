@@ -53,3 +53,12 @@ test("Identity from bytes", async (t) => {
   const plaintext = await identity.decrypt(decrypted);
   assert.deepStrictEqual(plaintext, new Uint8Array([1, 2, 3]));
 });
+
+test("Identity.getRandomHash returns 16 random bytes", async () => {
+  const a = Identity.getRandomHash();
+  const b = Identity.getRandomHash();
+  assert.strictEqual(a.length, 16);
+  assert.strictEqual(b.length, 16);
+  // Two draws should not be identical (collision probability is ~1/2^128).
+  assert.notDeepStrictEqual(Array.from(a), Array.from(b));
+});
