@@ -3,7 +3,7 @@
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, getEnumName, PacketType } from "../core/packet.js";
-import { toHex } from "../utils/encoding.js";
+import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { RoutingTable } from "./router.js";
 
@@ -141,7 +141,7 @@ export class TransportCore extends EventTarget {
 
     // If it's an ANNOUNCE, the router handles it, but don't re-broadcast it!
     if (packet.packetType === PacketType.ANNOUNCE) {
-      this._handleAnnounce(packet);
+      await this._handleAnnounce(packet);
       return; // STOP! Do not pass to any other logic.
     }
 
@@ -175,55 +175,91 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Extracts and remembers the identity advertised in an ANNOUNCE packet.
+   * Validates and ingests an ANNOUNCE packet (SPEC.md §4.5).
+   *
+   * Delegates the body parse, Ed25519 signature verification and destination
+   * hash recomputation to {@link Identity.validateAnnounce} (steps 1-3), then
+   * performs the public-key collision rejection (step 4) and caches the
+   * identity / app_data / ratchet (step 6). Forged or malformed announces are
+   * dropped silently; a validated announce is also dispatched as an `announce`
+   * event for application-layer handlers (§4.4 name_hash filtering, contact
+   * list population, etc.).
+   *
    * @param {import("../core/packet.js").Packet} packet
    * @private
    */
   async _handleAnnounce(packet) {
-    // 1. The payload of an ANNOUNCE packet contains the public key
-    //    and metadata required to build an Identity.
-    // 2. We use Destination.remember to store this peer
+    const destHex = toHex(packet.destinationHash);
 
-    // In Reticulum, the identity key is at the very beginning of the payload.
-    // If it's less than 32 bytes, the packet is corrupted.
-    if (packet.payload.length < 64) {
-      log("Transport", "[!] Announce payload too short!", LogLevel.ERROR);
-      return;
-    }
-
-    if (this.localDestinations.has(toHex(packet.destinationHash))) {
+    // Self-announce filter (SPEC.md §9.5 / §4.5 step 8): never ingest our own
+    // destinations — otherwise we'd populate our contact list with ourselves.
+    if (this.localDestinations.has(destHex)) {
       log(
         "Transport",
-        `Ignoring ANNOUNCE for local destination ${toHex(packet.destinationHash)}`,
+        `Ignoring ANNOUNCE for local destination ${destHex}`,
+        LogLevel.DEBUG,
       );
       return;
     }
 
-    try {
-      // The payload contains the full identity block at the start
-      const identityBlock = packet.payload.slice(0, 64);
-      // const identityBlock = packet.payload.slice(32, 96); // Skipping the 32-byte header!
+    const result = await Identity.validateAnnounce(
+      packet.destinationHash,
+      packet.contextFlag,
+      packet.payload,
+    );
+    if (!result) return; // validateAnnounce already logged the rejection reason
 
-      const appData = packet.payload.slice(64);
+    const { identity, nameHash, randomHash, ratchet, appData } = result;
 
-      // For ANNOUNCE, the sender hash is actually the hash of the public key
-      // embedded in the payload.
-      // Use your Identity class to derive the hash:
-      const identity = await Identity.fromPublicKey(identityBlock);
-      const senderHash = await Identity.truncatedHash(identity.publicKey);
-
-      // Use your existing Destination.remember to add this to the network graph
-      await Destination.remember(
-        senderHash,
-        packet.destinationHash,
-        identityBlock,
-        appData,
+    // §4.5 step 4 — public-key collision rejection. First-announcer-wins: a
+    // different public_key for an already-known destination_hash is treated as
+    // a hash-collision / spoofing attempt and rejected even though the
+    // signature is otherwise valid. (In practice this requires a 2^128 hash
+    // collision, so it should never fire — but the defense is non-optional.)
+    const existing = Destination.knownDestinations.get(destHex);
+    if (
+      existing &&
+      existing[2] &&
+      !bytesEqual(existing[2], identity.publicKey)
+    ) {
+      log(
+        "Transport",
+        `CRITICAL: public-key collision for ${destHex} — rejecting announce`,
+        LogLevel.ERROR,
       );
-
-      log("Transport", `[!] Network: Remembered new peer ${toHex(senderHash)}`);
-    } catch (e) {
-      log("Transport", `[!] Failed to process announce: ${e}`, LogLevel.ERROR);
+      return;
     }
+
+    // §4.5 step 6 — cache the announce contents.
+    const packetHash = await packet.getHash();
+    await Destination.remember(
+      packetHash,
+      packet.destinationHash,
+      identity.publicKey,
+      appData,
+    );
+    if (ratchet) {
+      Destination.rememberRatchet(packet.destinationHash, ratchet);
+    }
+
+    log(
+      "Transport",
+      `Validated announce from ${destHex} (name_hash=${toHex(nameHash)}, ratchet=${ratchet ? "yes" : "no"})`,
+      LogLevel.DEBUG,
+    );
+    this.dispatchEvent(
+      new CustomEvent("announce", {
+        detail: {
+          destinationHash: packet.destinationHash,
+          identity,
+          nameHash,
+          randomHash,
+          ratchet,
+          appData,
+          packet,
+        },
+      }),
+    );
   }
 
   /**

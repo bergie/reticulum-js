@@ -27,9 +27,31 @@ export function toHex(bytes) {
 }
 
 /**
+ * Constant-time-ish equality check for two Uint8Arrays.
+ *
+ * Used for comparing hashes / public keys where short-circuiting on the first
+ * differing byte would leak timing information. Returns true only when both
+ * arrays are the same length and every byte matches.
+ *
+ * @param {Uint8Array} a
+ * @param {Uint8Array} b
+ * @returns {boolean}
+ */
+export function bytesEqual(a, b) {
+  if (!(a instanceof Uint8Array) || !(b instanceof Uint8Array)) {
+    throw new TypeError("bytesEqual expects Uint8Array arguments");
+  }
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+/**
  * Converts a hexadecimal string back into a raw Uint8Array.
  * Useful for parsing user-provided destination hashes or static routing configurations.
- * * @param {string} hexString - The hexadecimal string to convert.
+ *
+ * @param {string} hexString - The hexadecimal string to convert.
  * @returns {Uint8Array} The resulting raw byte array.
  */
 export function fromHex(hexString) {

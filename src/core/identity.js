@@ -15,7 +15,20 @@ import {
   importX25519PublicKey,
 } from "../crypto/keys.js";
 import { Token } from "../crypto/token.js";
+import { bytesEqual } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
+
+/**
+ * Result of a successful announce validation (SPEC.md §4.5).
+ *
+ * @typedef {Object} AnnounceValidation
+ * @property {Identity} identity - Identity reconstructed from the announced public key.
+ * @property {Uint8Array} nameHash - 10-byte name_hash from the announce body.
+ * @property {Uint8Array} randomHash - 10-byte random_hash (5 random || 5-byte BE uint40 timestamp).
+ * @property {Uint8Array|null} ratchet - 32-byte ratchet X25519 pub if context_flag was set, else null.
+ * @property {Uint8Array} signature - 64-byte Ed25519 signature.
+ * @property {Uint8Array|null} appData - app_data bytes if present in the announce, else null.
+ */
 
 /**
  * Represents a Reticulum Identity.
@@ -497,5 +510,112 @@ export class Identity extends EventTarget {
       /** @type {any} */ (signatureView),
       /** @type {any} */ (dataView),
     );
+  }
+
+  /**
+   * Validates an announce exactly like `RNS/Identity.py::validate_announce`
+   * (SPEC.md §4.5 steps 1-3).
+   *
+   * Parses the announce body — branching on `contextFlag` so a ratchet-bearing
+   * announce shifts the signature 32 bytes deeper (§4.5 step 1) — verifies the
+   * Ed25519 signature over the §4.2 `signed_data` (step 2), and recomputes the
+   * destination hash from `(name_hash, public_key)` to confirm it matches the
+   * outer packet header (step 3).
+   *
+   * The caller is responsible for the §4.5 step 4 public-key collision check
+   * and step 6 caching, since those touch `Destination.knownDestinations`.
+   *
+   * @param {Uint8Array} destinationHash - 16-byte dest_hash from the outer packet header.
+   * @param {boolean} contextFlag - the packet header's context_flag bit (ratchet present).
+   * @param {Uint8Array} data - the announce body (packet payload).
+   * @returns {Promise<AnnounceValidation|null>} null on any validation failure.
+   */
+  static async validateAnnounce(destinationHash, contextFlag, data) {
+    // §4.5 step 1 — body parse, branching on context_flag. Offsets per the
+    // spec table; a ratchet-bearing announce places the signature at [116:180]
+    // instead of [84:148].
+    const sigOffset = contextFlag ? 116 : 84;
+    const sigEnd = sigOffset + 64; // 180 (ratchet) or 148 (no ratchet)
+    if (data.length < sigEnd) {
+      log(
+        "Identity",
+        `Announce body too short (${data.length} bytes; need ${sigEnd} for context_flag=${contextFlag ? 1 : 0})`,
+        LogLevel.WARN,
+      );
+      return null;
+    }
+    const publicKey = data.subarray(0, 64);
+    const nameHash = data.subarray(64, 74);
+    const randomHash = data.subarray(74, 84);
+    /** @type {Uint8Array|null} */
+    let ratchet = null;
+    if (contextFlag) {
+      ratchet = data.subarray(84, 116);
+    }
+    const signature = data.subarray(sigOffset, sigEnd);
+    const appData = data.length > sigEnd ? data.slice(sigEnd) : null;
+
+    const identity = await Identity.fromPublicKey(publicKey);
+
+    // §4.5 step 2 — signature verification over §4.2 signed_data:
+    //   destination_hash || public_key || name_hash || random_hash || ratchet || app_data
+    // `ratchet` is b"" (empty, NOT absent) when context_flag == 0 and `app_data`
+    // is b"" when absent. Re-using the body's destination_hash here would let a
+    // sender forge announces for arbitrary destinations (§4.5 step 2 callout).
+    const ratchetForSig = ratchet ?? new Uint8Array(0);
+    const appDataForSig = appData ?? new Uint8Array(0);
+    const signedData = new Uint8Array(
+      destinationHash.length +
+        publicKey.length +
+        nameHash.length +
+        randomHash.length +
+        ratchetForSig.length +
+        appDataForSig.length,
+    );
+    let offset = 0;
+    signedData.set(destinationHash, offset);
+    offset += destinationHash.length;
+    signedData.set(publicKey, offset);
+    offset += publicKey.length;
+    signedData.set(nameHash, offset);
+    offset += nameHash.length;
+    signedData.set(randomHash, offset);
+    offset += randomHash.length;
+    signedData.set(ratchetForSig, offset);
+    offset += ratchetForSig.length;
+    signedData.set(appDataForSig, offset);
+
+    const signatureOk = await identity.validate(signature, signedData);
+    if (!signatureOk) {
+      log(
+        "Identity",
+        "Announce signature verification failed — rejecting",
+        LogLevel.WARN,
+      );
+      return null;
+    }
+
+    // §4.5 step 3 — destination_hash recomputation.
+    //   identity_hash = SHA256(public_key)[:16]
+    //   expected_hash = SHA256(name_hash || identity_hash)[:16]
+    // Catches both random hash collisions and active spoofing that pairs a
+    // valid signature with an unrelated destination_hash.
+    const combined = new Uint8Array(
+      nameHash.length + identity.identityHash.length,
+    );
+    combined.set(nameHash, 0);
+    combined.set(identity.identityHash, nameHash.length);
+    const expectedHash = await Identity.truncatedHash(combined);
+    if (!bytesEqual(expectedHash, destinationHash)) {
+      log(
+        "Identity",
+        "Announce destination_hash mismatch — rejecting",
+        LogLevel.WARN,
+      );
+      return null;
+    }
+
+    identity.appData = appData ?? new Uint8Array();
+    return { identity, nameHash, randomHash, ratchet, signature, appData };
   }
 }

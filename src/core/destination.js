@@ -4,7 +4,7 @@
  */
 
 import { Link } from "../transport/link.js";
-import { toHex } from "../utils/encoding.js";
+import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { Identity } from "./identity.js";
 import { DestType, Packet, PacketType, TransportType } from "./packet.js";
@@ -69,6 +69,15 @@ export class Destination extends EventTarget {
    * @type {Map<string, any[]>}
    */
   static knownDestinations = new Map();
+
+  /**
+   * Known ratchet X25519 public keys per destination (SPEC.md §4.5 step 6.2,
+   * §7.4). Maps hex destination hash → array of ratchet pubs (newest first).
+   * Populated from validated announces; consumed by the inbound-decrypt
+   * tolerance path once full ratchet support lands.
+   * @type {Map<string, Uint8Array[]>}
+   */
+  static knownRatchets = new Map();
 
   /**
    * Low-level constructor. Prefer the static factories (`Destination.IN`,
@@ -529,6 +538,39 @@ export class Destination extends EventTarget {
       }
       return null;
     }
+  }
+
+  /**
+   * Remembers a ratchet X25519 public key announced for a destination (SPEC.md
+   * §4.5 step 6.2). Called only for validated announces where `context_flag`
+   * was set and the ratchet is non-empty. Newest ratchets are prepended so the
+   * ring is newest-first; duplicates are skipped.
+   * @param {Uint8Array} destinationHash
+   * @param {Uint8Array} ratchet - 32-byte ratchet X25519 public key.
+   */
+  static rememberRatchet(destinationHash, ratchet) {
+    if (!ratchet || ratchet.length === 0) return;
+    const key = toHex(destinationHash);
+    /** @type {Uint8Array[]} */
+    const ring = Destination.knownRatchets.get(key) ?? [];
+    const copy = new Uint8Array(ratchet);
+    if (!ring.some((r) => bytesEqual(r, copy))) {
+      ring.unshift(copy);
+      Destination.knownRatchets.set(key, ring);
+    }
+  }
+
+  /**
+   * Recalls the ratchet ring for a destination (newest first), or null.
+   *
+   * Consumed by the inbound-decrypt tolerance path (SPEC.md §7.4): a sender
+   * may have encrypted to a just-rotated previous ratchet, so the receiver
+   * tries each privkey in the ring before falling back to the long-term key.
+   * @param {Uint8Array} destinationHash
+   * @returns {Uint8Array[]|null}
+   */
+  static recallRatchets(destinationHash) {
+    return Destination.knownRatchets.get(toHex(destinationHash)) ?? null;
   }
 
   /**

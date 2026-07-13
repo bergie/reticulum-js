@@ -7,6 +7,7 @@ import {
 } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import { ContextType, DestType, PacketType } from "../../src/core/packet.js";
+import { bytesEqual } from "../../src/utils/encoding.js";
 
 test("Destination SINGLE/PLAIN/GROUP hash computation", async () => {
   const identity = await Identity.generate();
@@ -155,4 +156,68 @@ test("Destination.announce refreshes the random half of random_hash each call", 
     Array.from(rh1.subarray(0, 5)),
     Array.from(rh2.subarray(0, 5)),
   );
+});
+
+test("Destination.announce output round-trips through Identity.validateAnnounce", async () => {
+  const identity = await Identity.generate();
+  /** @type {import("../../src/core/packet.js").Packet[]} */
+  const captured = [];
+  const fakeLayer = {
+    /** @param {import("../../src/core/packet.js").Packet} pkt */
+    broadcast: (pkt) => captured.push(pkt),
+  };
+  const dest = await Destination.IN(
+    "myapp",
+    DestType.SINGLE,
+    identity,
+    /** @type {any} */ (fakeLayer),
+  );
+
+  await dest.announce();
+  const pkt = captured[0];
+  const result = await Identity.validateAnnounce(
+    pkt.destinationHash,
+    pkt.contextFlag,
+    pkt.payload,
+  );
+  assert.ok(result, "validateAnnounce should accept our own announce");
+  assert.ok(bytesEqual(result.identity.identityHash, identity.identityHash));
+  assert.strictEqual(result.ratchet, null);
+});
+
+test("Destination.rememberRatchet / recallRatchets store and dedup ratchets", () => {
+  const destHash = crypto.getRandomValues(new Uint8Array(16));
+  const ratchetA = crypto.getRandomValues(new Uint8Array(32));
+  const ratchetB = crypto.getRandomValues(new Uint8Array(32));
+
+  // Clean slate (other tests may have populated the static map).
+  const key = Array.from(destHash)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  Destination.knownRatchets.delete(key);
+
+  Destination.rememberRatchet(destHash, ratchetA);
+  let ring = Destination.recallRatchets(destHash);
+  assert.ok(ring);
+  assert.strictEqual(ring.length, 1);
+  assert.ok(bytesEqual(ring[0], ratchetA));
+
+  // Newest-first: a second, different ratchet is prepended.
+  Destination.rememberRatchet(destHash, ratchetB);
+  ring = Destination.recallRatchets(destHash);
+  assert.strictEqual(ring.length, 2);
+  assert.ok(bytesEqual(ring[0], ratchetB));
+  assert.ok(bytesEqual(ring[1], ratchetA));
+
+  // Re-adding an existing ratchet is a no-op (dedup).
+  Destination.rememberRatchet(destHash, ratchetA);
+  ring = Destination.recallRatchets(destHash);
+  assert.strictEqual(ring.length, 2);
+
+  Destination.knownRatchets.delete(key);
+});
+
+test("Destination.recallRatchets returns null for an unknown destination", () => {
+  const destHash = crypto.getRandomValues(new Uint8Array(16));
+  assert.strictEqual(Destination.recallRatchets(destHash), null);
 });
