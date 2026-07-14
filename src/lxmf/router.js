@@ -354,10 +354,14 @@ export class LXMRouter extends EventTarget {
     log("LXMF", `DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
     log("LXMF", `DEBUG: Sending to ${toHex(message.destinationHash)}`);
 
-    // Direct delivery happens over a Link. `createLink()` resolves as soon as
-    // the handshake is *initiated*, but the session token is only derived once
-    // the handshake completes and the Link becomes ACTIVE. Wait for that so we
-    // don't try to encrypt with a token that doesn't exist yet.
+    const DESTINATION_LENGTH = 16; // RNS TRUNCATED_HASHLENGTH//8
+
+    // Direct delivery happens over a Link. The full LXMF body
+    // (dest_hash || source_hash || signature || payload) travels inside the
+    // link, Token-encrypted by link.send() (LXMF.md §5.2). `createLink()`
+    // resolves as soon as the handshake is *initiated*, but the session token
+    // is only derived once the handshake completes and the Link becomes ACTIVE.
+    // Wait for that so we don't try to encrypt with a token that doesn't exist.
     if (linkId) {
       const linkKey = toHex(linkId);
       const link = this.rns.transport.activeLinks.get(linkKey);
@@ -386,17 +390,50 @@ export class LXMRouter extends EventTarget {
           return;
         }
       }
+      const linkPacket = new Packet({
+        packetType: PacketType.DATA,
+        contextFlag: true,
+        contextByte: ContextType.NONE,
+        destinationHash: message.destinationHash,
+        destinationType: DestType.SINGLE,
+        transportType: 0,
+        payload: wireData,
+      });
+      await this.rns.transport.sendPacket(linkPacket, linkId);
+      return;
     }
 
-    const packet = new Packet({
+    // Opportunistic delivery: a single encrypted DATA packet addressed
+    // directly to the recipient's lxmf.delivery destination (LXMF.md §5.1).
+    //
+    // The leading destination hash is stripped from the LXMF body — it is
+    // conveyed by the outer Reticulum packet envelope and re-prepended by the
+    // receiver (Python LXMRouter.delivery_packet). The remainder is encrypted
+    // with the recipient's public key via Destination.send, exactly mirroring
+    // LXMessage.__as_packet for the OPPORTUNISTIC case. Sending the plaintext
+    // body unencrypted causes the recipient's identity.decrypt() to return
+    // null and silently drop the message.
+    const peerIdentity = await Destination.recall(message.destinationHash);
+    if (!peerIdentity) {
+      throw new Error(
+        `Cannot deliver opportunistically: identity for ${toHex(message.destinationHash)} is unknown`,
+      );
+    }
+    const peerDestination = await Destination.OUT(
+      "lxmf.delivery",
+      DestType.SINGLE,
+      peerIdentity,
+      this.rns,
+    );
+    const opportunisticPacket = new Packet({
       packetType: PacketType.DATA,
       contextFlag: true,
       contextByte: ContextType.NONE,
       destinationHash: message.destinationHash,
       destinationType: DestType.SINGLE,
       transportType: 0,
-      payload: wireData,
+      payload: wireData.subarray(DESTINATION_LENGTH),
     });
-    await this.rns.transport.sendPacket(packet, linkId);
+    await peerDestination.send(opportunisticPacket);
   }
 }

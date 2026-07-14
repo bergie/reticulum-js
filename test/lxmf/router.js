@@ -30,6 +30,78 @@ test("LXMRouter", async (t) => {
     assert.strictEqual(interfaceLayer.lastRegisteredDest, router.deliveryDest);
   });
 
+  await t.test(
+    "opportunistic send encrypts with recipient key and strips destination hash",
+    async () => {
+      // The recipient: a full identity (pub+priv) so we can decrypt the result.
+      const recipientIdentity = await Identity.generate();
+      const recipientHash = recipientIdentity.identityHash;
+      const recipientDest = await Destination.OUT(
+        "lxmf.delivery",
+        DestType.SINGLE,
+        recipientIdentity,
+        interfaceLayer,
+      );
+      const recipientDestHash = recipientDest.destinationHash;
+
+      // Register the recipient so Destination.recall(destHash) finds it.
+      await Destination.remember(
+        recipientHash,
+        recipientDestHash,
+        recipientIdentity.publicKey,
+      );
+
+      // The sender's router.
+      const senderIdentity = await Identity.generate();
+      const router = new LXMRouter(senderIdentity, interfaceLayer);
+      await router.init();
+
+      const sourceHash = router.deliveryDest.destinationHash;
+
+      // Capture the packet handed to the transport.
+      const originalSendPacket = interfaceLayer.transport.sendPacket;
+      /** @type {import("../../src/core/packet.js").Packet|null} */
+      let sentPacket = null;
+      interfaceLayer.transport.sendPacket = async (packet) => {
+        sentPacket = packet;
+      };
+      try {
+        const message = new Message({
+          sourceHash,
+          destinationHash: recipientDestHash,
+          title: "opportunistic",
+          content: "secret payload",
+        });
+        await router.send(message, senderIdentity);
+      } finally {
+        interfaceLayer.transport.sendPacket = originalSendPacket;
+      }
+
+      assert.ok(
+        sentPacket,
+        "a packet should have been handed to the transport",
+      );
+
+      // The on-wire payload must be the ECIES ciphertext, not the plaintext body.
+      const decrypted = await recipientIdentity.decrypt(sentPacket.payload);
+      assert.ok(decrypted, "recipient must be able to decrypt the payload");
+
+      // Opportunistic delivery strips the leading destination hash; the body the
+      // receiver reconstructs therefore starts with the SOURCE hash, and the
+      // stripped destination hash must NOT be the first 16 bytes.
+      assert.deepStrictEqual(
+        decrypted.subarray(0, 16),
+        sourceHash,
+        "decrypted body should start with the source hash (dest hash stripped)",
+      );
+      assert.notDeepStrictEqual(
+        decrypted.subarray(0, 16),
+        recipientDestHash,
+        "decrypted body must not begin with the destination hash",
+      );
+    },
+  );
+
   await t.test("processing incoming messages", async () => {
     const router = new LXMRouter(identity, interfaceLayer);
     await router.init();
