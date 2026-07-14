@@ -13,6 +13,21 @@ Some principles:
 
 Early stages, but we are able to send and receive LXMF messages.
 
+## Installation
+
+The canonical source of `reticulum-js` is the rngit repository. To fetch the latest release, run:
+
+```sh
+rngit release rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js fetch latest:all
+npm install reticulum-js-*.tgz
+```
+
+You can also get `reticulum-js` [from NPM](https://www.npmjs.com/package/reticulum-js):
+
+```sh
+npm install reticulum-js
+```
+
 ## Usage
 
 The quickest way to use Reticulum.js is to connect to a Reticulum transport
