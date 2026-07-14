@@ -3,6 +3,11 @@
  * @description Routing targets (EventTargets)
  */
 
+import {
+  exportPublicKey,
+  exportRawPrivateKey,
+  generateX25519KeyPair,
+} from "../crypto/keys.js";
 import { Link } from "../transport/link.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
@@ -133,6 +138,14 @@ export class Destination extends EventTarget {
   static knownRatchets = new Map();
 
   /**
+   * Default ratchet rotation interval (Destination.RATCHET_INTERVAL = 30 min).
+   * A destination with ratchets enabled rotates its key at most this often.
+   */
+  static RATCHET_INTERVAL_MS = 30 * 60 * 1000;
+  /** Maximum number of retained ratchet keys for decryption tolerance. */
+  static MAX_RATCHETS = 128;
+
+  /**
    * Low-level constructor. Prefer the static factories (`Destination.IN`,
    * `Destination.OUT`, etc.) which also compute the destination hashes.
    * @param {string} name - The application name.
@@ -160,6 +173,16 @@ export class Destination extends EventTarget {
      * @type {Map<string, RequestHandler>}
      */
     this.requestHandlers = new Map();
+
+    // §7.4 ratchet ownership (receiver side). When enabled this destination
+    // generates and rotates X25519 ratchet keypairs, advertises the newest
+    // public key in announces, and decrypts with the private ring. Disabled
+    // by default — opt in via enableRatchets().
+    this.ratchetsEnabled = false;
+    /** @type {{privateKey: Uint8Array, publicKey: Uint8Array}[]|null} */
+    this.ratchets = null;
+    this.latestRatchetTime = 0;
+    this.ratchetInterval = Destination.RATCHET_INTERVAL_MS;
   }
 
   /**
@@ -235,27 +258,40 @@ export class Destination extends EventTarget {
     // 3. Prepare App Data (The human-readable name or metadata)
     const appData = this.identity.appData;
 
+    // §7.4 ratchet: when forward-secrecy ratchets are enabled on this
+    // destination, rotate if due and embed the current ratchet public (32 B)
+    // into both the signed data and the announce body, and set the packet
+    // context_flag so receivers parse it (§4.5). Empty when disabled —
+    // matching Python's ratchet = b"" slot.
+    const ratchetBytes = await this._currentRatchetForAnnounce();
+    const hasRatchet = ratchetBytes.length > 0;
+
     // 4. Construct the Data to be Signed
-    // Reticulum requires the signature to cover these specific fields in order:
-    // [DestHash (16)] + [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [AppData]
-    const signedData = new Uint8Array(16 + 64 + 10 + 10 + appData.length);
+    // [DestHash (16)] + [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [Ratchet (0|32)] + [AppData]
+    const signedData = new Uint8Array(
+      16 + 64 + 10 + 10 + ratchetBytes.length + appData.length,
+    );
     signedData.set(this.destinationHash, 0);
     signedData.set(pubKey, 16);
     signedData.set(this.nameHash, 16 + 64);
     signedData.set(randomHash, 16 + 64 + 10);
-    signedData.set(appData, 16 + 64 + 10 + 10);
+    signedData.set(ratchetBytes, 16 + 64 + 10 + 10);
+    signedData.set(appData, 16 + 64 + 10 + 10 + ratchetBytes.length);
 
     // 5. Generate the 64-byte Ed25519 Signature
     const signature = await this.identity.sign(signedData);
 
     // 6. Construct the final Announce Payload for the wire
-    // Format: [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [Signature (64)] + [AppData]
-    const payload = new Uint8Array(64 + 10 + 10 + 64 + appData.length);
+    // [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [Ratchet (0|32)] + [Signature (64)] + [AppData]
+    const payload = new Uint8Array(
+      64 + 10 + 10 + ratchetBytes.length + 64 + appData.length,
+    );
     payload.set(pubKey, 0);
     payload.set(this.nameHash, 64);
     payload.set(randomHash, 64 + 10);
-    payload.set(signature, 64 + 10 + 10);
-    payload.set(appData, 64 + 10 + 10 + 64);
+    payload.set(ratchetBytes, 64 + 10 + 10);
+    payload.set(signature, 64 + 10 + 10 + ratchetBytes.length);
+    payload.set(appData, 64 + 10 + 10 + ratchetBytes.length + 64);
 
     // 7. Broadcast the Packet
     const announcePacket = new Packet({
@@ -263,6 +299,7 @@ export class Destination extends EventTarget {
       destinationType: this.type,
       destinationHash: this.destinationHash,
       transportType: TransportType.BROADCAST,
+      contextFlag: hasRatchet,
       contextByte,
       payload: payload,
     });
@@ -282,6 +319,72 @@ export class Destination extends EventTarget {
     }
 
     this.interfaceLayer.broadcast(announcePacket);
+  }
+
+  /**
+   * Enables forward-secrecy ratchets on this destination (§7.4).
+   *
+   * Generates the initial ratchet keypair. The newest ratchet public key is
+   * then embedded in subsequent announces, and inbound packets are decrypted
+   * against the private ring before the long-term key. Ratchet private keys
+   * are held in memory only for now (persistence lands with the storage
+   * layer); a restart therefore rotates the ratchet.
+   *
+   * @returns {Promise<void>}
+   */
+  async enableRatchets() {
+    if (this.ratchetsEnabled) return;
+    if (!this.identity) {
+      throw new Error("Ratchets require an identity.");
+    }
+    this.ratchets = [];
+    this.ratchetsEnabled = true;
+    await this.rotateRatchets(true);
+  }
+
+  /**
+   * Rotates the ratchet ring when the interval has elapsed
+   * (Destination.RATCHET_INTERVAL), inserting the newest key at index 0 and
+   * capping the ring to {@link Destination.MAX_RATCHETS}. Pass `force` to
+   * generate a key unconditionally (used for the initial key).
+   *
+   * No-op when ratchets are not enabled.
+   *
+   * @param {boolean} [force=false]
+   * @returns {Promise<void>}
+   */
+  async rotateRatchets(force = false) {
+    if (!this.ratchetsEnabled || !this.ratchets) return;
+    const now = Date.now();
+    if (!force && now <= this.latestRatchetTime + this.ratchetInterval) {
+      return;
+    }
+    const kp = await generateX25519KeyPair();
+    this.ratchets.unshift({
+      privateKey: await exportRawPrivateKey(kp.privateKey),
+      publicKey: await exportPublicKey(kp.publicKey),
+    });
+    while (this.ratchets.length > Destination.MAX_RATCHETS) {
+      this.ratchets.pop();
+    }
+    this.latestRatchetTime = now;
+    // TODO: persist the ratchet ring once a storage layer exists so a restart
+    // can still decrypt in-flight messages encrypted to prior ratchets.
+  }
+
+  /**
+   * The current (newest) ratchet public key for inclusion in announces, or an
+   * empty array when ratchets are disabled. Rotates first if due.
+   *
+   * @returns {Promise<Uint8Array>}
+   * @private
+   */
+  async _currentRatchetForAnnounce() {
+    if (!this.ratchetsEnabled || !this.ratchets || this.ratchets.length === 0) {
+      return new Uint8Array(0);
+    }
+    await this.rotateRatchets();
+    return this.ratchets[0].publicKey.slice();
   }
 
   /**
@@ -561,7 +664,14 @@ export class Destination extends EventTarget {
   async _handleData(packet) {
     let plaintext = null;
     if (this.type === DestType.SINGLE && this.identity) {
-      plaintext = await this.identity.decrypt(packet.payload);
+      // §7.4: try each owned ratchet private key (newest first) before the
+      // long-term key, so messages encrypted to a just-rotated ratchet still
+      // decrypt. Identity.decrypt performs the long-term fallback itself.
+      const privRing =
+        this.ratchetsEnabled && this.ratchets
+          ? this.ratchets.map((r) => r.privateKey)
+          : null;
+      plaintext = await this.identity.decrypt(packet.payload, privRing);
     } else {
       plaintext = packet.payload;
     }
@@ -782,7 +892,14 @@ export class Destination extends EventTarget {
     if (!this.identity) {
       throw new Error("Destination requires an identity to encrypt.");
     }
-    return await this.identity.encrypt(data);
+    // §7.4: encrypt to the recipient's newest known ratchet public key for
+    // forward secrecy when one was learned from an announce; otherwise fall
+    // back to the long-term X25519 key (Identity.encrypt handles ratchet=null).
+    const ring = this.destinationHash
+      ? Destination.recallRatchets(this.destinationHash)
+      : null;
+    const ratchet = ring && ring.length > 0 ? ring[0] : null;
+    return await this.identity.encrypt(data, ratchet);
   }
 
   /**

@@ -57,6 +57,12 @@ export class LXMRouter extends EventTarget {
     this.rns.transport.bindLocalDestination(deliveryDest);
     this.rns.registerDestination(deliveryDest);
 
+    // §7.4: enable forward-secrecy ratchets so the delivery destination
+    // advertises a ratchet in its announces and can decrypt messages that
+    // peers encrypt to it. Without this, ratchet-enforcing Python peers drop
+    // our outbound messages and we gain no forward secrecy.
+    await deliveryDest.enableRatchets();
+
     this._setupListeners();
 
     this.dispatchEvent(
