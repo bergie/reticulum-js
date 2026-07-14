@@ -11,6 +11,7 @@
   "author": "Henri Bergius <henri.bergius@iki.fi>",
   "type": "module",
   "main": "src/index.js",
+  "types": "src/index.d.ts",
   "scripts": {
     "docs": "npx typedoc src/index.js",
     "lint": "npx @biomejs/biome check --use-editorconfig=true src/",

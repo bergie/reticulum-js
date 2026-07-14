@@ -6,7 +6,8 @@
         "node"
     ],
     "checkJs": true,
-    "noEmit": true,
+    "emitDeclarationOnly": true,
+    "declaration": true,
     "allowJs": true
   },
   "include": [

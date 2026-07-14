@@ -7,3 +7,4 @@ PROTOCOL-SPEC.md
 *.key
 *.tgz
 *.rsm
+*.d.ts
