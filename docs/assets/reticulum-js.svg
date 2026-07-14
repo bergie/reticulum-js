@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 634.71698 580"
+   version="1.1"
+   id="svg40"
+   sodipodi:docname="reticulum-js.svg"
+   inkscape:version="1.2.1 (9c6d41e, 2022-07-14)"
+   width="634.71698"
+   height="580"
+   inkscape:export-filename="reticulum-js.png"
+   inkscape:export-xdpi="96"
+   inkscape:export-ydpi="96"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview42"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     showgrid="false"
+     inkscape:zoom="0.65131972"
+     inkscape:cx="78.302558"
+     inkscape:cy="315.51325"
+     inkscape:window-width="1440"
+     inkscape:window-height="757"
+     inkscape:window-x="0"
+     inkscape:window-y="25"
+     inkscape:window-maximized="0"
+     inkscape:current-layer="svg40" />
+  <defs
+     id="defs4">
+    <style
+       id="style2">
+      .stroke { stroke: #FFFFFF; stroke-width: 18; }
+      .core { stroke: #323330; stroke-width: 6; }
+      .node { fill: #323330; stroke: #FFFFFF; stroke-width: 6; }
+    </style>
+  </defs>
+  <ellipse
+     style="opacity:1;fill:#f7df1e;fill-opacity:0;stroke:#323330;stroke-width:5.75442;stroke-dasharray:none;stroke-opacity:1;stop-color:#000000"
+     id="path3111"
+     cx="316.0574"
+     cy="290.22577"
+     rx="249.63779"
+     ry="249.63766" />
+  <ellipse
+     style="opacity:1;fill:#f7df1e;fill-opacity:1;stroke:#323330;stroke-width:5.85924;stroke-dasharray:none;stroke-opacity:1;stop-color:#000000"
+     id="path2079"
+     cx="315.11951"
+     cy="290.76511"
+     rx="235.73837"
+     ry="235.73824" />
+  <g
+     fill="none"
+     stroke-linecap="round"
+     stroke-linejoin="round"
+     id="g12"
+     transform="translate(42.989639)">
+    <path
+       class="stroke"
+       d="M 260,300 170,190 m 0,0 -50,50 m 50,-50 50,-70 -20,-30 m 60,210 -170,190 180,-40 90,30 80,-60 100,-120 m -245,0 h 245"
+       id="path8" />
+    <path
+       class="core"
+       d="M 260,300 170,190 m 0,0 -50,50 m 50,-50 50,-70 -20,-30 m 60,210 -170,190 180,-40 90,30 80,-60 100,-120 m -245,0 h 245"
+       id="path10" />
+  </g>
+  <g
+     class="node"
+     id="g36"
+     transform="translate(42.989639)">
+    <circle
+       cx="260"
+       cy="300"
+       r="28"
+       id="circle14" />
+    <circle
+       cx="295"
+       cy="300"
+       r="15"
+       id="circle16" />
+    <circle
+       cx="540"
+       cy="300"
+       r="18"
+       id="circle18" />
+    <circle
+       cx="170"
+       cy="190"
+       r="15"
+       id="circle20" />
+    <circle
+       cx="120"
+       cy="240"
+       r="13"
+       id="circle22" />
+    <circle
+       cx="220"
+       cy="120"
+       r="13"
+       id="circle24" />
+    <circle
+       cx="200"
+       cy="90"
+       r="9"
+       id="circle26" />
+    <circle
+       cx="90"
+       cy="490"
+       r="23"
+       id="circle28" />
+    <circle
+       cx="270"
+       cy="450"
+       r="19"
+       id="circle30" />
+    <circle
+       cx="360"
+       cy="480"
+       r="17"
+       id="circle32" />
+    <circle
+       cx="440"
+       cy="420"
+       r="13"
+       id="circle34" />
+  </g>
+  <g
+     aria-label="JS"
+     id="text38"
+     style="font-weight:bold;font-size:140px;fill:#323330;stroke-width:4.6;stroke-dasharray:none"
+     transform="translate(0.98963933,-12)">
+    <path
+       d="m 368.64,256.68 q -7.7,0 -15.12,-3.64 -7.42,-3.78 -12.18,-11.62 l 7.28,-7.14 q 3.92,6.16 9.1,9.24 5.32,2.94 10.64,2.94 9.94,0 14.42,-5.18 4.62,-5.32 4.62,-16.66 v -51.8 h -38.5 v -9.8 h 50.12 v 62.58 q 0,8.54 -2.94,15.68 -2.8,7 -9.38,11.2 -6.58,4.2 -18.06,4.2 z"
+       style="font-family:'SauceCodePro Nerd Font';-inkscape-font-specification:'SauceCodePro Nerd Font Bold';fill:#323330;fill-opacity:1;stroke:#ffffff;stroke-width:4.6;stroke-dasharray:none;stroke-opacity:1"
+       id="path429" />
+    <path
+       d="m 456.69979,256.68 q -10.08,0 -18.62,-3.64 -8.54,-3.78 -14.7,-9.94 l 7,-8.12 q 5.18,5.18 12.04,8.4 7,3.08 14.84,3.08 9.52,0 14.7,-4.06 5.32,-4.06 5.32,-10.5 0,-4.9 -2.24,-7.84 -2.1,-2.94 -5.88,-4.9 -3.64,-1.96 -8.4,-3.92 l -13.16,-5.74 q -4.62,-1.82 -9.24,-4.76 -4.48,-2.94 -7.56,-7.56 -3.08,-4.62 -3.08,-11.34 0,-7 3.78,-12.46 3.92,-5.6 10.64,-8.68 6.86,-3.22 15.68,-3.22 8.68,0 15.96,3.22 7.28,3.08 12.32,8.12 l -6.16,7.56 q -4.48,-4.06 -9.94,-6.3 -5.46,-2.38 -12.6,-2.38 -7.98,0 -12.88,3.64 -4.9,3.64 -4.9,9.8 0,4.34 2.38,7.14 2.52,2.8 6.3,4.62 3.78,1.82 7.7,3.5 l 12.88,5.6 q 5.74,2.24 10.22,5.46 4.62,3.08 7.28,7.7 2.8,4.48 2.8,11.34 0,7.28 -3.92,13.3 -3.92,5.88 -11.2,9.38 -7.28,3.5 -17.36,3.5 z"
+       style="font-family:'SauceCodePro Nerd Font';-inkscape-font-specification:'SauceCodePro Nerd Font Bold';fill:#323330;fill-opacity:1;stroke:#ffffff;stroke-width:4.6;stroke-dasharray:none;stroke-opacity:1"
+       id="path431" />
+  </g>
+</svg>

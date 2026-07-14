@@ -1,11 +1,14 @@
-# Reticulum.js - Reticulum Network System for JavaScript
+# reticulum-js - Reticulum Network System for JavaScript
+
+![reticulum-js logo](./docs/assets/reticulum-js.png)
 
 This repository aims to produce a dependency-free JavaScript implementation of the [Reticulum Network System](https://reticulum.network/).
 
-Some principles:
+## Design principles
+
 * Runs on both modern web browsers and server-side JS engines like Node.js and Deno
-* Zero or minimal runtime dependencies
-* Support for various [different interfaces](https://reticulum.network/manual/interfaces.html) depending what a platform can do (for example, browser can't connect to TCP interfaces)
+* Zero or minimal runtime dependencies (right now the only thing is that you need to bring your own `bz2` implementation if you deal with compressed resources)
+* Support for various [different interfaces](https://reticulum.network/manual/interfaces.html) depending what a platform can do (for example, a browser can't connect to TCP interfaces)
 * Asynchronous JavaScript API style using Promises and Web Streams
 * Type-safe using JsDoc TypeScript annotations
 
@@ -98,6 +101,8 @@ We also provide a sporadically updated GitHub mirror at `https://github.com/berg
 ## Acknowledgements
 
 Prior art includes [Liam Cottle's rns.js](https://github.com/liamcottle/rns.js).
+
+This project has been built with the assistance of various LLMs, both for conceptual planning and implementation. I acknowledge that AI code is not necessarily ideal, but at the same time, I'm [busy sailing](https://lille-oe.de).
 
 ## Support Reticulum-js
 
