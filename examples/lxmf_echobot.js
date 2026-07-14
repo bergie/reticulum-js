@@ -5,6 +5,7 @@ import {
   LXMRouter,
   Reticulum,
   TCPClientInterface,
+  toHex,
 } from "../src/index.js";
 
 // A simple Node.js file storage adapter for the bot's private key
@@ -39,9 +40,7 @@ async function startEchoBot() {
 
   // Load or generate the Bot's Ed25519 Identity
   const botIdentity = await Identity.loadOrGenerate(rns.storage);
-  console.log(
-    `Bot Identity Hash: ${Buffer.from(botIdentity.identityHash).toString("hex")}`,
-  );
+  console.log(`Bot Identity Hash: ${toHex(botIdentity.identityHash)}`);
 
   // Read our version string for the announce display name (§4.3 app_data).
   const { default: data } = await import("../package.json", {
@@ -53,7 +52,7 @@ async function startEchoBot() {
   const lxmf = new LXMRouter(botIdentity, rns);
   await lxmf.init();
   console.log(
-    `Bot Destination Hash: ${Buffer.from(lxmf.deliveryDest.destinationHash).toString("hex")}`,
+    `Bot Destination Hash: ${toHex(lxmf.deliveryDest.destinationHash)}`,
   );
 
   // Announce the bot's presence to the mesh. LXMRouter.announce attaches the
@@ -66,7 +65,7 @@ async function startEchoBot() {
   lxmf.addEventListener("message", async (event) => {
     const message = event.detail.message;
     const link = event.detail.link;
-    const senderHashHex = Buffer.from(message.sourceHash).toString("hex");
+    const senderHashHex = toHex(message.sourceHash);
 
     console.log(`\n[+] Received message from ${senderHashHex}`);
     if (message.title) {
