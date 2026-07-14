@@ -6,6 +6,7 @@ import {
   ContextType,
   DestType,
   getEnumName,
+  HeaderType,
   Packet,
   PacketType,
   TransportType,
@@ -147,6 +148,11 @@ export class TransportCore extends EventTarget {
    * @private
    */
   async _routeIncomingPacket(packet, receivingInterface) {
+    // §2.4 / Transport.py inbound (~l.1462): every transit hop — including the
+    // hop to us — increments the hop counter. Announces read this as the
+    // distance-to-us when populating the path table.
+    packet.hops = (packet.hops ?? 0) + 1;
+
     // 1. Log arrival
     log(
       "ROUTER",
@@ -166,7 +172,7 @@ export class TransportCore extends EventTarget {
 
     // If it's an ANNOUNCE, the router handles it, but don't re-broadcast it!
     if (packet.packetType === PacketType.ANNOUNCE) {
-      await this._handleAnnounce(packet);
+      await this._handleAnnounce(packet, receivingInterface);
       return; // STOP! Do not pass to any other logic.
     }
 
@@ -235,9 +241,12 @@ export class TransportCore extends EventTarget {
    * list population, etc.).
    *
    * @param {import("../core/packet.js").Packet} packet
+   * @param {import("../interfaces/base.js").Interface|null} receivingInterface
+   *   Interface the announce arrived on; recorded as the outbound interface
+   *   for the learned path.
    * @private
    */
-  async _handleAnnounce(packet) {
+  async _handleAnnounce(packet, receivingInterface) {
     const destHex = toHex(packet.destinationHash);
 
     // Self-announce filter (SPEC.md §9.5 / §4.5 step 8): never ingest our own
@@ -289,6 +298,27 @@ export class TransportCore extends EventTarget {
     );
     if (ratchet) {
       Destination.rememberRatchet(packet.destinationHash, ratchet);
+    }
+
+    // §7 path-table population: remember how to reach this destination. The
+    // next hop is the transport node that rebroadcast the announce (its id
+    // sits in the HEADER_2 transportId slot), or the destination itself when
+    // the announce reached us directly (HEADER_1, 1 hop). Transport.py inbound
+    // (~l.1716/1741) derives `received_from` the same way and stores it as the
+    // path entry's next_hop.
+    const nextHop = packet.transportId ?? packet.destinationHash;
+    const added = this.routingTable.addOrUpdateRoute(packet.destinationHash, {
+      nextHop,
+      hops: packet.hops,
+      viaInterface: receivingInterface,
+      randomBlob: randomHash,
+    });
+    if (added) {
+      log(
+        "Transport",
+        `Path to ${destHex} is now ${packet.hops} hop(s) away via ${toHex(nextHop)}`,
+        LogLevel.DEBUG,
+      );
     }
 
     log(
@@ -496,8 +526,24 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Sends a packet toward its destination (Transport.py outbound, ~l.1092).
+   *
+   * For routable destination types (SINGLE / LINK) with a known path, the
+   * packet is sent on the interface the path was learned through. When the
+   * destination is more than one hop away it is inserted into transport:
+   * rewritten to HEADER_2 with `transport_type = TRANSPORT` and the next hop's
+   * address as the transportId, so transit nodes can carry it hop-by-hop. A
+   * one-hop destination is transmitted as-is. PLAIN/GROUP destinations and
+   * anything with no known path fall back to the default interface (the leaf
+   * broadcast fallback).
+   *
+   * The packet hash / receipt are computed from the logical (HEADER_1) packet
+   * before any transport rewriting, so the PROOF returning over the reverse
+   * path resolves against the right hash.
+   *
    * @param {import("../core/packet.js").Packet} packet
-   * @param {Uint8Array|null} linkId
+   * @param {Uint8Array|null} [linkId] When set, hand the packet to the named
+   *   active link instead of routing by destination.
    */
   async sendPacket(packet, linkId = null) {
     const destHex = toHex(packet.destinationHash);
@@ -514,12 +560,41 @@ export class TransportCore extends EventTarget {
       return;
     }
 
-    const nextHopInterface =
-      this.routingTable.getRoute(packet.destinationHash)?.interface ||
-      this.defaultInterface;
+    // PLAIN/GROUP destinations are always broadcast; announces never reach
+    // here. Everything else is routable via the path table.
+    const routable =
+      packet.packetType !== PacketType.ANNOUNCE &&
+      packet.destinationType !== DestType.PLAIN &&
+      packet.destinationType !== DestType.GROUP;
+    const route = routable
+      ? this.routingTable.getRoute(packet.destinationHash)
+      : undefined;
 
-    if (nextHopInterface && nextHopInterface._packetWriter) {
-      await nextHopInterface._packetWriter.write(packet);
+    if (route) {
+      // §Transport.outbound (~l.1126): send on the interface the path was
+      // learned through, injecting transport headers when >1 hop away.
+      if (route.hops > 1 && packet.headerType === HeaderType.HEADER_1) {
+        const injected = new Packet({
+          headerType: HeaderType.HEADER_2,
+          hops: packet.hops,
+          transportType: TransportType.TRANSPORT,
+          destinationType: packet.destinationType,
+          packetType: packet.packetType,
+          contextFlag: packet.contextFlag,
+          destinationHash: packet.destinationHash,
+          contextByte: packet.contextByte,
+          payload: packet.payload,
+          transportId: route.nextHop,
+        });
+        await this._transmit(route.interface, injected);
+      } else {
+        // Direct (1 hop) or already in transport: transmit unchanged.
+        await this._transmit(route.interface, packet);
+      }
+      route.timestamp = Date.now();
+    } else if (this.defaultInterface && this.defaultInterface._packetWriter) {
+      // No known path: broadcast on the default interface (leaf fallback).
+      await this.defaultInterface._packetWriter.write(packet);
     } else {
       throw new Error(`No route to host: ${destHex}`);
     }
@@ -535,5 +610,50 @@ export class TransportCore extends EventTarget {
         new PacketReceipt(packetHash, packet.destinationHash),
       );
     }
+  }
+
+  /**
+   * Writes a packet to an interface's outbound framer.
+   * @param {import("../interfaces/base.js").Interface|null} iface
+   * @param {import("../core/packet.js").Packet} packet
+   * @private
+   */
+  async _transmit(iface, packet) {
+    if (!iface || !iface._packetWriter) {
+      throw new Error(
+        `Interface ${iface?.name ?? "unknown"} has no packet writer`,
+      );
+    }
+    await iface._packetWriter.write(packet);
+  }
+
+  /**
+   * Whether a path is currently known for the destination (Transport.has_path).
+   * @param {Uint8Array} destinationHash
+   * @returns {boolean}
+   */
+  hasPath(destinationHash) {
+    return this.routingTable.hasRoute(destinationHash);
+  }
+
+  /**
+   * The hop count to the destination, or `null` if no path is known
+   * (Transport.hops_to).
+   * @param {Uint8Array} destinationHash
+   * @returns {number|null}
+   */
+  hopsTo(destinationHash) {
+    return this.routingTable.getRoute(destinationHash)?.hops ?? null;
+  }
+
+  /**
+   * The 16-byte address of the next transport hop toward the destination, or
+   * `null` if no path is known (Transport.next_hop). This is the value placed
+   * into HEADER_2 when sending.
+   * @param {Uint8Array} destinationHash
+   * @returns {Uint8Array|null}
+   */
+  nextHop(destinationHash) {
+    return this.routingTable.getRoute(destinationHash)?.nextHop ?? null;
   }
 }
