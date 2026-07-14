@@ -6,6 +6,7 @@
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
+import { Resource } from "../core/resource.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { buildAnnounceAppData, parseAnnounceAppData } from "./announce_data.js";
@@ -133,14 +134,40 @@ export class LXMRouter extends EventTarget {
           const link = await /** @type {any} */ (this.deliveryDest).acceptLink(
             event.detail.packet,
           );
+          // Inject the caller-supplied bz2 module so any compressed inbound
+          // resource can be decompressed (§10.2). Harmless when absent.
+          link.bz2 = this.rns.compressionProvider || undefined;
 
-          // Listen for data streaming over the established link
+          // Listen for single-packet LXMF messages over the established link
           link.addEventListener("data", async (/** @type {any} */ pktEvent) => {
             await this._processIncomingMessage(
               /** @type {any} */ (pktEvent).detail.packet.payload,
               pktEvent.detail.link,
               expectedDestHash,
             );
+          });
+
+          // §5.2/§10.1: a large DIRECT message arrives as a Resource. Feed the
+          // reassembled, integrity-checked body through the same inbound path
+          // as a single-packet message once the transfer completes.
+          link.addEventListener("resource", (/** @type {any} */ resEvent) => {
+            const resource = /** @type {any} */ (resEvent).detail.resource;
+            resource
+              .whenComplete()
+              .then(() => {
+                this._processIncomingMessage(
+                  /** @type {Uint8Array} */ (resource.data),
+                  link.linkId,
+                  expectedDestHash,
+                );
+              })
+              .catch((/** @type {Error} */ err) => {
+                log(
+                  "LXMF",
+                  `Incoming LXMF resource transfer failed: ${err}`,
+                  LogLevel.ERROR,
+                );
+              });
           });
 
           // Python LXMF is not ready to receive messages until it has identified
@@ -343,6 +370,20 @@ export class LXMRouter extends EventTarget {
         if (link.initiator && !this.identifiedLinks.has(linkKey)) {
           await link.identify(senderIdentity);
           this.identifiedLinks.add(linkKey);
+        }
+        // §5.2/§10.1: a DIRECT body larger than the Link MDU must be sent as a
+        // Resource. The boundary is exactly the Link MDU (431 B at mtu 500);
+        // the spec's "319-byte LXMF content size" is the same threshold
+        // expressed as `MDU − LXMF_OVERHEAD(112)`.
+        if (wireData.length > link.mdu) {
+          if (!link.bz2) link.bz2 = this.rns.compressionProvider || undefined;
+          const resource = new Resource({
+            data: wireData,
+            link,
+            bz2: link.bz2,
+          });
+          await resource.advertise();
+          return;
         }
       }
     }
