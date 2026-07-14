@@ -9,6 +9,62 @@
  */
 export const APP_NAME = "lxmf";
 
+// --- Delivery methods (LXMessage.py) ---
+/** Delivery via a single opportunistic encrypted packet (§5.1). */
+export const DeliveryMethod = Object.freeze({
+  OPPORTUNISTIC: 0x01,
+  DIRECT: 0x02,
+  PROPAGATED: 0x03,
+  PAPER: 0x05,
+});
+
+// --- Propagation request paths (LXMPeer.py) ---
+/** Node-to-node sync offer (peer mesh). Client→node submit uses a Resource. */
+export const OFFER_REQUEST_PATH = "/offer";
+/** Client↔node message download: list, fetch, and purge-ack (LXMPeer.py). */
+export const MESSAGE_GET_PATH = "/get";
+
+// --- Propagation limits & costs in KB (LXMRouter.py) ---
+/** Per-transfer propagation limit (KB). */
+export const PROPAGATION_LIMIT = 256;
+/** Per-sync propagation limit (KB). */
+export const SYNC_LIMIT = 10240;
+/** Per-delivery-transfer limit (KB) for direct/link downloads. */
+export const DELIVERY_LIMIT = 1000;
+export const PROPAGATION_COST_MIN = 13;
+export const PROPAGATION_COST = 16;
+export const PROPAGATION_COST_FLEX = 3;
+export const PEERING_COST = 18;
+export const MAX_PEERING_COST = 26;
+
+// --- Peer error codes returned from propagation request handlers (LXMPeer.py) ---
+export const PEER_ERROR_NO_IDENTITY = 0xf0;
+export const PEER_ERROR_NO_ACCESS = 0xf1;
+export const PEER_ERROR_INVALID_KEY = 0xf3;
+export const PEER_ERROR_INVALID_DATA = 0xf4;
+export const PEER_ERROR_INVALID_STAMP = 0xf5;
+export const PEER_ERROR_THROTTLED = 0xf6;
+
+// --- Propagation transfer states (LXMRouter.py PR_*) ---
+export const TransferState = Object.freeze({
+  IDLE: 0x00,
+  PATH_REQUESTED: 0x01,
+  LINK_ESTABLISHING: 0x02,
+  LINK_ESTABLISHED: 0x03,
+  REQUEST_SENT: 0x04,
+  RECEIVING: 0x05,
+  COMPLETE: 0x07,
+  LINK_FAILED: 0xf1,
+});
+/** Sentinel for `request_messages_from_propagation_node`: fetch everything. */
+export const ALL_MESSAGES = 0x00;
+
+// --- LXMF message geometry (LXMessage.py) ---
+/** Fixed overhead of a packed LXMF message (dest+src+signature). */
+export const LXMF_OVERHEAD = 112;
+/** Size of a proof-of-work stamp appended to the payload (LXStamper.py). */
+export const STAMP_SIZE = 32;
+
 // --- Top-level `fields` dict keys (§5.9.1) ---
 /** A list of further LXMF messages embedded inside this one. */
 export const FIELD_EMBEDDED_LXMS = 0x01;

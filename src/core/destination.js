@@ -903,6 +903,27 @@ export class Destination extends EventTarget {
   }
 
   /**
+   * Decrypts data that was encrypted for this destination's identity.
+   *
+   * Tries each owned ratchet private key (newest first) before the long-term
+   * key (§7.4), so messages encrypted to a just-rotated ratchet still decrypt.
+   * Returns `null` when decryption fails (wrong recipient / unknown key).
+   *
+   * @param {Uint8Array} data
+   * @returns {Promise<Uint8Array|null>}
+   */
+  async decrypt(data) {
+    if (!this.identity) {
+      throw new Error("Destination requires an identity to decrypt.");
+    }
+    const privRing =
+      this.ratchetsEnabled && this.ratchets
+        ? this.ratchets.map((r) => r.privateKey)
+        : null;
+    return await this.identity.decrypt(data, privRing);
+  }
+
+  /**
    * Encrypts the packet payload for this destination and sends it via the
    * bound transport.
    * @param {Packet} packet

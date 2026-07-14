@@ -379,4 +379,77 @@ export class Message {
 
     return false;
   }
+
+  // ------------------------------------------------------------------
+  // Propagation form (§5.3)
+  // ------------------------------------------------------------------
+
+  /**
+   * Packs this message into the propagation ("lxmf_data") form used when
+   * submitting to a propagation node or syncing between nodes (§5.3):
+   *
+   *   lxmf_data = destination_hash(16)
+   *             || E_outbound(source_hash(16) || signature(64) || payload)
+   *
+   * Only the leading destination hash is in cleartext (so the node can route
+   * by recipient and compute the dedup key); the body is encrypted to the
+   * recipient (using their recalled ratchet when one is known, §7.4). The
+   * `transientId` is SHA-256 over the whole `lxmf_data` and is the store/
+   * dedup key (LXMRouter.lxmf_propagation).
+   *
+   * Serializes first if needed.
+   *
+   * @param {import("../core/identity.js").Identity} sourceIdentity
+   * @param {import("../core/destination.js").Destination} outboundDestination
+   *   recipient `lxmf.delivery` destination (Direction.OUT; holds the
+   *   recipient public key + recalled ratchet). Must share this message's
+   *   `destinationHash`.
+   * @returns {Promise<{lxmfData: Uint8Array, transientId: Uint8Array, wireData: Uint8Array}>}
+   */
+  async toPropagationData(sourceIdentity, outboundDestination) {
+    const { wireData } = await this.serialize(sourceIdentity);
+    const encrypted = await outboundDestination.encrypt(
+      wireData.subarray(DESTINATION_LENGTH),
+    );
+    const lxmfData = new Uint8Array(DESTINATION_LENGTH + encrypted.length);
+    lxmfData.set(wireData.subarray(0, DESTINATION_LENGTH), 0);
+    lxmfData.set(encrypted, DESTINATION_LENGTH);
+    const transientId = await Message.transientIdFromPropagationData(lxmfData);
+    return { lxmfData, transientId, wireData };
+  }
+
+  /**
+   * Computes the propagation dedup key `transient_id = SHA-256(lxmf_data)`
+   * (LXMRouter.lxmf_propagation). Identical on both client and node.
+   *
+   * @param {Uint8Array} lxmfData
+   * @returns {Promise<Uint8Array>}
+   */
+  static async transientIdFromPropagationData(lxmfData) {
+    return await fullHash(lxmfData);
+  }
+
+  /**
+   * Decrypts and reconstructs an LXMF message from its propagation
+   * ("lxmf_data") form (§5.3). The destination hash is taken from the leading
+   * 16 bytes; the remainder is decrypted with the recipient's inbound
+   * `lxmf.delivery` destination (long-term key + owned ratchet ring, §7.4).
+   *
+   * @param {Uint8Array} lxmfData
+   * @param {import("../core/destination.js").Destination} deliveryDestination
+   *   recipient's inbound `lxmf.delivery` destination.
+   * @returns {Promise<Message|null>} `null` when decryption fails (wrong
+   *   recipient / unknown ratchet) or the input is too short.
+   */
+  static async fromPropagationData(lxmfData, deliveryDestination) {
+    if (!lxmfData || lxmfData.length < DESTINATION_LENGTH) return null;
+    const destinationHash = lxmfData.subarray(0, DESTINATION_LENGTH);
+    const encrypted = lxmfData.subarray(DESTINATION_LENGTH);
+    const decrypted = await deliveryDestination.decrypt(encrypted);
+    if (!decrypted) return null;
+    const wireData = new Uint8Array(DESTINATION_LENGTH + decrypted.length);
+    wireData.set(destinationHash, 0);
+    wireData.set(decrypted, DESTINATION_LENGTH);
+    return await Message.deserialize(wireData, destinationHash);
+  }
 }

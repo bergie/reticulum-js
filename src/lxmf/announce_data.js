@@ -19,7 +19,7 @@
  */
 
 import { MicroMsgPack } from "../utils/msgpack.js";
-import { SF_COMPRESSION } from "./constants.js";
+import { PN_META_NAME, SF_COMPRESSION } from "./constants.js";
 
 /**
  * Builds the msgpack `app_data` blob for an `lxmf.delivery` announce.
@@ -163,4 +163,119 @@ function decodeStampCost(value) {
     return /** @type {number} */ (value);
   }
   return null;
+}
+
+// ------------------------------------------------------------------
+// Propagation-node announce app_data (§5.9.5 / LXMRouter.get_propagation_node_app_data)
+// ------------------------------------------------------------------
+
+/**
+ * Parsed propagation-node announce `app_data`.
+ *
+ * @typedef {Object} PropagationNodeAppData
+ * @property {number} timebase Node timebase (unix seconds).
+ * @property {boolean} nodeState Whether this instance acts as a propagation node.
+ * @property {number} perTransferLimitKb Per-transfer propagation limit (KB).
+ * @property {number} perSyncLimitKb Per-sync propagation limit (KB).
+ * @property {number} stampCost Required propagation stamp cost.
+ * @property {number} stampCostFlexibility Stamp cost flexibility.
+ * @property {number} peeringCost Peering cost.
+ * @property {string|null} name Optional operator node name.
+ */
+
+/**
+ * Builds the msgpack `app_data` blob for an `lxmf.propagation` announce.
+ *
+ * Wire layout (`LXMRouter.get_propagation_node_app_data`):
+ *
+ *   [ false,                    // 0: legacy LXMF PN support (always False)
+ *     timebase(int),            // 1: current node timebase
+ *     node_state(bool),         // 2: is a propagation node
+ *     per_transfer_limit(int),  // 3: KB
+ *     per_sync_limit(int),      // 4: KB
+ *     [cost, flex, peering],    // 5: stamp-cost triplet
+ *     metadata ]                // 6: {PN_META_NAME: bin} (integer keys)
+ *
+ * The metadata map uses **integer** keys to match upstream umsgpack, so it is
+ * built from a `Map` rather than a plain object.
+ *
+ * @param {Object} options
+ * @param {number} options.timebase
+ * @param {boolean} options.nodeState
+ * @param {number} options.perTransferLimitKb
+ * @param {number} options.perSyncLimitKb
+ * @param {number} options.stampCost
+ * @param {number} options.stampCostFlexibility
+ * @param {number} options.peeringCost
+ * @param {string|null} [options.name=null]
+ * @returns {Uint8Array}
+ */
+export function buildPropagationNodeAppData({
+  timebase,
+  nodeState,
+  perTransferLimitKb,
+  perSyncLimitKb,
+  stampCost,
+  stampCostFlexibility,
+  peeringCost,
+  name = null,
+}) {
+  /** @type {Map<number, Uint8Array>} */
+  const metadata = new Map();
+  if (name) {
+    metadata.set(PN_META_NAME, new TextEncoder().encode(name));
+  }
+  return MicroMsgPack.encode([
+    false,
+    Math.trunc(timebase),
+    !!nodeState,
+    perTransferLimitKb,
+    perSyncLimitKb,
+    [stampCost, stampCostFlexibility, peeringCost],
+    metadata,
+  ]);
+}
+
+/**
+ * Parses an `lxmf.propagation` announce `app_data` blob.
+ *
+ * Tolerates a missing/trailing metadata map. Returns `null` when the bytes are
+ * absent or not the expected 7-element `[bool, int, bool, int, int, [3 ints], map]`.
+ *
+ * @param {Uint8Array|null|undefined} bytes
+ * @returns {PropagationNodeAppData|null}
+ */
+export function parsePropagationNodeAppData(bytes) {
+  if (!bytes || bytes.length === 0) return null;
+  let value;
+  try {
+    value = MicroMsgPack.decode(bytes);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(value) || value.length < 7) return null;
+
+  const num = (/** @type {unknown} */ v, d = 0) =>
+    typeof v === "number" ? v : d;
+  const costs = Array.isArray(value[5]) ? value[5] : [];
+
+  // msgpack maps decode to a plain object with string-coerced keys, so the
+  // integer key PN_META_NAME (0x01) lands under the string "1".
+  const metadata = value[6] && typeof value[6] === "object" ? value[6] : {};
+  const nameVal = metadata[String(PN_META_NAME)];
+  let name = null;
+  if (typeof nameVal === "string") name = nameVal;
+  else if (nameVal instanceof Uint8Array)
+    name = new TextDecoder().decode(nameVal);
+
+  return {
+    timebase: num(value[1]),
+    nodeState: !!value[2],
+    perTransferLimitKb: num(value[3]),
+    perSyncLimitKb: num(value[4]),
+    stampCost: num(costs[0]),
+    stampCostFlexibility: num(costs[1]),
+    peeringCost: num(costs[2]),
+    name,
+  };
 }
