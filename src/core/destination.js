@@ -7,7 +7,13 @@ import { Link } from "../transport/link.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { Identity } from "./identity.js";
-import { DestType, Packet, PacketType, TransportType } from "./packet.js";
+import {
+  ContextType,
+  DestType,
+  Packet,
+  PacketType,
+  TransportType,
+} from "./packet.js";
 
 /**
  * @enum {number}
@@ -417,6 +423,11 @@ export class Destination extends EventTarget {
   /**
    * Decrypts (where applicable) and dispatches an inbound DATA packet
    * as a `data` event.
+   *
+   * For a CTX_NONE DATA packet addressed to a SINGLE destination we hold the
+   * private key for, this also emits the regular PROOF receipt (§6.5) so the
+   * sender's `PacketReceipt` resolves — without it the sender retransmits
+   * indefinitely (and, on a link, the KEEPALIVE budget is exhausted).
    * @param {import('./packet.js').Packet} packet
    * @private
    */
@@ -430,7 +441,69 @@ export class Destination extends EventTarget {
 
     if (plaintext) {
       this.dispatchEvent(new CustomEvent("data", { detail: { plaintext } }));
+
+      // §6.5: emit a regular PROOF for opportunistic CTX_NONE DATA once the
+      // packet has been successfully received and processed.
+      if (
+        packet.packetType === PacketType.DATA &&
+        packet.contextByte === ContextType.NONE &&
+        this.type === DestType.SINGLE &&
+        this.identity &&
+        this.identity.ed25519Priv &&
+        this.interfaceLayer
+      ) {
+        try {
+          await this._provePacket(packet);
+        } catch (err) {
+          log("Destination", `Failed to emit PROOF: ${err}`, LogLevel.WARN);
+        }
+      }
     }
+  }
+
+  /**
+   * Builds and sends the regular PROOF for a received DATA packet (§6.5).
+   *
+   *   packet_hash = SHA-256(get_hashable_part(packet))   (32 bytes)
+   *   signature   = Ed25519_sign(packet_hash)            (64 bytes)
+   *   proof_data  = implicit (signature) | explicit (packet_hash || signature)
+   *
+   * The PROOF is a `packet_type = PROOF (3)`, `context = NONE (0x00)` packet
+   * addressed to `dest_hash = packet_hash[:16]` (the synthetic ProofDestination).
+   * Upstream defaults to the 64-byte implicit form (`use_implicit_proof = True`).
+   *
+   * @param {import('./packet.js').Packet} packet
+   * @private
+   */
+  async _provePacket(packet) {
+    // _handleData guards these before calling, but narrow for the type checker
+    // and defensive callers alike.
+    if (!this.identity || !this.interfaceLayer) return;
+    const packetHash = await packet.getHash();
+    const signature = await this.identity.sign(packetHash);
+
+    const useImplicit =
+      /** @type {{ useImplicitProof?: boolean } | null} */ (this.interfaceLayer)
+        ?.useImplicitProof ?? true;
+
+    let proofData;
+    if (useImplicit) {
+      proofData = signature;
+    } else {
+      proofData = new Uint8Array(96);
+      proofData.set(packetHash, 0);
+      proofData.set(signature, 32);
+    }
+
+    const proofPacket = new Packet({
+      packetType: PacketType.PROOF,
+      destinationType: DestType.SINGLE,
+      destinationHash: packetHash.slice(0, 16),
+      contextByte: ContextType.NONE,
+      payload: proofData,
+    });
+
+    this.interfaceLayer.broadcast(proofPacket);
   }
 
   /**

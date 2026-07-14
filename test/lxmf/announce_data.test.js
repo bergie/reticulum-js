@@ -10,8 +10,8 @@ import {
   buildAnnounceAppData,
   parseAnnounceAppData,
 } from "../../src/lxmf/announce_data.js";
-import { MicroMsgPack } from "../../src/utils/msgpack.js";
 import { SF_COMPRESSION } from "../../src/lxmf/constants.js";
+import { MicroMsgPack } from "../../src/utils/msgpack.js";
 
 // ---------------------------------------------------------------------------
 // Builder — canonical wire bytes
@@ -28,22 +28,8 @@ test("§4.3 buildAnnounceAppData emits the canonical 3-element msgpack array", (
   assert.deepStrictEqual(
     Array.from(bytes),
     [
-      0x93,
-      0xc4,
-      0x0a,
-      0x52,
-      0x65,
-      0x74,
-      0x69,
-      0x63,
-      0x75,
-      0x6c,
-      0x75,
-      0x6d,
-      0x35,
-      0xc0,
-      0x91,
-      0x00,
+      0x93, 0xc4, 0x0a, 0x52, 0x65, 0x74, 0x69, 0x63, 0x75, 0x6c, 0x75, 0x6d,
+      0x35, 0xc0, 0x91, 0x00,
     ],
   );
 });

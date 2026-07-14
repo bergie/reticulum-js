@@ -8,10 +8,7 @@ import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
-import {
-  buildAnnounceAppData,
-  parseAnnounceAppData,
-} from "./announce_data.js";
+import { buildAnnounceAppData, parseAnnounceAppData } from "./announce_data.js";
 import { Message } from "./message.js";
 
 /**
@@ -88,7 +85,10 @@ export class LXMRouter extends EventTarget {
     // Slice so the identity owns an ArrayBuffer-backed copy (the §4.3 blob is
     // signed verbatim by Destination.announce, so the bytes must not alias a
     // larger transient buffer).
-    this.identity.appData = buildAnnounceAppData(displayName, stampCost).slice();
+    this.identity.appData = buildAnnounceAppData(
+      displayName,
+      stampCost,
+    ).slice();
     await this.deliveryDest.announce();
   }
 

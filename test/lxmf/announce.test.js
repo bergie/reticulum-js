@@ -11,13 +11,13 @@
  */
 import assert from "node:assert";
 import test from "node:test";
+import { Identity } from "../../src/core/identity.js";
 import {
   buildAnnounceAppData,
   parseAnnounceAppData,
 } from "../../src/lxmf/announce_data.js";
-import { LXMRouter } from "../../src/lxmf/router.js";
 import { SF_COMPRESSION } from "../../src/lxmf/constants.js";
-import { Identity } from "../../src/core/identity.js";
+import { LXMRouter } from "../../src/lxmf/router.js";
 
 /**
  * Builds a mock RNS core whose `transport` is a real EventTarget so the

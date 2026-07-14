@@ -3,6 +3,7 @@
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, getEnumName, PacketType } from "../core/packet.js";
+import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { RoutingTable } from "./router.js";
@@ -139,14 +140,30 @@ export class TransportCore extends EventTarget {
       );
     }
 
+    // Destination hash hex, reused by several branches below.
+    const destHex = toHex(packet.destinationHash);
+
     // If it's an ANNOUNCE, the router handles it, but don't re-broadcast it!
     if (packet.packetType === PacketType.ANNOUNCE) {
       await this._handleAnnounce(packet);
       return; // STOP! Do not pass to any other logic.
     }
 
+    // §6.5: a regular PROOF (packet_type=PROOF, context=NONE) is addressed to
+    // the 16-byte truncation of the proved packet's hash — a synthetic
+    // ProofDestination, not a registered local dest. Intercept it here and
+    // resolve the matching outbound PacketReceipt. Link proofs (dest = link_id)
+    // and LRPROOFs (context=0xFF) are routed by their respective handlers.
+    if (
+      packet.packetType === PacketType.PROOF &&
+      packet.contextByte === ContextType.NONE &&
+      !this.activeLinks.has(destHex)
+    ) {
+      await this._handleProof(packet);
+      return;
+    }
+
     // 2. CHECK IF THIS PACKET IS FOR US
-    const destHex = toHex(packet.destinationHash);
 
     // 3. If it's for a known local destination, route it there
     if (this.localDestinations.has(destHex)) {
@@ -263,6 +280,44 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Resolves an inbound regular PROOF packet (§6.5) against the outstanding
+   * {@link PacketReceipt} tracked for the proved outbound DATA packet.
+   *
+   * The PROOF's `dest_hash` is the 16-byte truncation of the proved packet's
+   * hash; the receipt is looked up by that key, then the proof body is
+   * length-dispatched (96 B explicit / 64 B implicit) and the Ed25519
+   * signature verified. On success the receipt is marked delivered and its
+   * callback fired; otherwise the proof is dropped silently (no NACK, §6.5.5).
+   *
+   * @param {import("../core/packet.js").Packet} packet
+   * @private
+   */
+  async _handleProof(packet) {
+    const receipt = PacketReceipt.find(packet.destinationHash);
+    if (!receipt || receipt.status !== ReceiptStatus.SENDING) {
+      log(
+        "Transport",
+        `No outstanding receipt for PROOF ${toHex(packet.destinationHash)}`,
+        LogLevel.DEBUG,
+      );
+      return;
+    }
+    if (await receipt.validateProof(packet.payload)) {
+      receipt.setDelivered();
+      log(
+        "Transport",
+        `PROOF validated for ${toHex(packet.destinationHash)} — receipt delivered`,
+      );
+    } else {
+      log(
+        "Transport",
+        `PROOF validation failed for ${toHex(packet.destinationHash)}`,
+        LogLevel.WARN,
+      );
+    }
+  }
+
+  /**
    * @param {import("../core/packet.js").Packet} packet
    * @param {import("../interfaces/base.js").Interface|null} sourceInterface
    */
@@ -287,8 +342,8 @@ export class TransportCore extends EventTarget {
    */
   async sendPacket(packet, linkId = null) {
     const destHex = toHex(packet.destinationHash);
-    const packetHex = toHex(await packet.getHash());
-    log("Transport", `Send ${packetHex} to ${destHex}`);
+    const packetHash = await packet.getHash();
+    log("Transport", `Send ${toHex(packetHash)} to ${destHex}`);
 
     if (linkId) {
       const linkHex = toHex(linkId);
@@ -308,6 +363,18 @@ export class TransportCore extends EventTarget {
       await nextHopInterface._packetWriter.write(packet);
     } else {
       throw new Error(`No route to host: ${destHex}`);
+    }
+
+    // §6.5: track a PacketReceipt for opportunistic CTX_NONE DATA so the
+    // receiver's PROOF can resolve it. Link DATA proofs are always explicit
+    // and resolved on the link itself, so they are excluded here.
+    if (
+      packet.packetType === PacketType.DATA &&
+      packet.contextByte === ContextType.NONE
+    ) {
+      PacketReceipt.track(
+        new PacketReceipt(packetHash, packet.destinationHash),
+      );
     }
   }
 }

@@ -16,6 +16,7 @@ export {
   PacketType,
   TransportType,
 } from "./core/packet.js";
+export { PacketReceipt, ReceiptStatus } from "./core/packet_receipt.js";
 export { Resource } from "./core/resource.js";
 // --- 1. Core Orchestration ---
 // The primary client class that wires the transport router, interfaces, and compression together.

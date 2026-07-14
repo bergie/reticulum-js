@@ -13,10 +13,16 @@ export class Reticulum {
    * @param {Object} config - Configuration options for the node.
    * @param {Object} [config.storageAdapter] - Interface for persisting identities and caches.
    * @param {Object} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
+   * @param {boolean} [config.useImplicitProof] - §6.5.2 PROOF form for opportunistic DATA: `true` (default, upstream) emits the 64-byte implicit body; `false` emits the 96-byte explicit body.
    */
   constructor(config = {}) {
     this.storage = config.storageAdapter || null;
     this.compressionProvider = config.compressionProvider || null;
+
+    // §6.5.2: upstream defaults to `use_implicit_proof = True`, emitting the
+    // 64-byte implicit PROOF form. Set `useImplicitProof: false` to emit the
+    // 96-byte explicit form (packet_hash || signature).
+    this.useImplicitProof = config.useImplicitProof ?? true;
 
     // The internal router that handles Interface failover, KISS framing, and packet delivery
     this.transport = new TransportCore();
