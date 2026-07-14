@@ -1,0 +1,12 @@
+.github
+.git
+.DS_Store
+.editorconfig
+Reticulum/
+docs/
+test/
+*.key
+PROTOCOL-SPEC.md
+SPEC.md
+AGENTS.md
+tsconfig.json

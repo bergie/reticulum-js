@@ -4,3 +4,4 @@ Reticulum/
 out/
 PROTOCOL-SPEC.md
 *.key
+*.tgz
