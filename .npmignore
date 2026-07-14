@@ -5,8 +5,10 @@
 Reticulum/
 docs/
 test/
+dist/
 *.key
 *.tgz
+*.rsm
 PROTOCOL-SPEC.md
 SPEC.md
 AGENTS.md
