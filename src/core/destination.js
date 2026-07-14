@@ -120,8 +120,34 @@ export class Destination extends EventTarget {
   /**
    * Broadcasts an Announce packet advertising this destination's public key,
    * name hash and signed metadata so peers can learn and remember it.
+   *
+   * Emits with `context = NONE` (a regular periodic announce). Use
+   * {@link announcePathResponse} to answer a `path?` request.
    */
   async announce() {
+    await this._emitAnnounce(ContextType.NONE);
+  }
+
+  /**
+   * Broadcasts a **path-response** announce — identical body to a regular
+   * announce (§4.1) but with the outer packet's context byte set to
+   * `PATH_RESPONSE = 0x0B` (§7.2.4). Emitted in answer to an inbound `path?`
+   * request so the requester can learn a route back to us. The announce body
+   * validates identically under §4.5; only the context byte distinguishes it.
+   */
+  async announcePathResponse() {
+    await this._emitAnnounce(ContextType.PATH_RESPONSE);
+  }
+
+  /**
+   * Builds and broadcasts an announce packet with the given context byte.
+   * Shared by {@link announce} (NONE) and {@link announcePathResponse}
+   * (PATH_RESPONSE).
+   *
+   * @param {number} contextByte
+   * @private
+   */
+  async _emitAnnounce(contextByte) {
     if (!this.interfaceLayer)
       throw new Error("Destination not bound to an RNS instance.");
 
@@ -182,6 +208,7 @@ export class Destination extends EventTarget {
       destinationType: this.type,
       destinationHash: this.destinationHash,
       transportType: TransportType.BROADCAST,
+      contextByte,
       payload: payload,
     });
 

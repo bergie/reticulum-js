@@ -1,8 +1,15 @@
 // src/transport/transport.js
 
-import { Destination } from "../core/destination.js";
+import { Destination, Direction } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
-import { ContextType, getEnumName, PacketType } from "../core/packet.js";
+import {
+  ContextType,
+  DestType,
+  getEnumName,
+  Packet,
+  PacketType,
+  TransportType,
+} from "../core/packet.js";
 import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
@@ -14,6 +21,12 @@ import { RoutingTable } from "./router.js";
  */
 export class TransportCore extends EventTarget {
   /**
+   * The well-known `path?` request destination app name (§7.1). Every node
+   * resolves its dest_hash identically: `6b9f66014d9853faab220fba47d02761`.
+   */
+  static PATH_REQUEST_APP_NAME = "rnstransport.path.request";
+
+  /**
    * Creates an empty transport core with no interfaces, links or routes.
    */
   constructor() {
@@ -23,6 +36,14 @@ export class TransportCore extends EventTarget {
     this.activeLinks = new Map();
     this.routingTable = new RoutingTable();
     this.defaultInterface = null;
+
+    // §7.2.2: path-request dedup tags (unique_tag = dest_hash || tag). A leaf
+    // keeps a small bounded ring so a flood of retransmits for the same target
+    // doesn't trigger redundant path-response announces.
+    /** @type {string[]} */
+    this.discoveryPrTags = [];
+    /** @type {number} */
+    this.maxPrTags = 256;
   }
 
   /**
@@ -160,6 +181,17 @@ export class TransportCore extends EventTarget {
       !this.activeLinks.has(destHex)
     ) {
       await this._handleProof(packet);
+      return;
+    }
+
+    // §7.1: a `path?` request is a DATA packet addressed to the well-known
+    // `rnstransport.path.request` PLAIN destination. Every node intercepts it
+    // (it's not a registered local dest) and answers if it owns the target.
+    if (
+      packet.packetType === PacketType.DATA &&
+      bytesEqual(packet.destinationHash, await this._pathRequestDestHash())
+    ) {
+      await this._handlePathRequest(packet, receivingInterface);
       return;
     }
 
@@ -315,6 +347,133 @@ export class TransportCore extends EventTarget {
         LogLevel.WARN,
       );
     }
+  }
+
+  // -----------------------------------------------------------------------
+  // Path requests (SPEC.md §7.1 / §7.2 — leaf minimum)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Lazily computes and caches the well-known `rnstransport.path.request`
+   * destination hash. Every node resolves this identically via the PLAIN
+   * recipe (§1.4.3, identity == None) — verified constant
+   * `6b9f66014d9853faab220fba47d02761`.
+   *
+   * @returns {Promise<Uint8Array>}
+   * @private
+   */
+  static _pathRequestDestHashCached = /** @type {Uint8Array|null} */ (null);
+  async _pathRequestDestHash() {
+    let hash = TransportCore._pathRequestDestHashCached;
+    if (!hash) {
+      const dest = await Destination.PLAIN(
+        TransportCore.PATH_REQUEST_APP_NAME,
+        Direction.IN,
+      );
+      hash = /** @type {Uint8Array} */ (dest.destinationHash);
+      TransportCore._pathRequestDestHashCached = hash;
+    }
+    return hash;
+  }
+
+  /**
+   * Sends a `path?` request for a destination we have no route to (§7.1).
+   *
+   * Leaf form: `target_dest_hash(16) || random_tag(16)` (32 bytes). The tag
+   * makes the request unique enough for relay dedup (§7.2.2); a fresh random
+   * tag is drawn per request so re-requests for the same destination aren't
+   * suppressed as duplicates.
+   *
+   * @param {Uint8Array} destinationHash - 16-byte destination to discover.
+   */
+  async requestPath(destinationHash) {
+    if (!destinationHash || destinationHash.length !== 16) {
+      throw new Error("requestPath requires a 16-byte destination hash");
+    }
+    const tag = Identity.getRandomHash().slice(0, 16);
+    const payload = new Uint8Array(32);
+    payload.set(destinationHash, 0);
+    payload.set(tag, 16);
+
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.PLAIN,
+      destinationHash: await this._pathRequestDestHash(),
+      transportType: TransportType.BROADCAST,
+      contextByte: ContextType.NONE,
+      payload,
+    });
+    log(
+      "Transport",
+      `Requesting path to ${toHex(destinationHash)}`,
+      LogLevel.DEBUG,
+    );
+    this.broadcast(packet);
+  }
+
+  /**
+   * Handles an inbound `path?` request (§7.2) for the leaf minimum (branch 1):
+   *
+   *   - parse `target_dest_hash` and `tag_bytes` (length-detected per §7.2.1);
+   *   - drop tagless requests;
+   *   - dedup on `(target, tag)` so retransmits don't storm (§7.2.2);
+   *   - if the target is one of our own local destinations, answer with a
+   *     path-response announce (§7.2.4).
+   *
+   * Transport-mode branches (answer on behalf of a remote destination via the
+   * path table, recursive discovery) are out of scope for a leaf.
+   *
+   * @param {import("../core/packet.js").Packet} packet
+   * @param {import("../interfaces/base.js").Interface|null} receivingInterface
+   * @private
+   */
+  async _handlePathRequest(packet, receivingInterface) {
+    const data = packet.payload;
+    if (data.length < 16) return; // malformed
+
+    const targetHash = data.slice(0, 16);
+
+    // §7.2.1: transport_id occupies [16:32] only when len > 32; otherwise the
+    // second slot is the tag. The tag is whatever trails the fixed prefix,
+    // capped at 16 bytes.
+    /** @type {Uint8Array|null} */
+    let tagBytes = null;
+    if (data.length > 32) {
+      // requesting_transport_instance = data[16:32]  (ignored on a leaf)
+      tagBytes = data.slice(32, 48);
+    } else if (data.length > 16) {
+      tagBytes = data.slice(16, 32);
+    }
+
+    if (!tagBytes || tagBytes.length === 0) {
+      // §7.2.1 note 1: tagless requests are dropped.
+      log("Transport", "Dropping tagless path request", LogLevel.DEBUG);
+      return;
+    }
+
+    // §7.2.2 dedup on unique_tag = target || tag.
+    const uniqueTag = toHex(targetHash) + toHex(tagBytes);
+    if (this.discoveryPrTags.includes(uniqueTag)) {
+      log("Transport", "Ignoring duplicate path request", LogLevel.DEBUG);
+      return;
+    }
+    this.discoveryPrTags.push(uniqueTag);
+    while (this.discoveryPrTags.length > this.maxPrTags) {
+      this.discoveryPrTags.shift();
+    }
+
+    const targetHex = toHex(targetHash);
+    log("Transport", `Path request for ${targetHex}`, LogLevel.DEBUG);
+
+    // §7.2.3 branch 1: if we own the target, answer with a path-response announce.
+    if (this.localDestinations.has(targetHex)) {
+      const dest = this.localDestinations.get(targetHex);
+      if (dest.identity) {
+        await dest.announcePathResponse();
+        log("Transport", `Answered path request for ${targetHex}`);
+      }
+    }
+    // Branch 5 (leaf, no path known for a dest we don't own): drop silently.
   }
 
   /**
