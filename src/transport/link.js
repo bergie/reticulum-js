@@ -22,7 +22,7 @@ import {
   generateX25519KeyPair,
 } from "../crypto/keys.js";
 import { Token } from "../crypto/token.js";
-import { toHex } from "../utils/encoding.js";
+import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
 
@@ -130,6 +130,24 @@ export class Link extends EventTarget {
   static KEEPALIVE_MAX_RTT = 1.75;
   static STALE_FACTOR = 2;
 
+  /**
+   * Multiplier on measured RTT used when computing the default REQUEST
+   * response timeout (PROTOCOL-SPEC.md §11.5). Mirrors
+   * `RNS.Link.TRAFFIC_TIMEOUT_FACTOR` — verify against upstream if precise
+   * timeout parity matters.
+   */
+  static TRAFFIC_TIMEOUT_FACTOR = 6;
+
+  /**
+   * Response-side grace term for the default REQUEST timeout
+   * (PROTOCOL-SPEC.md §11.5). Mirrors
+   * `RNS.Resource.RESPONSE_MAX_GRACE_TIME` — the same caveat applies.
+   */
+  static RESPONSE_MAX_GRACE_TIME = 4.0;
+
+  /** Fixed multiplier on the response grace term (PROTOCOL-SPEC.md §11.5). */
+  static RESPONSE_GRACE_FACTOR = 1.125;
+
   /** @type {number} */
   mode = Link.MODE_AES256_CBC;
 
@@ -169,6 +187,14 @@ export class Link extends EventTarget {
 
   /** Pending outgoing resource payloads keyed by hex hash (RESOURCE_ADV/REQ). */
   pendingResources = new Map();
+
+  /**
+   * Initiator-side pending REQUESTs keyed by hex(request_id)
+   * (PROTOCOL-SPEC.md §11.5). Each entry resolves/rejects its returned Promise
+   * when the matching RESPONSE arrives or the timeout fires.
+   * @type {Map<string, {resolve: Function, reject: Function, timer: ReturnType<typeof setTimeout>}>}
+   */
+  pendingRequests = new Map();
 
   /**
    * Low-level constructor. Prefer the `Link.initiate` / `Link.accept` factories.
@@ -218,6 +244,34 @@ export class Link extends EventTarget {
   }
 
   /**
+   * Maximum plaintext bytes that fit in a single link DATA packet after
+   * Token encryption and the HEADER_1 framing are applied
+   * (PROTOCOL-SPEC.md §11.1, §5.2).
+   *
+   * The on-wire form of a link DATA packet is:
+   *
+   * ```
+   * flags(1) hops(1) dest_hash(16) context(1)   iv(16) aes_ct hmac(32)
+   * \---------------------- 19 ----------------/  \------ 48 ------/
+   * ```
+   *
+   * PKCS#7 padding always adds 1–16 bytes (a full block when the plaintext is
+   * itself a block multiple), so the largest plaintext `P` whose ciphertext
+   * fits the remaining budget is the largest block-multiple ciphertext ≤
+   * `(mtu − 67)` minus one byte. At the default `mtu = 500` this yields the
+   * spec-pinned `MDU = 431` (wire packet 499 B, verified against RNS).
+   *
+   * @returns {number}
+   */
+  get mdu() {
+    const HEADER1_SIZE = 19; // flags + hops + dest_hash + context
+    const TOKEN_OVERHEAD = 48; // iv(16) + hmac(32), link-derived key form
+    const AES_BLOCK = 16;
+    const ciphertextBudget = this.mtu - HEADER1_SIZE - TOKEN_OVERHEAD;
+    return Math.max(0, Math.floor(ciphertextBudget / AES_BLOCK) * AES_BLOCK - 1);
+  }
+
+  /**
    * Transitions the link to a new status, emitting `statuschange`.
    * @param {LinkStatus} newStatus
    */
@@ -244,6 +298,8 @@ export class Link extends EventTarget {
       } else if (newStatus === LinkStatus.CLOSED) {
         this._stopWatchdog();
         if (this.transport) this.transport.removeLink(this.linkId);
+        // §11.5: fail any in-flight REQUESTs so their Promises don't dangle.
+        this._rejectPendingRequests("Link closed before RESPONSE arrived");
       }
     }
   }
@@ -475,12 +531,20 @@ export class Link extends EventTarget {
   // -----------------------------------------------------------------------
 
   /**
-   * Sends a packet on the link. The packet is re-addressed to `link_id` and
-   * Token-encrypted unless it is in the not-encrypted set (§6.7.1).
+   * Builds the wire-ready outbound packet for a logical link packet: re-addresses
+   * it to `link_id`, Token-encrypts the payload unless it's in the
+   * not-encrypted set (§6.7.1), and populates `raw` so the packet hash is
+   * computable before transmission.
+   *
+   * Factored out of {@link send} so the REQUEST path can derive `request_id`
+   * from the encrypted packet bytes and register its pending entry BEFORE the
+   * packet goes on the wire (avoiding a lost-response race).
    *
    * @param {Packet} packet
+   * @returns {Promise<Packet>}
+   * @private
    */
-  async send(packet) {
+  async _prepareOutboundPacket(packet) {
     if (!this.transport) throw new Error("Link transport not available.");
 
     const unencryptedOnLink = isLinkPacketUnencrypted(
@@ -517,6 +581,20 @@ export class Link extends EventTarget {
       payload,
       transportId: packet.transportId,
     });
+    outbound.raw = outbound.serialize();
+    return outbound;
+  }
+
+  /**
+   * Sends a packet on the link. The packet is re-addressed to `link_id` and
+   * Token-encrypted unless it is in the not-encrypted set (§6.7.1). Returns the
+   * wire-ready outbound packet.
+   *
+   * @param {Packet} packet
+   * @returns {Promise<Packet>}
+   */
+  async send(packet) {
+    const outbound = await this._prepareOutboundPacket(packet);
     // §6.5: track CTX_NONE DATA BEFORE sending so a proof that returns
     // immediately (loopback / synchronous mock transports) can resolve it —
     // computing the hash here also populates outbound.raw.
@@ -529,6 +607,7 @@ export class Link extends EventTarget {
     }
 
     await this.transport.sendPacket(outbound);
+    return outbound;
   }
 
   /**
@@ -1031,6 +1110,288 @@ export class Link extends EventTarget {
   }
 
   // -----------------------------------------------------------------------
+  // REQUEST / RESPONSE (PROTOCOL-SPEC.md §11)
+  // -----------------------------------------------------------------------
+
+  /**
+   * Initiator: send a REQUEST over the link and await the RESPONSE
+   * (PROTOCOL-SPEC.md §11.1, §11.5).
+   *
+   * Packs the msgpack envelope `[timestamp, path_hash, data]` (single pack —
+   * `data` is encoded directly, NOT pre-msgpacked), dispatches by size, and
+   * returns a Promise that resolves with the response value when the server's
+   * matching RESPONSE arrives.
+   *
+   * For a single-packet REQUEST the `request_id` the server echoes back is
+   * `SHA-256(packet.get_hashable_part())[:16]` — the truncated hash of the
+   * *encrypted wire packet*, computed identically on both sides. It is NOT
+   * random and NOT a hash of the plaintext envelope.
+   *
+   * @param {string} path - Opaque path token (e.g. `"/page/index.mu"`).
+   * @param {any} [data=null] - Application value for envelope element [2]
+   *   (`null` for plain GETs, an object for NomadNet form posts, an array for
+   *   LXMF `/get` rounds, a `Uint8Array` for opaque blobs …). Passed to msgpack
+   *   directly — do NOT pre-pack it.
+   * @param {object} [options]
+   * @param {number} [options.timeout] - Response timeout in ms (defaults to
+   *   `rtt * TRAFFIC_TIMEOUT_FACTOR + RESPONSE_MAX_GRACE_TIME * 1.125`).
+   * @returns {Promise<any>} The decoded RESPONSE value.
+   */
+  async request(path, data = null, options = {}) {
+    if (this.status !== LinkStatus.ACTIVE) {
+      throw new Error("Link must be ACTIVE to issue a REQUEST.");
+    }
+    const { Identity } = await import("../core/identity.js");
+
+    const pathHash = await Identity.truncatedHash(
+      new TextEncoder().encode(path),
+    );
+    const envelope = [Date.now() / 1000, pathHash, data];
+    const packedRequest = MicroMsgPack.encode(envelope);
+
+    if (packedRequest.length > this.mdu) {
+      // §11.1: oversized requests must go through the §10 Resource transfer.
+      // That pipeline isn't wired into the Link yet; fail loudly rather than
+      // emitting a packet the peer can't decrypt/assemble.
+      throw new Error(
+        `Request payload ${packedRequest.length}B exceeds link MDU ${this.mdu}B; ` +
+          "Resource-backed REQUEST path not yet implemented (§10/§11.1)",
+      );
+    }
+
+    const reqPacket = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.REQUEST,
+      payload: packedRequest,
+    });
+    const outbound = await this._prepareOutboundPacket(reqPacket);
+    // §11.1: request_id is the truncated hash of the REQUEST packet's
+    // hashable wire bytes (`(raw[0] & 0x0F) || raw[2:]` for HEADER_1). Computed
+    // on the encrypted form because that's what the server receives & hashes.
+    const requestId = await Identity.truncatedHash(outbound.getHashablePart());
+    const requestIdHex = toHex(requestId);
+
+    const timeout =
+      options.timeout ?? this._defaultRequestTimeoutMs();
+
+    const responsePromise = new Promise((resolve, reject) => {
+      const entry = {
+        resolve,
+        reject,
+        timer: setTimeout(() => {
+          this.pendingRequests.delete(requestIdHex);
+          reject(new Error(`REQUEST to ${path} timed out after ${timeout}ms`));
+        }, timeout),
+      };
+      // Register BEFORE transmitting so a same-tick (loopback) response still
+      // finds its entry, and so the entry exists before any await can yield.
+      this.pendingRequests.set(requestIdHex, entry);
+    });
+
+    await this.transport.sendPacket(outbound);
+    return responsePromise;
+  }
+
+  /**
+   * Default REQUEST response timeout (PROTOCOL-SPEC.md §11.5):
+   * `rtt * traffic_timeout_factor + RESPONSE_MAX_GRACE_TIME * 1.125`.
+   * @returns {number} milliseconds.
+   * @private
+   */
+  _defaultRequestTimeoutMs() {
+    return (
+      (this.rtt * Link.TRAFFIC_TIMEOUT_FACTOR +
+        Link.RESPONSE_MAX_GRACE_TIME * Link.RESPONSE_GRACE_FACTOR) *
+      1000
+    );
+  }
+
+  /**
+   * Responder: dispatch an inbound REQUEST to the registered handler and send
+   * the RESPONSE (PROTOCOL-SPEC.md §11.2).
+   *
+   * `originalPacket` is the as-received (still-encrypted-raw) packet used to
+   * compute the request_id; `decrypted` carries the decoded plaintext payload.
+   *
+   * @param {Packet} originalPacket
+   * @param {Packet} decrypted
+   * @private
+   */
+  async _handleRequest(originalPacket, decrypted) {
+    const { Identity } = await import("../core/identity.js");
+    const requestId = await Identity.truncatedHash(
+      originalPacket.getHashablePart(),
+    );
+
+    let decoded;
+    try {
+      decoded = MicroMsgPack.decode(/** @type {Uint8Array} */ (decrypted.payload));
+    } catch (err) {
+      log("Link", `Dropping malformed REQUEST: ${err}`, LogLevel.WARN);
+      return;
+    }
+    if (!Array.isArray(decoded) || decoded.length < 3) {
+      log(
+        "Link",
+        `Dropping REQUEST with bad envelope shape`,
+        LogLevel.WARN,
+      );
+      return;
+    }
+    const [requestTime, pathHash, data] = decoded;
+    if (!(pathHash instanceof Uint8Array) || pathHash.length !== 16) {
+      log("Link", `Dropping REQUEST with bad path_hash`, LogLevel.WARN);
+      return;
+    }
+
+    const handler = this.destination?.requestHandlers?.get(toHex(pathHash));
+    if (!handler) {
+      log(
+        "Link",
+        `No handler for REQUEST path hash ${toHex(pathHash)}`,
+        LogLevel.DEBUG,
+      );
+      return;
+    }
+    if (!this._authorizeRequest(handler)) {
+      log(
+        "Link",
+        `Rejecting REQUEST to ${handler.path} (allow mode ${handler.allow})`,
+        LogLevel.DEBUG,
+      );
+      return;
+    }
+
+    let response;
+    try {
+      response = await handler.responseGenerator(
+        handler.path,
+        data,
+        requestId,
+        this.remoteIdentity ?? null,
+        requestTime,
+      );
+    } catch (err) {
+      log("Link", `REQUEST handler for ${handler.path} threw: ${err}`, LogLevel.ERROR);
+      return;
+    }
+    // A generator returning null/undefined suppresses the response.
+    if (response === null || response === undefined) return;
+
+    await this._sendResponse(response, requestId, handler.autoCompress);
+  }
+
+  /**
+   * Sends a RESPONSE packet (§11.2). Single-packet form only for now; oversized
+   * responses require the §10 Resource path (advertisement flag `p`,
+   * `is_response = True`).
+   * @param {any} response
+   * @param {Uint8Array} requestId
+   * @param {boolean} autoCompress
+   * @private
+   */
+  async _sendResponse(response, requestId, autoCompress) {
+    const packed = MicroMsgPack.encode([requestId, response]);
+    if (packed.length > this.mdu) {
+      throw new Error(
+        `RESPONSE ${packed.length}B exceeds link MDU ${this.mdu}B; ` +
+          "Resource-backed RESPONSE path not yet implemented (§10/§11.2)",
+      );
+    }
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: this.linkId,
+      contextByte: ContextType.RESPONSE,
+      payload: packed,
+    });
+    void autoCompress; // honoured once the Resource response path lands.
+    await this.send(packet);
+  }
+
+  /**
+   * Initiator: correlate an inbound RESPONSE with a pending REQUEST (§11.2).
+   *
+   * Decodes the msgpack `[request_id, response]` envelope, verifies element [0]
+   * matches a tracked outbound REQUEST, and resolves that request's Promise.
+   * Mismatched / spurious responses are dropped — the security note in §11.2
+   * makes the id check mandatory.
+   * @param {Packet} decrypted
+   * @private
+   */
+  async _handleResponse(decrypted) {
+    let decoded;
+    try {
+      decoded = MicroMsgPack.decode(/** @type {Uint8Array} */ (decrypted.payload));
+    } catch (err) {
+      log("Link", `Dropping malformed RESPONSE: ${err}`, LogLevel.WARN);
+      return;
+    }
+    if (!Array.isArray(decoded) || decoded.length < 2) {
+      log("Link", `Dropping RESPONSE with bad envelope shape`, LogLevel.WARN);
+      return;
+    }
+    const [requestId, response] = decoded;
+    if (!(requestId instanceof Uint8Array) || requestId.length !== 16) {
+      log("Link", `Dropping RESPONSE with bad request_id`, LogLevel.WARN);
+      return;
+    }
+
+    const entry = this.pendingRequests.get(toHex(requestId));
+    if (!entry) {
+      log(
+        "Link",
+        `RESPONSE for unknown REQUEST ${toHex(requestId)}; dropping`,
+        LogLevel.DEBUG,
+      );
+      return;
+    }
+    clearTimeout(entry.timer);
+    this.pendingRequests.delete(toHex(requestId));
+    entry.resolve(response);
+  }
+
+  /**
+   * Enforces a handler's `allow` mode against the link's remote identity (§11.4).
+   *
+   * Uses the raw `Allow` enum values from `Destination` (0x00/0x01/0x02) rather
+   * than importing the enum, to avoid a link.js ↔ destination.js import cycle.
+   *
+   * @param {{allow: number, allowedList: Uint8Array[]}} handler
+   * @returns {boolean}
+   * @private
+   */
+  _authorizeRequest(handler) {
+    const ALLOW_ALL = 0x01; // Destination.Allow.ALL
+    const ALLOW_LIST = 0x02; // Destination.Allow.LIST
+    if (handler.allow === ALLOW_ALL) return true;
+    if (handler.allow === ALLOW_LIST) {
+      const remoteHash = this.remoteIdentity?.identityHash;
+      if (!remoteHash) return false;
+      return handler.allowedList.some(
+        (h) => h.length === remoteHash.length && bytesEqual(h, remoteHash),
+      );
+    }
+    return false; // ALLOW_NONE (0x00) and any unknown mode.
+  }
+
+  /**
+   * Rejects every pending REQUEST with `reason`. Called from the CLOSED status
+   * transition so callers awaiting `link.request()` don't hang.
+   * @param {string} reason
+   * @private
+   */
+  _rejectPendingRequests(reason) {
+    for (const [id, entry] of this.pendingRequests) {
+      clearTimeout(entry.timer);
+      this.pendingRequests.delete(id);
+      entry.reject(new Error(reason));
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Resources ( LXMF RESOURCE_ADV / RESOURCE_REQ )
   // -----------------------------------------------------------------------
 
@@ -1203,6 +1564,17 @@ export class Link extends EventTarget {
 
       case ContextType.LRRTT:
         if (!this.initiator) await this._handleLRRTT(decrypted);
+        break;
+
+      case ContextType.REQUEST:
+        // Server side: dispatch to the responder destination's handlers.
+        // request_id is derived from the ORIGINAL (encrypted-raw) packet.
+        await this._handleRequest(packet, decrypted);
+        break;
+
+      case ContextType.RESPONSE:
+        // Initiator side: correlate with a pending REQUEST.
+        await this._handleResponse(decrypted);
         break;
 
       case ContextType.LINKCLOSE:

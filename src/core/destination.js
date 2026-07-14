@@ -24,6 +24,53 @@ export const Direction = {
 };
 
 /**
+ * Authorization modes for a registered REQUEST handler (PROTOCOL-SPEC.md §11.4).
+ *
+ * Mirrors `RNS.Destination.ALLOW_NONE/ALLOW_ALL/ALLOW_LIST`. The mode is
+ * enforced server-side by `Link._authorizeRequest` against the requester's
+ * long-term identity (established on the link via `link.identify()`).
+ *
+ * @enum {number}
+ */
+export const Allow = {
+  /** Reject every request (handler is a stub for testing). */
+  NONE: 0x00,
+  /** Accept any request that arrives on this Link, regardless of caller. */
+  ALL: 0x01,
+  /** Accept iff the requester has identified AND their identity_hash is in `allowedList`. */
+  LIST: 0x02,
+};
+
+/**
+ * Server-side generator invoked to produce a RESPONSE value
+ * (PROTOCOL-SPEC.md §11.2). The value it returns is msgpacked as element [1]
+ * of `[request_id, response]`; returning `null`/`undefined` suppresses the
+ * response.
+ *
+ * @callback RequestGenerator
+ * @param {string} path - The registered path string.
+ * @param {any} data - The application value from envelope element [2]
+ *   (`null` for plain GETs, a `dict` for NomadNet form posts, a `list` for
+ *   LXMF `/get` rounds, opaque `Uint8Array` blobs, …).
+ * @param {Uint8Array} requestId - 16-byte truncated hash of the REQUEST packet.
+ * @param {import("./identity.js").Identity|null} remoteIdentity - The
+ *   requester's long-term identity, set iff they called `link.identify()`.
+ * @param {number} requestTime - The requester's timestamp (envelope [0]).
+ * @returns {Promise<any>|any}
+ */
+
+/**
+ * A registered REQUEST handler (PROTOCOL-SPEC.md §11.3, §11.4).
+ *
+ * @typedef {object} RequestHandler
+ * @property {string} path
+ * @property {RequestGenerator} responseGenerator
+ * @property {Allow} allow
+ * @property {Uint8Array[]} allowedList
+ * @property {boolean} autoCompress
+ */
+
+/**
  * Builds the 10-byte announce `random_hash` (SPEC.md §4.1):
  *
  * ```
@@ -105,6 +152,14 @@ export class Destination extends EventTarget {
     this.destinationHash = null;
     /** @type {Uint8Array|null} */
     this.nameHash = null;
+    /**
+     * Registered REQUEST handlers keyed by hex(`SHA-256(path)[:16]`)
+     * (PROTOCOL-SPEC.md §11.3). The path string itself is never sent on the
+     * wire — only its 16-byte truncated hash — so a client must already know
+     * the path to fetch the resource at it.
+     * @type {Map<string, RequestHandler>}
+     */
+    this.requestHandlers = new Map();
   }
 
   /**
@@ -445,6 +500,51 @@ export class Destination extends EventTarget {
    */
   async acceptLink(packet) {
     return await this.respondToLinkRequest(packet);
+  }
+
+  /**
+   * Registers a server-side REQUEST handler for a path string
+   * (PROTOCOL-SPEC.md §11.3, §11.4).
+   *
+   * The path is hashed to `SHA-256(path)[:16]` and stored keyed by that hash;
+   * the path string itself never appears on the wire. When a REQUEST arrives
+   * on a Link whose responder destination is this one, `Link._handleRequest`
+   * looks the handler up by the path hash, enforces the `allow` mode, and
+   * invokes `responseGenerator` to produce the response value.
+   *
+   * @param {string} path - Opaque path token (e.g. `"/page/index.mu"`).
+   * @param {object} options
+   * @param {RequestGenerator} options.responseGenerator - Produces the response value.
+   * @param {Allow} [options.allow=Allow.ALL] - Authorization mode.
+   * @param {Uint8Array[]} [options.allowedList=[]] - Identity hashes permitted under `Allow.LIST`.
+   * @param {boolean} [options.autoCompress=false] - Hint for the (future) Resource response path.
+   * @returns {Promise<Uint8Array>} the 16-byte path hash the handler is keyed under.
+   */
+  async registerRequestHandler(path, options) {
+    if (typeof options?.responseGenerator !== "function") {
+      throw new TypeError("responseGenerator must be a function");
+    }
+    const encoder = new TextEncoder();
+    const pathHash = await Identity.truncatedHash(encoder.encode(path));
+    this.requestHandlers.set(toHex(pathHash), {
+      path,
+      responseGenerator: options.responseGenerator,
+      allow: options.allow ?? Allow.ALL,
+      allowedList: options.allowedList ?? [],
+      autoCompress: options.autoCompress ?? false,
+    });
+    return pathHash;
+  }
+
+  /**
+   * Removes a previously registered REQUEST handler.
+   * @param {string} path
+   * @returns {Promise<boolean>} true if a handler was removed.
+   */
+  async removeRequestHandler(path) {
+    const encoder = new TextEncoder();
+    const pathHash = await Identity.truncatedHash(encoder.encode(path));
+    return this.requestHandlers.delete(toHex(pathHash));
   }
 
   /**

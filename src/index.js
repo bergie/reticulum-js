@@ -3,7 +3,7 @@
  * Zero-dependency, EUPL-1.2 compliant protocol stack.
  */
 
-export { Destination } from "./core/destination.js";
+export { Destination, Allow } from "./core/destination.js";
 // --- 2. Cryptography & Identity ---
 // Everything needed to create, load, and sign data as an RNS node.
 export { Identity } from "./core/identity.js";
