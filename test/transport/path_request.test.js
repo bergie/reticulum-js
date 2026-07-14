@@ -107,10 +107,7 @@ test("a path request for a local destination triggers a PATH_RESPONSE announce",
     destinationType: DestType.PLAIN,
     destinationHash: await transport._pathRequestDestHash(),
     contextByte: ContextType.NONE,
-    payload: leafPayload(
-      /** @type {Uint8Array} */ (dest.destinationHash),
-      tag,
-    ),
+    payload: leafPayload(/** @type {Uint8Array} */ (dest.destinationHash), tag),
   });
   await transport._handlePathRequest(req, null);
 
@@ -144,10 +141,7 @@ test("a retransmitted path request with the same tag is deduped", async () => {
     destinationType: DestType.PLAIN,
     destinationHash: await transport._pathRequestDestHash(),
     contextByte: ContextType.NONE,
-    payload: leafPayload(
-      /** @type {Uint8Array} */ (dest.destinationHash),
-      tag,
-    ),
+    payload: leafPayload(/** @type {Uint8Array} */ (dest.destinationHash), tag),
   });
   await transport._handlePathRequest(req, null);
   layer.packets.length = 0;
@@ -206,7 +200,11 @@ test("a leaf does not answer a path request for a destination it doesn't own", a
     payload: leafPayload(foreignTarget, tag),
   });
   await transport._handlePathRequest(req, null);
-  assert.strictEqual(layer.packets.length, 0, "leaf can't fulfil foreign requests");
+  assert.strictEqual(
+    layer.packets.length,
+    0,
+    "leaf can't fulfil foreign requests",
+  );
 });
 
 test("the transport-form (48-byte) payload is parsed with transport_id + tag", async () => {

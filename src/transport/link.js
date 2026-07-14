@@ -182,6 +182,9 @@ export class Link extends EventTarget {
    * @param {Uint8Array} [opts.ephemeralX25519Pub] - This side's ephemeral X25519 public key (raw 32 bytes).
    * @param {CryptoKey} [opts.ephemeralEd25519Priv] - Initiator's fresh ephemeral Ed25519 private key (link-proof signing).
    * @param {Uint8Array} [opts.peerX25519Pub] - Peer's ephemeral X25519 public key (raw 32 bytes).
+   * @param {Uint8Array} [opts.peerEd25519Pub] - Peer's ephemeral Ed25519 public key (raw 32 bytes).
+   *   Responder-only: the initiator's link-proof signing pub, captured from the
+   *   LINKREQUEST body so the responder can verify initiator-signed link proofs (§6.5).
    * @param {number} [opts.mtu]
    * @param {number} [opts.mode]
    */
@@ -195,10 +198,15 @@ export class Link extends EventTarget {
     this.ephemeralX25519Pub = opts.ephemeralX25519Pub;
     this.ephemeralEd25519Priv = opts.ephemeralEd25519Priv ?? null;
     this.peerX25519Pub = opts.peerX25519Pub ?? null;
+    this.peerEd25519Pub = opts.peerEd25519Pub ?? null;
     if (opts.mtu !== undefined) this.mtu = opts.mtu;
     if (opts.mode !== undefined) this.mode = opts.mode;
     this.lastInboundTime = Date.now();
     this._status = LinkStatus.PENDING;
+    /** Cached verify-only CryptoKey imported from {@link peerEd25519Pub} (responder). */
+    this._peerEd25519Key = null;
+    /** Outbound CTX_NONE DATA packet hashes (hex → bytes) awaiting a link PROOF (§6.5). */
+    this._pendingLinkProofs = new Map();
   }
 
   /**
@@ -364,7 +372,11 @@ export class Link extends EventTarget {
     const data = requestPacket.payload;
 
     const initiatorX25519Pub = data.subarray(0, 32);
-    // initiatorEd25519Pub is data[32:64] — currently unused on the responder side.
+    // §6.5: the initiator's ephemeral Ed25519 pub (data[32:64]) signs the link
+    // DATA proofs the initiator emits, so the responder needs it to verify them.
+    // Copy (.slice) so the key bytes own an ArrayBuffer (crypto.subtle.importKey
+    // rejects a SharedArrayBuffer-capable view).
+    const initiatorEd25519Pub = data.slice(32, 64);
     let mtu = Link.DEFAULT_MTU;
     let mode = Link.MODE_AES256_CBC;
     if (data.length === Link.ECPUBSIZE + Link.LINK_MTU_SIZE) {
@@ -387,6 +399,7 @@ export class Link extends EventTarget {
       ephemeralX25519Priv: ephemeral.privateKey,
       ephemeralX25519Pub: responderX25519Pub,
       peerX25519Pub: initiatorX25519Pub,
+      peerEd25519Pub: initiatorEd25519Pub,
       mtu,
       mode,
     });
@@ -504,6 +517,17 @@ export class Link extends EventTarget {
       payload,
       transportId: packet.transportId,
     });
+    // §6.5: track CTX_NONE DATA BEFORE sending so a proof that returns
+    // immediately (loopback / synchronous mock transports) can resolve it —
+    // computing the hash here also populates outbound.raw.
+    if (
+      outbound.packetType === PacketType.DATA &&
+      outbound.contextByte === ContextType.NONE
+    ) {
+      const hash = await outbound.getHash();
+      this._pendingLinkProofs.set(toHex(hash), hash);
+    }
+
     await this.transport.sendPacket(outbound);
   }
 
@@ -770,6 +794,91 @@ export class Link extends EventTarget {
     });
     // Link PROOFs are unencrypted (RNS/Packet.py:200-201).
     await this.transport.sendPacket(proofPacket);
+  }
+
+  /**
+   * Validates an inbound link DATA proof (§6.5) and resolves the matching
+   * outbound packet.
+   *
+   * Link proofs are **always explicit** (96 B: `packet_hash(32) ||
+   * signature(64)`), addressed to `link_id`, `context = NONE`. The signature is
+   * verified with the peer's link-proof signing public key — the responder's
+   * long-term identity key (initiator side) or the initiator's ephemeral
+   * Ed25519 pub (responder side). On success the tracked packet is cleared and
+   * a `proof` event dispatched; bad signatures / lengths are dropped.
+   *
+   * @param {import("../core/packet.js").Packet} packet
+   * @private
+   */
+  async _handleLinkProof(packet) {
+    if (packet.payload.length !== 96) {
+      log(
+        "Link",
+        `Dropping link proof with bad length ${packet.payload.length} (expected 96)`,
+        LogLevel.DEBUG,
+      );
+      return;
+    }
+    const packetHash = packet.payload.slice(0, 32);
+    const signature = packet.payload.slice(32, 96);
+    const hashHex = toHex(packetHash);
+
+    const verified = await this._verifyLinkProof(signature, packetHash);
+    if (!verified) {
+      log("Link", `Link proof signature invalid for ${hashHex}`, LogLevel.WARN);
+      return;
+    }
+
+    const wasPending = this._pendingLinkProofs.delete(hashHex);
+    log(
+      "Link",
+      `Link proof validated for ${hashHex}${wasPending ? " — receipt resolved" : " (no tracked packet)"}`,
+      LogLevel.DEBUG,
+    );
+    this.dispatchEvent(
+      new CustomEvent("proof", {
+        detail: { packetHash, verified: true, packet },
+      }),
+    );
+  }
+
+  /**
+   * Verifies a link-proof Ed25519 signature over `packetHash` using the peer's
+   * signing public key.
+   *
+   * - Initiator verifies with the responder's long-term identity key
+   *   (`destination.identity`), which signed the proof.
+   * - Responder verifies with the initiator's ephemeral Ed25519 pub, captured
+   *   from the LINKREQUEST body (§6.5: "the link's ephemeral Ed25519 keypair
+   *   on the initiator side").
+   *
+   * @param {Uint8Array} signature
+   * @param {Uint8Array} packetHash
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _verifyLinkProof(signature, packetHash) {
+    if (this.initiator) {
+      const identity = this.destination?.identity;
+      if (!identity) return false;
+      return identity.validate(signature, packetHash);
+    }
+    if (!this.peerEd25519Pub) return false;
+    if (!this._peerEd25519Key) {
+      this._peerEd25519Key = await crypto.subtle.importKey(
+        "raw",
+        /** @type {any} */ (this.peerEd25519Pub),
+        { name: "Ed25519" },
+        false,
+        ["verify"],
+      );
+    }
+    return await crypto.subtle.verify(
+      "Ed25519",
+      this._peerEd25519Key,
+      /** @type {any} */ (signature),
+      /** @type {any} */ (packetHash),
+    );
   }
 
   // -----------------------------------------------------------------------
@@ -1051,9 +1160,7 @@ export class Link extends EventTarget {
             }),
           );
         } else if (decrypted.packetType === PacketType.PROOF) {
-          this.dispatchEvent(
-            new CustomEvent("proof", { detail: { packet: decrypted } }),
-          );
+          await this._handleLinkProof(decrypted);
         }
         break;
 

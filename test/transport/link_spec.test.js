@@ -383,6 +383,115 @@ test("§6.5 link DATA proof is 96 bytes addressed to link_id and signs the packe
 });
 
 // ---------------------------------------------------------------------------
+// §6.5  Link DATA proof RESOLUTION (initiator / responder sides)
+// ---------------------------------------------------------------------------
+
+test("§6.5 initiator resolves a proof for DATA it sent over the link", async () => {
+  const { initiator } = await makeEstablishedPair();
+
+  /** @type {any} */
+  let proof = null;
+  initiator.addEventListener("proof", (event) => {
+    proof = /** @type {CustomEvent} */ (event).detail;
+  });
+
+  await initiator.send(
+    new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: initiator.linkId,
+      contextByte: ContextType.NONE,
+      payload: new TextEncoder().encode("hello over link"),
+    }),
+  );
+
+  assert.ok(proof, "initiator should receive a proof event");
+  assert.strictEqual(proof.verified, true);
+  assert.ok(proof.packetHash instanceof Uint8Array);
+  assert.strictEqual(proof.packetHash.length, 32);
+  assert.strictEqual(
+    initiator._pendingLinkProofs.size,
+    0,
+    "the tracked outbound packet must be resolved",
+  );
+});
+
+test("§6.5 responder resolves a proof for DATA it sent (reverse direction)", async () => {
+  const { responder } = await makeEstablishedPair();
+
+  /** @type {any} */
+  let proof = null;
+  responder.addEventListener("proof", (event) => {
+    proof = /** @type {CustomEvent} */ (event).detail;
+  });
+
+  await responder.send(
+    new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: responder.linkId,
+      contextByte: ContextType.NONE,
+      payload: new TextEncoder().encode("reply over link"),
+    }),
+  );
+
+  assert.ok(proof, "responder should receive a proof event");
+  assert.strictEqual(proof.verified, true);
+  assert.strictEqual(responder._pendingLinkProofs.size, 0);
+});
+
+test("§6.5 link drops a proof with a bad signature", async () => {
+  const { initiator } = await makeEstablishedPair();
+  let fired = false;
+  initiator.addEventListener("proof", () => {
+    fired = true;
+  });
+
+  const forgedHash = crypto.getRandomValues(new Uint8Array(32));
+  const badSig = crypto.getRandomValues(new Uint8Array(64));
+  const payload = new Uint8Array(96);
+  payload.set(forgedHash, 0);
+  payload.set(badSig, 32);
+  const forged = new Packet({
+    packetType: PacketType.PROOF,
+    destinationType: DestType.LINK,
+    destinationHash: initiator.linkId,
+    contextByte: ContextType.NONE,
+    payload,
+  });
+  forged.raw = forged.serialize();
+  await initiator.receive(forged);
+
+  assert.strictEqual(
+    fired,
+    false,
+    "a forged proof must not fire a proof event",
+  );
+});
+
+test("§6.5 link drops an implicit-form (64-byte) proof", async () => {
+  const { initiator } = await makeEstablishedPair();
+  let fired = false;
+  initiator.addEventListener("proof", () => {
+    fired = true;
+  });
+
+  // Links only accept the explicit 96-byte form (§6.5.2); a 64-byte body is
+  // the wrong length and must be dropped.
+  const implicit = new Packet({
+    packetType: PacketType.PROOF,
+    destinationType: DestType.LINK,
+    destinationHash: initiator.linkId,
+    contextByte: ContextType.NONE,
+    payload: crypto.getRandomValues(new Uint8Array(64)),
+  });
+  implicit.raw = implicit.serialize();
+  await initiator.receive(implicit);
+
+  assert.strictEqual(fired, false);
+});
+
+// ---------------------------------------------------------------------------
 // §6.7.1  KEEPALIVE ping/pong
 // ---------------------------------------------------------------------------
 
