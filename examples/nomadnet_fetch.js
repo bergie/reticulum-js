@@ -128,7 +128,8 @@ async function main() {
   console.log(`----- end -----`);
 
   // A graceful close lets the peer tear down cleanly.
-  link.teardown();
+  await link.teardown();
+  process.exit(0);
 }
 
 main().catch((err) => {
