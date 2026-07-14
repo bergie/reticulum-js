@@ -6,6 +6,7 @@ Reticulum/
 docs/
 test/
 *.key
+*.tgz
 PROTOCOL-SPEC.md
 SPEC.md
 AGENTS.md
