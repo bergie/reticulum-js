@@ -18,7 +18,7 @@ Early stages, but we are able to send and receive LXMF messages.
 The canonical source of `reticulum-js` is the rngit repository. To fetch the latest release, run:
 
 ```sh
-rngit release rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js fetch latest:all
+rngit release rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js fetch latest:all
 npm install reticulum-js-*.tgz
 ```
 
