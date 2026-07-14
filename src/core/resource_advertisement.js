@@ -1,59 +1,59 @@
 /**
  * @file resource_advertisement.js
- * @description Resource advertisement encoding/decoding
+ * @description RESOURCE_ADV msgpack encoding/decoding (PROTOCOL-SPEC.md §10.4).
  */
 
 import { MicroMsgPack } from "../utils/msgpack.js";
 
 /**
+ * Bit layout of the RESOURCE_ADV `f` flags byte (PROTOCOL-SPEC.md §10.4):
+ *
+ * ```
+ * bit 0 : e — encrypted
+ * bit 1 : c — compressed
+ * bit 2 : s — split (multi-segment)
+ * bit 3 : u — is_request  (Resource carries a Link REQUEST body)
+ * bit 4 : p — is_response (Resource carries a Link RESPONSE body)
+ * bit 5 : x — has_metadata
+ * ```
+ *
  * @enum {number}
  */
-export const ResourceAdvertisementStatus = {
-  NONE: 0x00,
-  QUEUED: 0x01,
-  ADVERTISED: 0x02,
-  TRANSFERRING: 0x03,
-  AWAITING_PROOF: 0x04,
-  COMPLETE: 0x05,
-  FAILED: 0x06,
-  CORRUPT: 0x07,
-  REJECTED: 0x00,
+export const ResourceFlag = {
+  ENCRYPTED: 1 << 0,
+  COMPRESSED: 1 << 1,
+  SPLIT: 1 << 2,
+  IS_REQUEST: 1 << 3,
+  IS_RESPONSE: 1 << 4,
+  HAS_METADATA: 1 << 5,
 };
 
 /**
- * Constants for Resource Advertisement.
- */
-export const ResourceAdvertisementConstants = {
-  HASHMAP_MAX_LEN: 10, // Placeholder, should be calculated based on MTU
-  COLLISION_GUARD_SIZE: 20, // Placeholder
-};
-
-/**
- * Represents a Resource Advertisement.
- * This class handles the packing and unpacking of resource advertisement data.
+ * Represents a RESOURCE_ADV — the advertisement that opens a Resource transfer.
  *
- * NOTE: The Python implementation uses MessagePack (umsgpack).
+ * The wire form is a single msgpack map (PROTOCOL-SPEC.md §10.4). The byte
+ * fields (`h`, `r`, `o`, `m`, `q`) MUST be msgpack `bin` (Python `bytes`), not
+ * arrays — encoding them via `Array.from(...)` produces a msgpack array and
+ * silently breaks Python interop. Keys are emitted in upstream's order so the
+ * packed bytes match Python `umsgpack.packb` output for vector testing.
+ *
+ * Note that `r` is the 4-byte integrity/hashmap salt (`get_random_hash()[:4]`),
+ * NOT the leading wire prefix that the receiver strips (§10.2 step 3 / §10.8).
  */
 export class ResourceAdvertisement {
   /**
    * @param {Object} options
-   * @param {number} [options.t] - Transfer size
-   * @param {number} [options.d] - Total uncompressed data size
-   * @param {number} [options.n] - Number of parts
-   * @param {Uint8Array} [options.h] - Resource hash
-   * @param {Uint8Array} [options.r] - Resource random hash
-   * @param {Uint8Array} [options.o] - Original hash (first-segment hash)
-   * @param {number} [options.i] - Segment index
-   * @param {number} [options.l] - Total segments
-   * @param {Uint8Array} [options.q] - Associated request ID
-   * @param {number} [options.f] - Resource flags
-   * @param {Uint8Array} [options.m] - Resource hashmap
-   * @param {boolean} [options.u] - Is request flag
-   * @param {boolean} [options.p] - Is response flag
-   * @param {boolean} [options.x] - Has metadata flag
-   * @param {boolean} [options.c] - Compression flag
-   * @param {boolean} [options.e] - Encryption flag
-   * @param {boolean} [options.s] - Split flag
+   * @param {number} [options.t] - Transfer size (encrypted byte length on wire).
+   * @param {number} [options.d] - Total logical size (original uncompressed).
+   * @param {number} [options.n] - Number of parts in this segment.
+   * @param {Uint8Array} [options.h] - Resource hash `SHA-256(plaintext ‖ r)` (32B).
+   * @param {Uint8Array} [options.r] - Random hash salt (4B).
+   * @param {Uint8Array} [options.o] - Original hash of first segment (32B).
+   * @param {number} [options.i] - Segment index (1-based).
+   * @param {number} [options.l] - Total segments.
+   * @param {Uint8Array} [options.q] - Associated REQUEST id, or undefined/None.
+   * @param {number} [options.f] - Flags byte.
+   * @param {Uint8Array} [options.m] - Hashmap fragment (concatenated 4B map_hashes).
    */
   constructor(options = {}) {
     this.t = options.t || 0;
@@ -67,80 +67,81 @@ export class ResourceAdvertisement {
     this.q = options.q || undefined;
     this.f = options.f || 0;
     this.m = options.m || new Uint8Array(0);
+  }
 
-    // Flags decoded from 'f'
-    this.x = !!((this.f >> 5) & 0x01); // has_metadata
-    this.p = !!((this.f >> 4) & 0x01); // is_response
-    this.u = !!((this.f >> 3) & 0x01); // is_request
-    this.s = !!((this.f >> 2) & 0x01); // is_split
-    this.c = !!((this.f >> 1) & 0x01); // is_compressed
-    this.e = !!(this.f & 0x01); // is_encrypted
+  // --- Flag accessors (decoded from `f`) ---
+
+  /** @returns {boolean} */
+  get encrypted() {
+    return !!((this.f >> 0) & 0x01);
+  }
+  /** @returns {boolean} */
+  get compressed() {
+    return !!((this.f >> 1) & 0x01);
+  }
+  /** @returns {boolean} */
+  get split() {
+    return !!((this.f >> 2) & 0x01);
+  }
+  /** @returns {boolean} */
+  get isRequest() {
+    return !!((this.f >> 3) & 0x01);
+  }
+  /** @returns {boolean} */
+  get isResponse() {
+    return !!((this.f >> 4) & 0x01);
+  }
+  /** @returns {boolean} */
+  get hasMetadata() {
+    return !!((this.f >> 5) & 0x01);
   }
 
   /**
-   * Pack the advertisement into a Uint8Array.
-   *
+   * Packs the advertisement into a msgpack `bin`-correct Uint8Array.
    * @returns {Uint8Array}
    */
   pack() {
+    // Key order matches `RNS/Resource.py` ResourceAdvertisement so packed
+    // bytes are comparable against Python vectors. Byte fields are passed as
+    // Uint8Array directly so MicroMsgPack emits `bin` (not an array).
+    /** @type {Record<string, any>} */
     const dict = {
       t: this.t,
       d: this.d,
       n: this.n,
-      h: Array.from(this.h),
-      r: Array.from(this.r),
-      o: Array.from(this.o),
+      h: this.h,
+      r: this.r,
+      o: this.o,
       i: this.i,
       l: this.l,
-      q: this.q ? Array.from(this.q) : null,
+      q: this.q ?? null,
       f: this.f,
-      m: Array.from(this.m),
+      m: this.m,
     };
     return MicroMsgPack.encode(dict);
   }
 
   /**
-   * Unpack an advertisement from a Uint8Array.
-   *
+   * Unpacks an advertisement from its msgpack wire form.
    * @param {Uint8Array} data
    * @returns {ResourceAdvertisement}
    */
   static unpack(data) {
     /** @type {any} */
     const dict = MicroMsgPack.decode(data);
-
-    return new ResourceAdvertisement(
-      /** @type {any} */ ({
-        t: dict.t,
-        d: dict.d,
-        n: dict.n,
-        h: new Uint8Array(dict.h),
-        r: new Uint8Array(dict.r),
-        o: new Uint8Array(dict.o),
-        i: dict.i,
-        l: dict.l,
-        q: dict.q ? new Uint8Array(dict.q) : undefined,
-        f: dict.f,
-        m: new Uint8Array(dict.m),
-      }),
-    );
-  }
-
-  /**
-   * Check if the advertisement is a request.
-   * @param {ResourceAdvertisement} adv
-   * @returns {boolean}
-   */
-  static isRequest(adv) {
-    return adv.u;
-  }
-
-  /**
-   * Check if the advertisement is a response.
-   * @param {ResourceAdvertisement} adv
-   * @returns {boolean}
-   */
-  static isResponse(adv) {
-    return adv.p;
+    return new ResourceAdvertisement({
+      t: dict.t,
+      d: dict.d,
+      n: dict.n,
+      // MicroMsgPack decodes `bin` to Uint8Array; copy to detach the buffer.
+      h: new Uint8Array(dict.h),
+      r: new Uint8Array(dict.r),
+      o: new Uint8Array(dict.o),
+      i: dict.i,
+      l: dict.l,
+      q: dict.q ? new Uint8Array(dict.q) : undefined,
+      f: dict.f,
+      m: new Uint8Array(dict.m),
+    });
   }
 }

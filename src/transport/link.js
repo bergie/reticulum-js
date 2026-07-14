@@ -197,6 +197,37 @@ export class Link extends EventTarget {
   pendingRequests = new Map();
 
   /**
+   * Outgoing Resources (this side is the sender) keyed by hex(resource.hash)
+   * — PROTOCOL-SPEC.md §10. Driven by `Resource.advertise` and fulfilled by
+   * inbound RESOURCE_REQ / RESOURCE_PRF / RESOURCE_RCL.
+   * @type {Map<string, import("../core/resource.js").Resource>}
+   */
+  outgoingResources = new Map();
+
+  /**
+   * Incoming Resources (this side is the receiver) keyed by hex(resource.hash).
+   * Populated from RESOURCE_ADV; parts are routed by map_hash matching.
+   * @type {Map<string, import("../core/resource.js").Resource>}
+   */
+  incomingResources = new Map();
+
+  /**
+   * Injected bz2 module (PROTOCOL-SPEC.md §10.2 step 2). The library never
+   * imports a compression dependency; the application assigns this if it wants
+   * Resource compression. When unset, compressed advertisements cannot be
+   * decompressed locally and sender-side compression is skipped.
+   * @type {import("../core/resource.js").Bzip2 | undefined}
+   */
+  bz2 = undefined;
+
+  /**
+   * Cap on advertised Resource size accepted inbound (§10.4 bomb defense).
+   * Applications may lower this; `null` keeps the {@link Resource} default.
+   * @type {number | undefined}
+   */
+  maxResourceSize = undefined;
+
+  /**
    * Low-level constructor. Prefer the `Link.initiate` / `Link.accept` factories.
    *
    * @param {object} opts
@@ -268,7 +299,10 @@ export class Link extends EventTarget {
     const TOKEN_OVERHEAD = 48; // iv(16) + hmac(32), link-derived key form
     const AES_BLOCK = 16;
     const ciphertextBudget = this.mtu - HEADER1_SIZE - TOKEN_OVERHEAD;
-    return Math.max(0, Math.floor(ciphertextBudget / AES_BLOCK) * AES_BLOCK - 1);
+    return Math.max(
+      0,
+      Math.floor(ciphertextBudget / AES_BLOCK) * AES_BLOCK - 1,
+    );
   }
 
   /**
@@ -1173,8 +1207,7 @@ export class Link extends EventTarget {
     const requestId = await Identity.truncatedHash(outbound.getHashablePart());
     const requestIdHex = toHex(requestId);
 
-    const timeout =
-      options.timeout ?? this._defaultRequestTimeoutMs();
+    const timeout = options.timeout ?? this._defaultRequestTimeoutMs();
 
     const responsePromise = new Promise((resolve, reject) => {
       const entry = {
@@ -1227,17 +1260,15 @@ export class Link extends EventTarget {
 
     let decoded;
     try {
-      decoded = MicroMsgPack.decode(/** @type {Uint8Array} */ (decrypted.payload));
+      decoded = MicroMsgPack.decode(
+        /** @type {Uint8Array} */ (decrypted.payload),
+      );
     } catch (err) {
       log("Link", `Dropping malformed REQUEST: ${err}`, LogLevel.WARN);
       return;
     }
     if (!Array.isArray(decoded) || decoded.length < 3) {
-      log(
-        "Link",
-        `Dropping REQUEST with bad envelope shape`,
-        LogLevel.WARN,
-      );
+      log("Link", `Dropping REQUEST with bad envelope shape`, LogLevel.WARN);
       return;
     }
     const [requestTime, pathHash, data] = decoded;
@@ -1274,7 +1305,11 @@ export class Link extends EventTarget {
         requestTime,
       );
     } catch (err) {
-      log("Link", `REQUEST handler for ${handler.path} threw: ${err}`, LogLevel.ERROR);
+      log(
+        "Link",
+        `REQUEST handler for ${handler.path} threw: ${err}`,
+        LogLevel.ERROR,
+      );
       return;
     }
     // A generator returning null/undefined suppresses the response.
@@ -1324,7 +1359,9 @@ export class Link extends EventTarget {
   async _handleResponse(decrypted) {
     let decoded;
     try {
-      decoded = MicroMsgPack.decode(/** @type {Uint8Array} */ (decrypted.payload));
+      decoded = MicroMsgPack.decode(
+        /** @type {Uint8Array} */ (decrypted.payload),
+      );
     } catch (err) {
       log("Link", `Dropping malformed RESPONSE: ${err}`, LogLevel.WARN);
       return;
@@ -1392,53 +1429,60 @@ export class Link extends EventTarget {
   }
 
   // -----------------------------------------------------------------------
-  // Resources ( LXMF RESOURCE_ADV / RESOURCE_REQ )
+  // Resources ( PROTOCOL-SPEC.md §10 )
   // -----------------------------------------------------------------------
 
   /**
-   * Advertises a resource over the link and parks its payload for a later
-   * RESOURCE_REQ. Returns the 32-byte resource hash.
-   * @param {Uint8Array} data
-   * @returns {Promise<Uint8Array>}
+   * Registers an outgoing Resource (sender side) keyed by hex(resource.hash).
+   * @param {import("../core/resource.js").Resource} resource
+   * @internal
    */
-  async sendResourceAdvertisement(data) {
-    const dataHash = new Uint8Array(
-      await crypto.subtle.digest("SHA-256", /** @type {any} */ (data)),
-    );
-    // RESOURCE_ADV payload: hash(32) || size_be64(8)
-    const sizeBuffer = new ArrayBuffer(8);
-    new DataView(sizeBuffer).setBigUint64(0, BigInt(data.length), false);
-    const adv = new Uint8Array(40);
-    adv.set(dataHash, 0);
-    adv.set(new Uint8Array(sizeBuffer), 32);
-    this.pendingResources.set(toHex(dataHash), data);
-
-    const packet = new Packet({
-      packetType: PacketType.DATA,
-      destinationType: DestType.LINK,
-      destinationHash: this.linkId,
-      contextByte: ContextType.RESOURCE_ADV,
-      payload: adv,
-    });
-    await this.send(packet);
-    return dataHash;
+  _registerOutgoingResource(resource) {
+    if (resource.hash) {
+      this.outgoingResources.set(toHex(resource.hash), resource);
+    }
   }
 
   /**
-   * Registers a resource to receive incoming parts dispatched via the link's
-   * `resource` event.
-   * @param {any} resource
+   * Registers an incoming Resource (receiver side) keyed by hex(resource.hash).
+   * @param {import("../core/resource.js").Resource} resource
+   * @internal
    */
-  registerIncomingResource(resource) {
-    this.addEventListener("resource", (event) => {
-      const { packet } = /** @type {any} */ (event).detail;
-      if (
-        resource.link &&
-        toHex(packet.destinationHash) === toHex(resource.link.linkId)
-      ) {
-        resource.receivePart(packet);
-      }
-    });
+  _registerIncomingResource(resource) {
+    if (resource.hash) {
+      this.incomingResources.set(toHex(resource.hash), resource);
+    }
+  }
+
+  /**
+   * Routes an inbound RESOURCE part to the incoming resource whose hashmap
+   * claims it (§10.6). Parts carry no resource id, so matching is by map_hash.
+   * @param {Uint8Array} chunk
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _routeResourcePart(chunk) {
+    for (const resource of this.incomingResources.values()) {
+      const placed = await resource.receivePart(chunk);
+      if (placed) return;
+    }
+    log(
+      "Link",
+      "RESOURCE part matched no incoming resource; dropping",
+      LogLevel.DEBUG,
+    );
+  }
+
+  /**
+   * Extracts the 32-byte resource_hash from a RESOURCE_REQ body for routing.
+   * Body shape (§10.5): `exhausted(1) ‖ [last_map_hash(4) if exhausted] ‖ resource_hash(32) ‖ …`.
+   * @param {Uint8Array} body
+   * @returns {Uint8Array}
+   * @private
+   */
+  static _resourceHashFromRequest(body) {
+    const offset = body[0] === 0xff ? 5 : 1;
+    return body.subarray(offset, offset + 32);
   }
 
   // -----------------------------------------------------------------------
@@ -1526,27 +1570,77 @@ export class Link extends EventTarget {
         break;
 
       case ContextType.RESOURCE_REQ: {
-        const requestedHashHex = toHex(decrypted.payload);
-        const resourceData = this.pendingResources.get(requestedHashHex);
-        if (resourceData) {
+        // §10.5: receiver → sender. Route to the outgoing resource by hash.
+        const reqHash = Link._resourceHashFromRequest(decrypted.payload);
+        const outgoing = this.outgoingResources.get(toHex(reqHash));
+        if (outgoing) {
+          await outgoing.handleRequest(decrypted.payload);
+        } else {
           log(
             "Link",
-            `Remote requested resource ${requestedHashHex}; transfer not yet implemented`,
+            "RESOURCE_REQ for unknown resource; dropping",
+            LogLevel.DEBUG,
           );
         }
         break;
       }
 
       case ContextType.RESOURCE:
-      case ContextType.RESOURCE_ADV:
-      case ContextType.RESOURCE_HMU:
-      case ContextType.RESOURCE_ICL:
-      case ContextType.RESOURCE_RCL:
-      case ContextType.RESOURCE_PRF:
-        this.dispatchEvent(
-          new CustomEvent("resource", { detail: { packet: decrypted } }),
-        );
+        // §10.6: a raw encrypted slice — route by map_hash matching.
+        await this._routeResourcePart(decrypted.payload);
         break;
+
+      case ContextType.RESOURCE_ADV: {
+        // §10.4: receiver accepts an incoming transfer and starts requesting.
+        const { Resource } = await import("../core/resource.js");
+        const incoming = await Resource.accept(this, decrypted, {
+          bz2: this.bz2,
+          maxSize: this.maxResourceSize,
+        });
+        if (incoming) {
+          this.dispatchEvent(
+            new CustomEvent("resource", {
+              detail: { packet: decrypted, resource: incoming },
+            }),
+          );
+          await incoming.requestNext();
+        }
+        break;
+      }
+
+      case ContextType.RESOURCE_HMU: {
+        // §10.7: hashmap continuation for the receiver.
+        const hmuHash = decrypted.payload.subarray(0, 32);
+        const incomingHmu = this.incomingResources.get(toHex(hmuHash));
+        if (incomingHmu) await incomingHmu.hashmapUpdate(decrypted.payload);
+        break;
+      }
+
+      case ContextType.RESOURCE_PRF: {
+        // §10.8: receiver → sender proof. Route by resource_hash = body[0:32].
+        const prfHash = decrypted.payload.subarray(0, 32);
+        const outgoingPrf = this.outgoingResources.get(toHex(prfHash));
+        if (outgoingPrf) {
+          await outgoingPrf.validateProof(decrypted.payload);
+        }
+        break;
+      }
+
+      case ContextType.RESOURCE_ICL: {
+        // §10.9: initiator cancel → cancel the matching incoming resource.
+        const iclHash = decrypted.payload.subarray(0, 32);
+        const incomingIcl = this.incomingResources.get(toHex(iclHash));
+        if (incomingIcl) await incomingIcl.handleIncomingCancel();
+        break;
+      }
+
+      case ContextType.RESOURCE_RCL: {
+        // §10.9: receiver reject → mark the matching outgoing resource rejected.
+        const rclHash = decrypted.payload.subarray(0, 32);
+        const outgoingRcl = this.outgoingResources.get(toHex(rclHash));
+        if (outgoingRcl) await outgoingRcl.handleRejection();
+        break;
+      }
 
       case ContextType.KEEPALIVE:
         // Responder answers a 0xFF ping with a 0xFE pong.

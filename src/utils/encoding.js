@@ -48,6 +48,30 @@ export function bytesEqual(a, b) {
 }
 
 /**
+ * Concatenates a variable number of Uint8Array (or array-like byte sources)
+ * into a single new Uint8Array. Accepts Uint8Array values directly; anything
+ * else is coerced via `new Uint8Array(source)`.
+ *
+ * @param {...Uint8Array | ArrayLike<number>} arrays
+ * @returns {Uint8Array}
+ */
+export function concatBytes(...arrays) {
+  /** @type {Uint8Array[]} */
+  const parts = arrays.map((a) =>
+    a instanceof Uint8Array ? a : new Uint8Array(/** @type {any} */ (a)),
+  );
+  let total = 0;
+  for (const p of parts) total += p.length;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const p of parts) {
+    out.set(p, offset);
+    offset += p.length;
+  }
+  return out;
+}
+
+/**
  * Converts a hexadecimal string back into a raw Uint8Array.
  * Useful for parsing user-provided destination hashes or static routing configurations.
  *

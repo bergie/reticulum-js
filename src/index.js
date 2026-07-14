@@ -3,7 +3,7 @@
  * Zero-dependency, EUPL-1.2 compliant protocol stack.
  */
 
-export { Destination, Allow } from "./core/destination.js";
+export { Allow, Destination } from "./core/destination.js";
 // --- 2. Cryptography & Identity ---
 // Everything needed to create, load, and sign data as an RNS node.
 export { Identity } from "./core/identity.js";
@@ -17,7 +17,11 @@ export {
   TransportType,
 } from "./core/packet.js";
 export { PacketReceipt, ReceiptStatus } from "./core/packet_receipt.js";
-export { Resource } from "./core/resource.js";
+export { Resource, ResourceStatus } from "./core/resource.js";
+export {
+  ResourceAdvertisement,
+  ResourceFlag,
+} from "./core/resource_advertisement.js";
 // --- 1. Core Orchestration ---
 // The primary client class that wires the transport router, interfaces, and compression together.
 export { Reticulum } from "./core/reticulum.js";

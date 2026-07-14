@@ -122,9 +122,7 @@ async function makeEstablishedPair() {
     }
     await new Promise((r) => setTimeout(r, 5));
   }
-  throw new Error(
-    `handshake did not complete (initiator=${initiator.status})`,
-  );
+  throw new Error(`handshake did not complete (initiator=${initiator.status})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -155,14 +153,20 @@ test("§11 mdu scales with mtu and never goes negative", () => {
   });
   // Larger MTU yields a proportionally larger MDU.
   link.mtu = 1000;
-  assert.ok(link.mdu > 431, `larger mtu should yield larger mdu (got ${link.mdu})`);
+  assert.ok(
+    link.mdu > 431,
+    `larger mtu should yield larger mdu (got ${link.mdu})`,
+  );
   // A plaintext of size mdu must Token-encrypt + frame to <= mtu.
   link.mtu = 500;
   const mdu = link.mdu;
   const budget = 500 - 67; // header(19) + token overhead(48)
   // ciphertext for a mdu-sized plaintext is the next 16-byte boundary above mdu.
   const ciphertext = Math.floor(mdu / 16) * 16 + 16;
-  assert.ok(ciphertext <= budget, "mdu-sized plaintext must fit after encryption");
+  assert.ok(
+    ciphertext <= budget,
+    "mdu-sized plaintext must fit after encryption",
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -206,10 +210,7 @@ test("§11.1 REQUEST packet is msgpack [ts, path_hash, data], context REQUEST, c
   const expectedPathHash = await Identity.truncatedHash(
     new TextEncoder().encode("/page/index.mu"),
   );
-  assert.deepStrictEqual(
-    Array.from(envelope[1]),
-    Array.from(expectedPathHash),
-  );
+  assert.deepStrictEqual(Array.from(envelope[1]), Array.from(expectedPathHash));
 });
 
 test("§11.1 data is encoded ONCE — a dict decodes back to a map, not bytes", async () => {
@@ -277,7 +278,10 @@ test("§11.1/§11.2 request_id = SHA256(get_hashable_part(wire REQUEST))[:16], i
     (p) => p.contextByte === ContextType.REQUEST,
   );
   assert.ok(reqPkt);
-  assert.ok(reqPkt.raw && reqPkt.raw.length > 0, "outbound packet needs raw set");
+  assert.ok(
+    reqPkt.raw && reqPkt.raw.length > 0,
+    "outbound packet needs raw set",
+  );
 
   // Reconstruct the hashable part exactly as Packet.getHashablePart does.
   const hashable = reqPkt.getHashablePart();
