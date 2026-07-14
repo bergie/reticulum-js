@@ -1183,14 +1183,30 @@ export class Link extends EventTarget {
     const envelope = [Date.now() / 1000, pathHash, data];
     const packedRequest = MicroMsgPack.encode(envelope);
 
+    const timeout = options.timeout ?? this._defaultRequestTimeoutMs();
+
     if (packedRequest.length > this.mdu) {
-      // §11.1: oversized requests must go through the §10 Resource transfer.
-      // That pipeline isn't wired into the Link yet; fail loudly rather than
-      // emitting a packet the peer can't decrypt/assemble.
-      throw new Error(
-        `Request payload ${packedRequest.length}B exceeds link MDU ${this.mdu}B; ` +
-          "Resource-backed REQUEST path not yet implemented (§10/§11.1)",
+      // §11.1: oversized REQUEST via the §10 Resource pipeline. For the
+      // Resource path the request_id is the truncated SHA-256 of the plaintext
+      // `packed_request` (NOT a packet hash) and is carried in the adv `q`
+      // field; the responder echoes it back so the pending entry matches.
+      const requestId = await Identity.truncatedHash(packedRequest);
+      const requestIdHex = toHex(requestId);
+      const responsePromise = this._registerPendingRequest(
+        requestIdHex,
+        path,
+        timeout,
       );
+      const { Resource } = await import("../core/resource.js");
+      const resource = new Resource({
+        data: packedRequest,
+        link: this,
+        isRequest: true,
+        requestId,
+        bz2: this.bz2,
+      });
+      await resource.advertise();
+      return responsePromise;
     }
 
     const reqPacket = new Packet({
@@ -1206,25 +1222,39 @@ export class Link extends EventTarget {
     // on the encrypted form because that's what the server receives & hashes.
     const requestId = await Identity.truncatedHash(outbound.getHashablePart());
     const requestIdHex = toHex(requestId);
+    const responsePromise = this._registerPendingRequest(
+      requestIdHex,
+      path,
+      timeout,
+    );
+    await this.transport.sendPacket(outbound);
+    return responsePromise;
+  }
 
-    const timeout = options.timeout ?? this._defaultRequestTimeoutMs();
-
-    const responsePromise = new Promise((resolve, reject) => {
+  /**
+   * Registers a pending REQUEST entry keyed by hex request_id and returns the
+   * Promise the caller awaits. Registered BEFORE transmit so a same-tick
+   * (loopback) response still finds its entry.
+   * @param {string} requestIdHex
+   * @param {string} path
+   * @param {number} timeoutMs
+   * @returns {Promise<any>}
+   * @private
+   */
+  _registerPendingRequest(requestIdHex, path, timeoutMs) {
+    return new Promise((resolve, reject) => {
       const entry = {
         resolve,
         reject,
         timer: setTimeout(() => {
           this.pendingRequests.delete(requestIdHex);
-          reject(new Error(`REQUEST to ${path} timed out after ${timeout}ms`));
-        }, timeout),
+          reject(
+            new Error(`REQUEST to ${path} timed out after ${timeoutMs}ms`),
+          );
+        }, timeoutMs),
       };
-      // Register BEFORE transmitting so a same-tick (loopback) response still
-      // finds its entry, and so the entry exists before any await can yield.
       this.pendingRequests.set(requestIdHex, entry);
     });
-
-    await this.transport.sendPacket(outbound);
-    return responsePromise;
   }
 
   /**
@@ -1276,7 +1306,63 @@ export class Link extends EventTarget {
       log("Link", `Dropping REQUEST with bad path_hash`, LogLevel.WARN);
       return;
     }
+    await this._dispatchRequest(pathHash, data, requestId, requestTime);
+  }
 
+  /**
+   * Responder: dispatch a §11.1 REQUEST whose body arrived via a §10 Resource
+   * transfer. The assembled `resource.data` is the same `[time, path_hash,
+   * data]` msgpack envelope; the `request_id` is carried in the Resource
+   * advertisement's `q` field (the plaintext-hash form, §11.1).
+   * @param {import("../core/resource.js").Resource} resource
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _handleResourceRequest(resource) {
+    let decoded;
+    try {
+      decoded = MicroMsgPack.decode(/** @type {Uint8Array} */ (resource.data));
+    } catch (err) {
+      log("Link", `Dropping malformed Resource REQUEST: ${err}`, LogLevel.WARN);
+      return;
+    }
+    if (!Array.isArray(decoded) || decoded.length < 3) {
+      log(
+        "Link",
+        `Dropping Resource REQUEST with bad envelope shape`,
+        LogLevel.WARN,
+      );
+      return;
+    }
+    const [requestTime, pathHash, data] = decoded;
+    if (!(pathHash instanceof Uint8Array) || pathHash.length !== 16) {
+      log(
+        "Link",
+        `Dropping Resource REQUEST with bad path_hash`,
+        LogLevel.WARN,
+      );
+      return;
+    }
+    await this._dispatchRequest(
+      pathHash,
+      data,
+      /** @type {Uint8Array} */ (resource.requestId),
+      requestTime,
+    );
+  }
+
+  /**
+   * Shared REQUEST dispatch: handler lookup, authorization, generator
+   * invocation, and RESPONSE send. Used by both the single-packet and
+   * Resource-backed REQUEST paths.
+   * @param {Uint8Array} pathHash
+   * @param {any} data
+   * @param {Uint8Array} requestId
+   * @param {number} requestTime
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _dispatchRequest(pathHash, data, requestId, requestTime) {
     const handler = this.destination?.requestHandlers?.get(toHex(pathHash));
     if (!handler) {
       log(
@@ -1330,10 +1416,20 @@ export class Link extends EventTarget {
   async _sendResponse(response, requestId, autoCompress) {
     const packed = MicroMsgPack.encode([requestId, response]);
     if (packed.length > this.mdu) {
-      throw new Error(
-        `RESPONSE ${packed.length}B exceeds link MDU ${this.mdu}B; ` +
-          "Resource-backed RESPONSE path not yet implemented (§10/§11.2)",
-      );
+      // §11.2: oversized RESPONSE via the §10 Resource pipeline (adv flag `p`,
+      // `q=requestId`). The assembled bytes are the same `[request_id, response]`
+      // msgpack envelope as the single-packet form.
+      const { Resource } = await import("../core/resource.js");
+      const resource = new Resource({
+        data: packed,
+        link: this,
+        isResponse: true,
+        requestId,
+        bz2: this.bz2,
+        autoCompress,
+      });
+      await resource.advertise();
+      return;
     }
     const packet = new Packet({
       packetType: PacketType.DATA,
@@ -1342,7 +1438,6 @@ export class Link extends EventTarget {
       contextByte: ContextType.RESPONSE,
       payload: packed,
     });
-    void autoCompress; // honoured once the Resource response path lands.
     await this.send(packet);
   }
 
@@ -1375,7 +1470,58 @@ export class Link extends EventTarget {
       log("Link", `Dropping RESPONSE with bad request_id`, LogLevel.WARN);
       return;
     }
+    await this._resolveResponse(requestId, response);
+  }
 
+  /**
+   * Initiator: a §11.2 RESPONSE whose body arrived via a §10 Resource
+   * transfer. The assembled `resource.data` is the same `[request_id,
+   * response]` msgpack envelope.
+   * @param {import("../core/resource.js").Resource} resource
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _handleResourceResponse(resource) {
+    let decoded;
+    try {
+      decoded = MicroMsgPack.decode(/** @type {Uint8Array} */ (resource.data));
+    } catch (err) {
+      log(
+        "Link",
+        `Dropping malformed Resource RESPONSE: ${err}`,
+        LogLevel.WARN,
+      );
+      return;
+    }
+    if (!Array.isArray(decoded) || decoded.length < 2) {
+      log(
+        "Link",
+        `Dropping Resource RESPONSE with bad envelope shape`,
+        LogLevel.WARN,
+      );
+      return;
+    }
+    const [requestId, response] = decoded;
+    if (!(requestId instanceof Uint8Array) || requestId.length !== 16) {
+      log(
+        "Link",
+        `Dropping Resource RESPONSE with bad request_id`,
+        LogLevel.WARN,
+      );
+      return;
+    }
+    await this._resolveResponse(requestId, response);
+  }
+
+  /**
+   * Resolves a pending REQUEST with a decoded RESPONSE value, enforcing the
+   * §11.2 request_id match. Unknown / spurious responses are dropped.
+   * @param {Uint8Array} requestId
+   * @param {any} response
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _resolveResponse(requestId, response) {
     const entry = this.pendingRequests.get(toHex(requestId));
     if (!entry) {
       log(
@@ -1597,14 +1743,39 @@ export class Link extends EventTarget {
           bz2: this.bz2,
           maxSize: this.maxResourceSize,
         });
-        if (incoming) {
+        if (!incoming) break;
+        // §11.1/§11.2: a Resource carrying a REQUEST/RESPONSE body is routed
+        // to the §11 machinery on completion instead of the generic event.
+        if (incoming.isRequest) {
+          incoming
+            .whenComplete()
+            .then(() => this._handleResourceRequest(incoming))
+            .catch((/** @type {Error} */ err) =>
+              log(
+                "Link",
+                `Incoming REQUEST resource failed: ${err}`,
+                LogLevel.ERROR,
+              ),
+            );
+        } else if (incoming.isResponse) {
+          incoming
+            .whenComplete()
+            .then(() => this._handleResourceResponse(incoming))
+            .catch((/** @type {Error} */ err) =>
+              log(
+                "Link",
+                `Incoming RESPONSE resource failed: ${err}`,
+                LogLevel.ERROR,
+              ),
+            );
+        } else {
           this.dispatchEvent(
             new CustomEvent("resource", {
               detail: { packet: decrypted, resource: incoming },
             }),
           );
-          await incoming.requestNext();
         }
+        await incoming.requestNext();
         break;
       }
 

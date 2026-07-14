@@ -537,14 +537,8 @@ test("§11.5 tearing the link down rejects in-flight requests", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// §11.1  MDU overflow is rejected (Resource path not yet implemented)
+// §11.1  MDU overflow is now handled by the §10 Resource pipeline. Those
+// round-trip tests live in `request_response_resource.test.js` because they
+// require the deferred-delivery loopback transport (a synchronous transport
+// deadlocks on Resource transfers).
 // ---------------------------------------------------------------------------
-
-test("§11.1 a REQUEST larger than MDU throws (Resource path pending)", async () => {
-  const { initiator } = await makeEstablishedPair();
-  const oversized = new Uint8Array(initiator.mdu + 1);
-  await assert.rejects(
-    initiator.request("/rpc/big", oversized),
-    /exceeds link MDU/,
-  );
-});
