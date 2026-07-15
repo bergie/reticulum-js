@@ -1,5 +1,10 @@
 {
   "$schema": "https://typedoc.org/schema.json",
+  "lang": "en",
   "customCss": "./assets/reticulum-js.css",
-  "favicon": "./assets/reticulum-js.png"
+  "customFooterHtml": "<code>rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js</code>",
+  "favicon": "./assets/reticulum-js.png",
+  "hideGenerator": true,
+  "darkHighlightTheme": "tokyo-night",
+  "lightHighlightTheme": "solarized-light"
 }

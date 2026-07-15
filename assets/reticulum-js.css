@@ -5,23 +5,22 @@
   --color-text: #E0E0E0;
   --color-text-aside: #888888;
   --color-primary: #F7DF1E;
-  
+
   /* Remove soft edges */
   --border-radius-menu: 0px;
   --border-radius-search: 0px;
   --border-radius-code: 0px;
 
   /* Typography */
-  --font-family-mono: 'Space Mono', 'Fira Code', monospace;
+  --font-family-mono: 'Source Code Pro', 'Space Mono', 'Fira Code', monospace;
+}
+[data-theme="light"] {
+  --color-text: #1E1F1C;
+  --color-background: #E0E0E0;
 }
 
 /* Industrial Borders */
-.tsd-navigation {
-  border-right: 1px solid var(--color-primary);
-}
-
 .tsd-panel {
-  border: 1px solid #555;
   box-shadow: none;
 }
 
@@ -30,4 +29,26 @@
   background-color: var(--color-primary);
   color: var(--color-background-secondary);
   text-decoration: none;
+}
+
+header {
+  border-color: var(--color-primary);
+}
+header .title {
+  color: var(--color-primary);
+}
+
+h1 {
+  font-family: 'Source Code Pro', monospace;
+}
+h2 {
+  font-family: 'Source Code Pro', monospace;
+  margin-bottom: 0px;
+  padding-bottom: 0px;
+}
+
+pre {
+  border-radius: 0px;
+  overflow-x: scroll;
+  border: 1px solid var(--color-primary);
 }
