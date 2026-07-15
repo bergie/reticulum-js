@@ -1,7 +1,7 @@
 .DS_Store
 node_modules/
 Reticulum/
-out/
+docs/
 dist/
 PROTOCOL-SPEC.md
 *.key

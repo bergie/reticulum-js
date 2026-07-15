@@ -1,6 +1,6 @@
 # reticulum-js - Reticulum Network System for JavaScript
 
-![reticulum-js logo](./docs/assets/reticulum-js.png)
+![reticulum-js logo](./assets/reticulum-js.png)
 
 This repository aims to produce a dependency-free JavaScript implementation of the [Reticulum Network System](https://reticulum.network/). Reticulum is a mesh networking stack designed for both local and wide-area networking. Reticulum applications can talk with each other over multiple different interfaces, ranging from TCP connections to Lora radio. This allows building offline-first collaborative software that can work even when Internet infrastructure is compromised.
 

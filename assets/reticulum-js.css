@@ -1,0 +1,33 @@
+:root, [data-theme="dark"] {
+  /* Core Colors */
+  --color-background: #1E1F1C;
+  --color-background-secondary: #323330;
+  --color-text: #E0E0E0;
+  --color-text-aside: #888888;
+  --color-primary: #F7DF1E;
+  
+  /* Remove soft edges */
+  --border-radius-menu: 0px;
+  --border-radius-search: 0px;
+  --border-radius-code: 0px;
+
+  /* Typography */
+  --font-family-mono: 'Space Mono', 'Fira Code', monospace;
+}
+
+/* Industrial Borders */
+.tsd-navigation {
+  border-right: 1px solid var(--color-primary);
+}
+
+.tsd-panel {
+  border: 1px solid #555;
+  box-shadow: none;
+}
+
+/* High-Contrast Hover */
+.tsd-navigation a:hover {
+  background-color: var(--color-primary);
+  color: var(--color-background-secondary);
+  text-decoration: none;
+}
