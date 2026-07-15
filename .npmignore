@@ -6,6 +6,7 @@ Reticulum/
 docs/
 test/
 dist/
+scripts/
 *.key
 *.tgz
 *.rsm
@@ -13,3 +14,4 @@ PROTOCOL-SPEC.md
 SPEC.md
 AGENTS.md
 tsconfig.json
+typedoc.json

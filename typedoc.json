@@ -1,0 +1,5 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "customCss": "./assets/reticulum-js.css",
+  "favicon": "./assets/reticulum-js.png"
+}
