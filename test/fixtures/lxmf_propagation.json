@@ -26,5 +26,13 @@
       "name": "TestNode"
     },
     "expected": "97c2ce6553f100c3cd0100cd2800931003128101c408546573744e6f6465"
+  },
+  "pythonPaper": {
+    "timestamp": 1716000000.0,
+    "title": "Paper Test",
+    "content": "Hello on paper from Python!",
+    "paperData": "86b10379ced4da018cf3fd2a63520d8836c713070186678c4792481bb26a665fc7a358da7a028080c7c1a4bc9e55ce01809ac377918bb5202980ef2f7b4427cabfd571bbc4cea808b4189aca31b3bd0f8776f0b4ba89fe2d57e3e6f3556eaf9ab905500a5eab4016d2771fc4d3f841c6e85372b8d8f8244a01e9922882ed5f30a0caa8304340995684a9063b549ae2f8098657dc6f5d4488b6e889d59b26ed05fc5e42f836061d365920d1740840b971372025fbde818a2b0afe6f031d021ac3b8f60aad65b6204661e1f81145d70e59b0a2f41926037aab0b0cf02338ba02f2619d4f44f3a70878e9cfb3c86f98c831",
+    "uri": "lxm://hrEDec7U2gGM8_0qY1INiDbHEwcBhmeMR5JIG7JqZl_Ho1jaegKAgMfBpLyeVc4BgJrDd5GLtSApgO8ve0Qnyr_VcbvEzqgItBiayjGzvQ-HdvC0uon-LVfj5vNVbq-auQVQCl6rQBbSdx_E0_hBxuhTcrjY-CRKAemSKILtXzCgyqgwQ0CZVoSpBjtUmuL4CYZX3G9dRIi26InVmybtBfxeQvg2Bh02WSDRdAhAuXE3ICX73oGKKwr-bwMdAhrDuPYKrWW2IEZh4fgRRdcOWbCi9BkmA3qrCwzwIzi6AvJhnU9E86cIeOnPs8hvmMgx",
+    "transientId": "84d0e2dee5fba0871e290965ebaba1a43dc0efd81380281b958dc7a14794e80b"
   }
 }

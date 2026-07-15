@@ -41,7 +41,12 @@ export * as LXStamper from "./lxmf/stamper.js";
 // --- 4. Application Protocols (RPC & Streams) ---
 // The primitives for building Yjs sync, rngit, and NomadNet layers.
 export { Link } from "./transport/link.js";
-export { fromHex, toHex } from "./utils/encoding.js";
+export {
+  base64UrlToBytes,
+  bytesToBase64Url,
+  fromHex,
+  toHex,
+} from "./utils/encoding.js";
 // --- 6. Utilities ---
 // Exposed purely for convenience if the caller needs them, but not strictly required.
 export { MicroMsgPack as MsgPack } from "./utils/msgpack.js";

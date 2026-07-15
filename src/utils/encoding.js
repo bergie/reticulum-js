@@ -72,6 +72,123 @@ export function concatBytes(...arrays) {
 }
 
 /**
+ * Encodes a Uint8Array into standard (RFC 4648) base64.
+ *
+ * Pure-JS implementation (no `Buffer`/`btoa`) so it runs unchanged on every
+ * WinterTC-compatible runtime.
+ *
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+function bytesToBase64(bytes) {
+  if (!(bytes instanceof Uint8Array)) {
+    throw new TypeError("bytesToBase64 expects a Uint8Array");
+  }
+  const chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  let out = "";
+  let i = 0;
+  for (; i + 2 < bytes.length; i += 3) {
+    const n = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2];
+    out += chars[(n >> 18) & 0x3f];
+    out += chars[(n >> 12) & 0x3f];
+    out += chars[(n >> 6) & 0x3f];
+    out += chars[n & 0x3f];
+  }
+  const rem = bytes.length - i;
+  if (rem === 1) {
+    const n = bytes[i] << 16;
+    out += chars[(n >> 18) & 0x3f];
+    out += chars[(n >> 12) & 0x3f];
+    out += "==";
+  } else if (rem === 2) {
+    const n = (bytes[i] << 16) | (bytes[i + 1] << 8);
+    out += chars[(n >> 18) & 0x3f];
+    out += chars[(n >> 12) & 0x3f];
+    out += chars[(n >> 6) & 0x3f];
+    out += "=";
+  }
+  return out;
+}
+
+// Reverse lookup table for base64 decoding (covers both standard and URL-safe
+// alphabets so the decoder tolerates either input).
+const B64_DEC = (() => {
+  const t = new Int8Array(128).fill(-1);
+  const std =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  for (let i = 0; i < std.length; i++) t[std.charCodeAt(i)] = i;
+  // URL-safe alphabet aliases.
+  t["-".charCodeAt(0)] = 62;
+  t["_".charCodeAt(0)] = 63;
+  return t;
+})();
+
+/**
+ * Decodes a (standard or URL-safe, padded or unpadded) base64 string.
+ *
+ * Tolerant in the same ways the LXMF Python reference is when ingesting paper
+ * URIs: stray padding is ignored and missing padding is restored.
+ *
+ * @param {string} str
+ * @returns {Uint8Array}
+ */
+function base64ToBytes(str) {
+  if (typeof str !== "string") {
+    throw new TypeError("base64ToBytes expects a string");
+  }
+  // Normalise to the standard alphabet, drop padding, then re-pad correctly.
+  let s = str.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+  const pad = (4 - (s.length % 4)) % 4;
+  if (pad) s += "=".repeat(pad);
+
+  const out = new Uint8Array((s.length / 4) * 3);
+  let o = 0;
+  for (let i = 0; i < s.length; i += 4) {
+    const c0 = B64_DEC[s.charCodeAt(i)];
+    const c1 = B64_DEC[s.charCodeAt(i + 1)];
+    const c2 =
+      s.charCodeAt(i + 2) === "=".charCodeAt(0)
+        ? -1
+        : B64_DEC[s.charCodeAt(i + 2)];
+    const c3 =
+      s.charCodeAt(i + 3) === "=".charCodeAt(0)
+        ? -1
+        : B64_DEC[s.charCodeAt(i + 3)];
+    const n = (c0 << 18) | (c1 << 12) | ((c2 & 0x3f) << 6) | (c3 & 0x3f);
+    out[o++] = (n >> 16) & 0xff;
+    if (c2 !== -1) out[o++] = (n >> 8) & 0xff;
+    if (c3 !== -1) out[o++] = n & 0xff;
+  }
+  return out.subarray(0, o);
+}
+
+/**
+ * Encodes bytes as URL-safe base64 **without** padding, the exact form used by
+ * the LXMF paper-message `lxm://` URI (`LXMessage.as_uri`).
+ *
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+export function bytesToBase64Url(bytes) {
+  return bytesToBase64(bytes)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+/**
+ * Decodes a URL-safe (or standard) base64 string, tolerating missing padding —
+ * the inverse of {@link bytesToBase64Url}.
+ *
+ * @param {string} str
+ * @returns {Uint8Array}
+ */
+export function base64UrlToBytes(str) {
+  return base64ToBytes(str);
+}
+
+/**
  * Converts a hexadecimal string back into a raw Uint8Array.
  * Useful for parsing user-provided destination hashes or static routing configurations.
  *

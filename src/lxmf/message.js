@@ -15,7 +15,9 @@
  */
 
 import { Identity } from "../core/identity.js";
+import { base64UrlToBytes, bytesToBase64Url } from "../utils/encoding.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import { PAPER_MDU, URI_SCHEMA } from "./constants.js";
 
 const DESTINATION_LENGTH = 16; // TRUNCATED_HASHLENGTH//8
 const SIGNATURE_LENGTH = 64; // SIGLENGTH//8
@@ -451,5 +453,126 @@ export class Message {
     wireData.set(destinationHash, 0);
     wireData.set(decrypted, DESTINATION_LENGTH);
     return await Message.deserialize(wireData, destinationHash);
+  }
+
+  // ------------------------------------------------------------------
+  // Paper message form (§5.4 / LXMessage.py PAPER branch)
+  //
+  // A paper message is byte-identical to the propagation `lxmf_data` form
+  // (`destination_hash(16) || E_outbound(source_hash(16) || signature(64) ||
+  // payload)`), but it is carried out-of-band — printed, photographed as a QR
+  // code, or shared as an `lxm://` URI — instead of over the network. The
+  // receiver ingests it through the same decrypt-and-unpack path as a
+  // propagated message, with stamp enforcement disabled.
+  // ------------------------------------------------------------------
+
+  /**
+   * Serializes and encrypts the message into the paper delivery form, ready to
+   * be encoded as an `lxm://` URI or QR code (`LXMessage.pack()` PAPER branch).
+   *
+   * The encrypted paper payload must fit within {@link PAPER_MDU} bytes (the
+   * QR-code capacity); a `TypeError` is thrown otherwise, mirroring the
+   * Python reference.
+   *
+   * @param {import("../core/identity.js").Identity} sourceIdentity
+   * @param {import("../core/destination.js").Destination} outboundDestination
+   *   recipient `lxmf.delivery` destination (Direction.OUT; holds the
+   *   recipient public key + recalled ratchet).
+   * @returns {Promise<{paperData: Uint8Array, transientId: Uint8Array, wireData: Uint8Array}>}
+   * @throws {TypeError} when the encrypted paper payload exceeds `PAPER_MDU`.
+   */
+  async toPaperData(sourceIdentity, outboundDestination) {
+    const { lxmfData, transientId, wireData } = await this.toPropagationData(
+      sourceIdentity,
+      outboundDestination,
+    );
+    if (lxmfData.length > PAPER_MDU) {
+      throw new TypeError(
+        `LXMF paper delivery requested, but content of ${lxmfData.length} bytes exceeds the paper message maximum of ${PAPER_MDU} bytes.`,
+      );
+    }
+    return { paperData: lxmfData, transientId, wireData };
+  }
+
+  /**
+   * Serializes, encrypts, and encodes the message as an `lxm://` URI
+   * (`LXMessage.as_uri`): the URL-safe base64 of the paper payload, padding
+   * stripped, prefixed with the `lxm` scheme.
+   *
+   * @param {import("../core/identity.js").Identity} sourceIdentity
+   * @param {import("../core/destination.js").Destination} outboundDestination
+   * @returns {Promise<string>}
+   */
+  async toPaperUri(sourceIdentity, outboundDestination) {
+    const { paperData } = await this.toPaperData(
+      sourceIdentity,
+      outboundDestination,
+    );
+    return Message.paperDataToUri(paperData);
+  }
+
+  /**
+   * Formats raw paper data as an `lxm://` URI.
+   *
+   * @param {Uint8Array} paperData
+   * @returns {string}
+   */
+  static paperDataToUri(paperData) {
+    return `${URI_SCHEMA}://${bytesToBase64Url(paperData)}`;
+  }
+
+  /**
+   * Parses an `lxm://` URI back into the raw encrypted paper data
+   * (`LXMRouter.ingest_lxm_uri`). The scheme match is case-insensitive and
+   * any stray `/` characters in the body are tolerated, matching the Python
+   * reference's lenient decoding.
+   *
+   * @param {string} uri
+   * @returns {Uint8Array}
+   * @throws {Error} when the URI does not use the `lxm` scheme.
+   */
+  static paperDataFromUri(uri) {
+    if (typeof uri !== "string") {
+      throw new TypeError("paperDataFromUri expects a string URI");
+    }
+    const prefix = `${URI_SCHEMA}://`;
+    if (!uri.toLowerCase().startsWith(prefix)) {
+      throw new Error(
+        `Not an LXMF paper URI: expected the '${prefix}' scheme prefix`,
+      );
+    }
+    return base64UrlToBytes(uri.slice(prefix.length).replace(/\//g, ""));
+  }
+
+  /**
+   * Decrypts and reconstructs an LXMF message from raw paper data. The paper
+   * form is byte-identical to the propagation `lxmf_data` form, so this
+   * delegates to {@link Message.fromPropagationData}
+   * (`LXMRouter.lxmf_propagation` with `is_paper_message=True`).
+   *
+   * @param {Uint8Array} paperData
+   * @param {import("../core/destination.js").Destination} deliveryDestination
+   *   recipient's inbound `lxmf.delivery` destination.
+   * @returns {Promise<Message|null>} `null` when decryption fails (wrong
+   *   recipient / unknown ratchet) or the input is too short.
+   */
+  static async fromPaperData(paperData, deliveryDestination) {
+    return await Message.fromPropagationData(paperData, deliveryDestination);
+  }
+
+  /**
+   * Decrypts and reconstructs an LXMF message from an `lxm://` URI — the
+   * inverse of {@link Message.toPaperUri}
+   * (`LXMRouter.ingest_lxm_uri` + `lxmf_propagation`).
+   *
+   * @param {string} uri
+   * @param {import("../core/destination.js").Destination} deliveryDestination
+   * @returns {Promise<Message|null>}
+   */
+  static async fromPaperUri(uri, deliveryDestination) {
+    return await Message.fromPaperData(
+      Message.paperDataFromUri(uri),
+      deliveryDestination,
+    );
   }
 }

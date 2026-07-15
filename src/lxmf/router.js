@@ -35,6 +35,11 @@ export class LXMRouter extends EventTarget {
     // Last display name / stamp cost we announced with (§4.3 app_data).
     this.displayName = null;
     this.stampCost = null;
+    // Tracks transient_ids of ingested paper/propagated messages we have
+    // already processed, so a repeated URI ingestion is ignored
+    // (LXMRouter.locally_processed_transient_ids).
+    /** @type {Map<string, number>} */
+    this.processedTransientIds = new Map();
   }
 
   /**
@@ -313,6 +318,30 @@ export class LXMRouter extends EventTarget {
     }
 
     // 4. Dispatch to the UI layer
+    this._dispatchMessage(message, linkId);
+  }
+
+  /**
+   * Dispatches a fully-received, signature-verified message to listeners as a
+   * `message` event. When `senderIdentity` is provided the signature is
+   * re-checked and a failure raises (cryptographic proof failed); when it is
+   * `null` (e.g. a paper message whose sender we have not announced with yet)
+   * the message is still delivered, mirroring Python's
+   * `lxmf_delivery` SOURCE_UNKNOWN behaviour.
+   *
+   * @param {Message} message
+   * @param {Uint8Array|null} linkId
+   * @param {Identity} [senderIdentity] - optional pre-recalled sender identity.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _dispatchMessage(message, linkId, senderIdentity) {
+    if (senderIdentity && !(await message.verifySignature(senderIdentity))) {
+      throw new Error(
+        "Invalid LXMF message signature: Cryptographic proof failed.",
+      );
+    }
+
     this.dispatchEvent(
       new CustomEvent("message", {
         detail: {
@@ -342,6 +371,49 @@ export class LXMRouter extends EventTarget {
       const wireData = this.pendingMessages.get(linkId);
       await this._processIncomingMessage(wireData, linkId, expectedDestHash);
     }
+  }
+
+  /**
+   * Ingests a paper message delivered as an `lxm://` URI (`LXMRouter.ingest_lxm_uri`).
+   *
+   * The URI body is base64-decoded into the paper payload, de-duplicated by its
+   * `transient_id` (so re-ingesting the same QR/URI is a no-op), decrypted with
+   * the local `lxmf.delivery` destination, and dispatched through the same
+   * `message` event path as a network-delivered message. Paper messages always
+   * disable stamp enforcement (`LXMRouter.lxmf_propagation` is_paper_message).
+   *
+   * The sender's signature is verified when their identity is already known
+   * (recalled from a prior announce); otherwise the message is still delivered
+   * with an unverified signature, exactly like the Python reference.
+   *
+   * @param {string} uri - The `lxm://` paper message URI.
+   * @returns {Promise<Message|null>} The reconstructed message, or `null` when
+   *   the URI is not addressed to this node (decryption fails) or was already
+   *   ingested.
+   */
+  async ingestUri(uri) {
+    if (!this.deliveryDest) {
+      throw new Error("Router not initialized; call init() first.");
+    }
+    const paperData = Message.paperDataFromUri(uri);
+    const transientId = await Message.transientIdFromPropagationData(paperData);
+    const transientHex = toHex(transientId);
+    if (this.processedTransientIds.has(transientHex)) {
+      log("LXMF", `Paper message ${transientHex} already ingested; ignoring.`);
+      return null;
+    }
+    this.processedTransientIds.set(transientHex, Date.now() / 1000);
+
+    const message = await Message.fromPaperData(paperData, this.deliveryDest);
+    if (!message) {
+      log("LXMF", "Paper URI not addressed to this node (decryption failed).");
+      return null;
+    }
+
+    log("LXMF", `Ingested paper message from ${toHex(message.sourceHash)}`);
+    const senderIdentity = await Destination.recall(message.sourceHash);
+    await this._dispatchMessage(message, null, senderIdentity ?? undefined);
+    return message;
   }
 
   /**

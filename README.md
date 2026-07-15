@@ -103,6 +103,55 @@ await lxmf.send(outgoing, identity, null);
 A complete runnable version (with identity persistence and echo replies) lives
 in [`examples/lxmf_echobot.js`](examples/lxmf_echobot.js).
 
+### Paper messaging
+
+LXMF messages can also be delivered completely out-of-band — printed on
+paper, photographed as a QR code, or shared as a string — using the *paper*
+delivery method. A paper message is encrypted to the recipient exactly like a
+propagated one, but instead of travelling over the network it is encoded as an
+`lxm://` URI that the recipient ingests later:
+
+```js
+import { LXMFConstants, LXMessage, toHex } from "reticulum-js";
+
+// Build the recipient's outbound lxmf.delivery destination from a recalled
+// identity (typically learned from an announce).
+const recipientOut = await Destination.OUT(
+  "lxmf.delivery",
+  DestType.SINGLE,
+  recipientIdentity,
+  rns,
+);
+
+const outgoing = new LXMessage({
+  sourceHash: lxmf.deliveryDest.destinationHash,
+  destinationHash: recipientOut.destinationHash,
+  content: "Scanned from a QR code!",
+});
+
+// Produce the lxm:// URI (e.g. render it into a QR code). The encrypted
+// payload must fit within LXMFConstants.PAPER_MDU bytes (QR-code capacity).
+const uri = await outgoing.toPaperUri(identity, recipientOut);
+console.log(uri); // lxm://...
+```
+
+On the receiving side, feed the URI straight into the router:
+
+```js
+lxmf.addEventListener("message", (event) => {
+  const { message } = event.detail;
+  console.log(`Paper message from ${toHex(message.sourceHash)}: ${message.content}`);
+});
+
+// `uri` was captured out-of-band (typed in, scanned, pasted).
+const message = await lxmf.ingestUri(uri);
+```
+
+`ingestUri` decrypts with the local `lxmf.delivery` destination, dispatches the
+usual `message` event, and de-duplicates by `transient_id` so scanning the same
+QR code twice is harmless. You can also work at the `LXMessage` level directly
+with `toPaperData` / `fromPaperData` / `fromPaperUri`.
+
 ## License
 
 Licensed under the [EUPL 1.2](https://interoperable-europe.ec.europa.eu/collection/eupl/eupl-text-eupl-12).

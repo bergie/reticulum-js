@@ -18,6 +18,22 @@ export const DeliveryMethod = Object.freeze({
   PAPER: 0x05,
 });
 
+// --- Paper message (QR / URI) delivery geometry (LXMessage.py) ---
+/** URI scheme prefixing URL-safe base64 paper messages (`as_uri`). */
+export const URI_SCHEMA = "lxm";
+/** Max raw byte capacity of an L-level QR code (qrcode lib, ERROR_CORRECT_L). */
+export const QR_MAX_STORAGE = 2953;
+/** Length of the `"lxm://"` URI prefix. */
+const URI_PREFIX_LEN = URI_SCHEMA.length + "://".length;
+/**
+ * Maximum size (bytes) of a paper message's encrypted payload. Derived from the
+ * 6-bits-per-base64-char QR capacity minus the `lxm://` scheme prefix.
+ * Mirrors Python `LXMessage.PAPER_MDU`.
+ */
+export const PAPER_MDU = Math.floor(
+  ((QR_MAX_STORAGE - URI_PREFIX_LEN) * 6) / 8,
+);
+
 // --- Propagation request paths (LXMPeer.py) ---
 /** Node-to-node sync offer (peer mesh). Client→node submit uses a Resource. */
 export const OFFER_REQUEST_PATH = "/offer";
