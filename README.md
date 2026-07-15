@@ -2,9 +2,21 @@
 
 ![reticulum-js logo](./docs/assets/reticulum-js.png)
 
-This repository aims to produce a dependency-free JavaScript implementation of the [Reticulum Network System](https://reticulum.network/).
+This repository aims to produce a dependency-free JavaScript implementation of the [Reticulum Network System](https://reticulum.network/). Reticulum is a mesh networking stack designed for both local and wide-area networking. Reticulum applications can talk with each other over multiple different interfaces, ranging from TCP connections to Lora radio. This allows building offline-first collaborative software that can work even when Internet infrastructure is compromised.
 
-## Design principles
+## Building blocks
+
+Reticulum gives several building blocks for enabling applications and users to communicate with each other:
+* **Packets**: raw data packets, either as-is or over an established Link
+* **LXMF Messages:**: one-to-one structured payloads with store-and-forward capability. Think instant messaging, email, telemetry transfer
+* **Request/Response**: calls to services, with optional request payloads and identification. Think `fetch`
+* **Resources**: large chunkable file transport
+
+On top of these, Reticulum handles peer discovery (via the Announce mechanism) and encryption and content signing (via Identities).
+
+Read the [Zen of Reticulum](https://reticulum.network/manual/zen.html) for more information.
+
+## reticulum-js design principles
 
 * Runs on both modern web browsers and server-side JS engines like Node.js and Deno
 * Zero or minimal runtime dependencies (right now the only thing is that you need to bring your own `bz2` implementation if you deal with compressed resources)
@@ -12,9 +24,12 @@ This repository aims to produce a dependency-free JavaScript implementation of t
 * Asynchronous JavaScript API style using Promises and Web Streams
 * Type-safe using JsDoc TypeScript annotations
 
+The web platform has a very strong commitment and tradition for backwards compatibility. The fact that this Reticulum implementation relies only on features of the web platform means it will likely remain functional and maintainable for years or even decades to come.
+
 ## Status
 
 Early stages, but we are able to send and receive LXMF messages, and make NomadNet page requests.
+At this point the aim is for JavaScript applications to be able to be _leaf nodes_ in a Reticulum mesh, meaning that they will not route traffic for others. Full capability of acting as a _transport node_ would be great to have and is on the roadmap.
 
 ## Installation
 
@@ -100,7 +115,7 @@ We also provide a sporadically updated GitHub mirror at `https://github.com/berg
 
 ## Acknowledgements
 
-Prior art includes [Liam Cottle's rns.js](https://github.com/liamcottle/rns.js).
+Prior art includes [Liam Cottle's rns.js](https://github.com/liamcottle/rns.js) and of course the [Python Reticulum Reference Implementation](https://github.com/markqvist/reticulum) itself. We have also benefited greatly from Salem Data's [Reticulum Wire Specifications](https://salemdata.net/public/reticulum/SPEC.html) work.
 
 This project has been built with the assistance of various LLMs, both for conceptual planning and implementation. I acknowledge that AI code is not necessarily ideal, but at the same time, I'm [busy sailing](https://lille-oe.de).
 
