@@ -10,11 +10,24 @@ import { Interface } from "./base.js";
  * message-oriented, so each binary message carries exactly one RNS packet in
  * its raw wire format. No HDLC (0x7E) framing or byte-stuffing is applied.
  *
- * This is compatible with the Python reference `WebSocketServer.py` (and the
- * `websockets` library it is built on with `compression=None`): the server
- * spawns a client interface per accepted connection that simply reads and
- * writes raw packets as individual WebSocket messages.
+ * This matches the Python reference WebSocket client/server interfaces: the
+ * server spawns a client interface per accepted connection, and both sides
+ * simply read and write raw packets as individual WebSocket binary messages.
+ * Neither side forces `compression=None`, so permessage-deflate may be
+ * negotiated — the standard `WebSocket` API handles that transparently, so it
+ * has no effect on the RNS framing.
  */
+
+/**
+ * Minimum RNS header size in bytes (`RNS.Reticulum.HEADER_MINSIZE`):
+ * `2 + 1 + (TRUNCATED_HASHLENGTH / 8)` = `2 + 1 + 16` = 19.
+ *
+ * Mirrors the defensive floor every Python reference interface
+ * (LocalInterface, TCPInterface, BackboneInterface, WebSocketClientInterface)
+ * applies in its read loop before handing a frame to Transport: frames no
+ * larger than this are silently dropped.
+ */
+const HEADER_MINSIZE = 19;
 
 /**
  * Decodes a single raw WebSocket message into a Packet, honouring the IFAC
@@ -262,12 +275,28 @@ export class WebSocketClientInterface extends Interface {
     const incoming = new ReadableStream({
       start: (controller) => {
         ws.addEventListener("message", (/** @type {any} */ event) => {
-          try {
-            const bytes = new Uint8Array(
-              event.data instanceof ArrayBuffer
-                ? event.data
-                : event.data.buffer,
+          // Match the Python reference `_read_loop`: ignore non-binary
+          // frames and drop anything no larger than the header minimum
+          // (HEADER_MINSIZE). `binaryType` is "arraybuffer", so binary
+          // frames arrive as ArrayBuffer and text frames as strings.
+          if (!(event.data instanceof ArrayBuffer)) {
+            log(
+              "WebSocket",
+              "Ignoring non-binary WebSocket message",
+              LogLevel.DEBUG,
             );
+            return;
+          }
+          try {
+            const bytes = new Uint8Array(event.data);
+            if (bytes.length <= HEADER_MINSIZE) {
+              log(
+                "WebSocket",
+                `Dropping WebSocket message at or below header minimum (${HEADER_MINSIZE} bytes)`,
+                LogLevel.DEBUG,
+              );
+              return;
+            }
             const packet = packetFromMessage(bytes, this.ifacSize);
             if (packet) controller.enqueue(packet);
           } catch (e) {

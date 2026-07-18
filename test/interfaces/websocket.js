@@ -26,6 +26,7 @@ const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 /**
  * @typedef {Object} TestConnection
  * @property {(bytes: Uint8Array) => void} send - Send raw bytes as one binary frame.
+ * @property {(text: string) => void} sendText - Send a string as one text frame.
  * @property {((bytes: Uint8Array) => void) | null} onMessage - Set by the caller to receive frames.
  * @property {(() => void) | null} onClose - Set by the caller to observe close.
  * @property {() => void} close - Initiate a close (sends a close frame and tears down).
@@ -79,6 +80,12 @@ function startWebSocketServer(port, onConnection) {
       }
       socket.write(Buffer.concat([header, payload]));
     };
+    /** Send a raw text frame (unmasked, server -> client). */
+    const sendTextFrame = (/** @type {string} */ text) => {
+      const payload = Buffer.from(text, "utf8");
+      const len = payload.length;
+      socket.write(Buffer.concat([Buffer.from([0x81, len]), payload]));
+    };
     /** Send a close frame (no status code) and destroy the socket. */
     const sendClose = () => {
       try {
@@ -92,6 +99,7 @@ function startWebSocketServer(port, onConnection) {
     /** @type {TestConnection} */
     const connection = {
       send: sendFrame,
+      sendText: sendTextFrame,
       close: sendClose,
       onMessage: null,
       onClose: null,
@@ -340,4 +348,95 @@ test("WebSocket client builds URL from host and port", () => {
   assert.strictEqual(a.url, "ws://example.com:8080");
   const b = new WebSocketClientInterface({ url: "wss://x/y" });
   assert.strictEqual(b.url, "wss://x/y");
+});
+
+test("WebSocket client drops messages at or below header minimum (HEADER_MINSIZE)", async () => {
+  // Mirrors the Python reference `_read_loop` guard
+  // `len(message) > RNS.Reticulum.HEADER_MINSIZE` (= 19). Frames no larger
+  // than this must be silently dropped rather than parsed.
+  const port = 13904;
+  /** @type {TestConnection | null} */
+  let connection = null;
+  const server = await startWebSocketServer(port, (conn) => {
+    connection = conn;
+  });
+
+  const client = new WebSocketClientInterface({
+    url: `ws://127.0.0.1:${port}`,
+  });
+  await client.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(connection);
+
+  let packetFired = false;
+  client.addEventListener("packet", () => {
+    packetFired = true;
+  });
+
+  // Exactly HEADER_MINSIZE bytes: must be dropped.
+  connection.send(new Uint8Array(19).fill(0));
+  // A couple of bytes shorter: must also be dropped.
+  connection.send(new Uint8Array(5).fill(0));
+
+  // Give the client time to (not) process the frames.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(!packetFired, "no packet event for too-short messages");
+  assert.ok(client.isOpen, "client stays open after dropping short messages");
+
+  // Sanity check: a real packet (larger than HEADER_MINSIZE) still arrives.
+  connection.send(buildTestPacket("after short frames").serialize());
+  const received = await new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error("timeout waiting for valid packet")),
+      3000,
+    );
+    client.addEventListener("packet", (event) => {
+      clearTimeout(timer);
+      resolve(event.detail.packet);
+    });
+  });
+  assert.strictEqual(
+    new TextDecoder().decode(received.payload),
+    "after short frames",
+  );
+
+  await client.disconnect();
+  await server.close();
+});
+
+test("WebSocket client ignores non-binary (text) messages", async () => {
+  // Mirrors the Python reference: text frames are logged at DEBUG and ignored
+  // rather than being fed to the packet parser.
+  const port = 13905;
+  /** @type {TestConnection | null} */
+  let connection = null;
+  const server = await startWebSocketServer(port, (conn) => {
+    connection = conn;
+  });
+
+  const client = new WebSocketClientInterface({
+    url: `ws://127.0.0.1:${port}`,
+  });
+  await client.connect();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(connection);
+
+  let packetFired = false;
+  let errored = false;
+  client.addEventListener("packet", () => {
+    packetFired = true;
+  });
+  client.addEventListener("error", () => {
+    errored = true;
+  });
+
+  connection.sendText("this is not an RNS packet");
+
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(!packetFired, "no packet event for text messages");
+  assert.ok(!errored, "text messages must not surface as errors");
+  assert.ok(client.isOpen, "client stays open after a text message");
+
+  await client.disconnect();
+  await server.close();
 });
