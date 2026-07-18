@@ -11,5 +11,6 @@
   "navigationLinks": {
     "RNS Manual": "https://reticulum.network/manual/",
     "RNS Forum": "https://rns.recipes/forum"
-  }
+  },
+  "projectDocuments": ["documents/*.md"]
 }

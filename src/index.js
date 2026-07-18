@@ -28,6 +28,7 @@ export { Reticulum } from "./core/reticulum.js";
 // --- 3. Network Interfaces ---
 // The physical and virtual pathways into the mesh.
 export { HttpPostClientInterface } from "./interfaces/http.js";
+export { HttpPostServerInterface } from "./interfaces/http_server.js";
 // Interface discovery: enumerate available interfaces and their configuration
 // schemas for dynamically-generated setup UIs.
 export {

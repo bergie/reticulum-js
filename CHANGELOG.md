@@ -27,6 +27,14 @@
   router. Platform-neutral (WinterTC `fetch`), with an adaptive poll
   interval and automatic re-registration on auth failure. Registered as
   `http-client`.
+- HTTP POST exchange server interface (`HttpPostServerInterface`): a Node.js
+  replacement for the third-party Reticulum-post PHP router. Listens for
+  inbound exchange clients and spawns a peer interface
+  (`HttpPostPeerInterface`) per registered client via the `connection` event,
+  mirroring `TCPServerInterface`. In-memory only: path state lives in
+  `TransportCore` and per-peer queues live on each spawned peer, so the PHP
+  router's SQLite complexity is shed entirely. Deliver-once semantics and a
+  configurable idle-peer reaper. Registered as `http-server`.
 
 ## [0.1.0] - 2026-07-14
 ### Added
