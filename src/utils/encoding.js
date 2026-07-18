@@ -80,7 +80,7 @@ export function concatBytes(...arrays) {
  * @param {Uint8Array} bytes
  * @returns {string}
  */
-function bytesToBase64(bytes) {
+export function bytesToBase64(bytes) {
   if (!(bytes instanceof Uint8Array)) {
     throw new TypeError("bytesToBase64 expects a Uint8Array");
   }
@@ -133,7 +133,7 @@ const B64_DEC = (() => {
  * @param {string} str
  * @returns {Uint8Array}
  */
-function base64ToBytes(str) {
+export function base64ToBytes(str) {
   if (typeof str !== "string") {
     throw new TypeError("base64ToBytes expects a string");
   }

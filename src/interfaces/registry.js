@@ -6,6 +6,7 @@
  */
 
 import { Interface } from "./base.js";
+import { HttpPostClientInterface } from "./http.js";
 import { TCPClientInterface, TCPServerInterface } from "./tcp.js";
 import {
   WebSocketClientInterface,
@@ -31,6 +32,7 @@ import {
 
 /** @type {Map<string, InterfaceConstructor>} */
 const registry = new Map();
+registry.set("http-client", HttpPostClientInterface);
 registry.set("tcp-client", TCPClientInterface);
 registry.set("tcp-server", TCPServerInterface);
 registry.set("ws-client", WebSocketClientInterface);

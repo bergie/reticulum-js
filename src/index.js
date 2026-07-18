@@ -25,6 +25,9 @@ export {
 // --- 1. Core Orchestration ---
 // The primary client class that wires the transport router, interfaces, and compression together.
 export { Reticulum } from "./core/reticulum.js";
+// --- 3. Network Interfaces ---
+// The physical and virtual pathways into the mesh.
+export { HttpPostClientInterface } from "./interfaces/http.js";
 // Interface discovery: enumerate available interfaces and their configuration
 // schemas for dynamically-generated setup UIs.
 export {
@@ -33,8 +36,6 @@ export {
   listInterfaces,
   registerInterface,
 } from "./interfaces/registry.js";
-// --- 3. Network Interfaces ---
-// The physical and virtual pathways into the mesh.
 export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
 export {
   WebSocketClientInterface,
@@ -50,7 +51,9 @@ export * as LXStamper from "./lxmf/stamper.js";
 // The primitives for building Yjs sync, rngit, and NomadNet layers.
 export { Link } from "./transport/link.js";
 export {
+  base64ToBytes,
   base64UrlToBytes,
+  bytesToBase64,
   bytesToBase64Url,
   fromHex,
   toHex,
