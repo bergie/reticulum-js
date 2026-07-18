@@ -75,6 +75,54 @@ export function packetFromMessage(bytes, ifacSize) {
  */
 export class WebSocketClientInterface extends Interface {
   /**
+   * Returns the JSON Schema describing the options accepted by the
+   * {@link WebSocketClientInterface} constructor (excluding the internal
+   * `websocket` adoption option).
+   *
+   * No field is required: either `url` or (`host` + `port`) must be provided
+   * at runtime, but both are surfaced as optional so a UI can render them.
+   * @returns {Record<string, any>} A JSON Schema object.
+   */
+  static getConfigurationSchema() {
+    const base = Interface.getConfigurationSchema();
+    return {
+      ...base,
+      title: "WebSocket Client Interface",
+      description:
+        "Connects to a remote Reticulum node over a WebSocket. " +
+        "JS-specific; there is no direct Python reference equivalent.",
+      properties: {
+        ...base.properties,
+        url: {
+          type: "string",
+          format: "uri",
+          description:
+            "Full WebSocket URL, e.g. ws://host:port or wss://host/path. " +
+            "Takes precedence over host/port.",
+          examples: ["ws://127.0.0.1:4242", "wss://node.example.org/path"],
+        },
+        host: {
+          type: "string",
+          default: "localhost",
+          examples: ["localhost", "127.0.0.1"],
+          description:
+            "Target host. Used to build ws://host:port when url is omitted.",
+        },
+        port: {
+          type: "integer",
+          minimum: 0,
+          maximum: 65535,
+          examples: [4242],
+          description:
+            "Target port. Used to build ws://host:port when url is omitted.",
+        },
+      },
+      required: [],
+      additionalProperties: false,
+    };
+  }
+
+  /**
    * The underlying WebSocket connection, when one has been opened or adopted.
    * Typed loosely because the base `Interface.socket` is declared as a Node
    * socket; we reuse the same field so the base `send()` helper can see it.
@@ -342,6 +390,41 @@ export class WebSocketClientInterface extends Interface {
  * @extends Interface
  */
 export class WebSocketServerInterface extends Interface {
+  /**
+   * Returns the JSON Schema describing the options accepted by the
+   * {@link WebSocketServerInterface} constructor.
+   * @returns {Record<string, any>} A JSON Schema object.
+   */
+  static getConfigurationSchema() {
+    const base = Interface.getConfigurationSchema();
+    return {
+      ...base,
+      title: "WebSocket Server Interface",
+      description:
+        "Listens for inbound WebSocket connections and spawns a client " +
+        "interface per accepted connection. JS-specific; the server side is " +
+        "not yet implemented.",
+      properties: {
+        ...base.properties,
+        listenIp: {
+          type: "string",
+          default: "0.0.0.0",
+          examples: ["0.0.0.0", "127.0.0.1"],
+          description: "Address to bind the server to.",
+        },
+        listenPort: {
+          type: "integer",
+          minimum: 0,
+          maximum: 65535,
+          examples: [4242],
+          description: "Port to bind the server to.",
+        },
+      },
+      required: ["listenPort"],
+      additionalProperties: false,
+    };
+  }
+
   /**
    * Creates a WebSocket server interface.
    * @param {WebSocketServerInterfaceOptions} options

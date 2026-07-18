@@ -17,6 +17,44 @@
  */
 export class Interface extends EventTarget {
   /**
+   * Returns a JSON Schema (draft-07) describing the options accepted by this
+   * interface's constructor, for dynamically-generated setup UIs.
+   *
+   * The base schema declares the options common to every interface (`name`,
+   * `ifacSize`). Subclasses extend it with their own options via
+   * `super.getConfigurationSchema()` + spread, and intentionally omit
+   * internal-only options (e.g. an adopted socket).
+   * @returns {Record<string, any>} A JSON Schema object.
+   */
+  static getConfigurationSchema() {
+    return {
+      $schema: "http://json-schema.org/draft-07/schema#",
+      type: "object",
+      properties: {
+        name: {
+          type: "string",
+          description:
+            "Human-readable interface name. Every interface in a node " +
+            "should have a unique name so multiple interfaces of the same " +
+            "type (e.g. two TCP clients) can be told apart. A descriptive " +
+            "name is generated if omitted.",
+          examples: ["tcp-client-1", "lora-node"],
+        },
+        ifacSize: {
+          type: "integer",
+          minimum: 0,
+          default: 0,
+          examples: [16],
+          description:
+            "Optional interface authentication code (IFAC) size in bytes. " +
+            "0 disables IFAC.",
+        },
+      },
+      required: [],
+    };
+  }
+
+  /**
    * The underlying socket, when this interface is backed by a Node.js stream.
    * @type {import('node:net').Socket | null}
    */

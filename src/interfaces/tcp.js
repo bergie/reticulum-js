@@ -33,6 +33,44 @@ import { Interface } from "./base.js";
  */
 export class TCPClientInterface extends Interface {
   /**
+   * Returns the JSON Schema describing the options accepted by the
+   * {@link TCPClientInterface} constructor (excluding the internal `socket`
+   * adoption option). Drives dynamically-generated setup UIs.
+   * @returns {Record<string, any>} A JSON Schema object.
+   */
+  static getConfigurationSchema() {
+    const base = Interface.getConfigurationSchema();
+    return {
+      ...base,
+      title: "TCP Client Interface",
+      description:
+        "Connects to a remote Reticulum node over a TCP socket. " +
+        "Mirrors the Python reference TCPClientInterface.",
+      properties: {
+        ...base.properties,
+        host: {
+          type: "string",
+          description:
+            "Target host to connect to (Python config key: target_host).",
+          examples: ["127.0.0.1", "reticulum.network"],
+        },
+        port: {
+          type: "integer",
+          minimum: 0,
+          maximum: 65535,
+          default: 4242,
+          examples: [4242],
+          description:
+            "Target TCP port to connect to (Python config key: " +
+            "target_port). The standard rnsd port is 4242.",
+        },
+      },
+      required: ["host", "port"],
+      additionalProperties: false,
+    };
+  }
+
+  /**
    * The underlying socket (if any).
    * @type {import('node:net').Socket | null}
    */
@@ -212,6 +250,45 @@ export class TCPClientInterface extends Interface {
  * @extends Interface
  */
 export class TCPServerInterface extends Interface {
+  /**
+   * Returns the JSON Schema describing the options accepted by the
+   * {@link TCPServerInterface} constructor.
+   * @returns {Record<string, any>} A JSON Schema object.
+   */
+  static getConfigurationSchema() {
+    const base = Interface.getConfigurationSchema();
+    return {
+      ...base,
+      title: "TCP Server Interface",
+      description:
+        "Listens for inbound TCP connections and spawns a client interface " +
+        "per accepted connection. Mirrors the Python reference " +
+        "TCPServerInterface.",
+      properties: {
+        ...base.properties,
+        port: {
+          type: "integer",
+          minimum: 0,
+          maximum: 65535,
+          default: 4242,
+          examples: [4242],
+          description:
+            "TCP port to listen on (Python config key: port / " +
+            "listen_port). The standard rnsd port is 4242.",
+        },
+        listenIp: {
+          type: "string",
+          default: "0.0.0.0",
+          examples: ["0.0.0.0", "127.0.0.1"],
+          description:
+            "Address to bind the listener to (Python config key: listen_ip).",
+        },
+      },
+      required: ["port"],
+      additionalProperties: false,
+    };
+  }
+
   /**
    * Creates a TCP server interface.
    * @param {TCPServerInterfaceOptions} options

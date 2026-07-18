@@ -25,6 +25,14 @@ export {
 // --- 1. Core Orchestration ---
 // The primary client class that wires the transport router, interfaces, and compression together.
 export { Reticulum } from "./core/reticulum.js";
+// Interface discovery: enumerate available interfaces and their configuration
+// schemas for dynamically-generated setup UIs.
+export {
+  getInterface,
+  getSchema,
+  listInterfaces,
+  registerInterface,
+} from "./interfaces/registry.js";
 // --- 3. Network Interfaces ---
 // The physical and virtual pathways into the mesh.
 export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
