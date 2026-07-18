@@ -1,6 +1,21 @@
 # Changelog
 ## [unreleased]
 ### Added
+- Automatic reconnection for client interfaces (`TCPClientInterface`,
+  `WebSocketClientInterface`): the initiator (outbound dialer) reconnects after
+  a connection drop with a fixed backoff, indefinitely by default, matching the
+  Python reference (`RECONNECT_WAIT`, `RECONNECT_MAX_TRIES`,
+  `INITIAL_CONNECT_TIMEOUT`). Adopted/server-spawned sockets never reconnect.
+  New options: `autoReconnect` (default `true`), `reconnectWait` (default `5`s),
+  `maxReconnectTries` (default unlimited), `connectTimeout` (default `5`s),
+  plus `i2pTunneled` on TCP for the longer I2P keepalive interval. The shared
+  loop lives on the base `Interface`.
+- New `reconnecting` event on client interfaces, fired before each reconnect
+  attempt with detail `{ attempt, waitSeconds, maxTries }` for observability.
+- TCP socket tuning on (re)connect: `TCP_NODELAY` and `SO_KEEPALIVE` via
+  `setNoDelay` / `setKeepAlive`, mirroring the Python reference
+  `TCP_PROBE_AFTER` (5s, or 10s when `i2pTunneled`). The granular Linux
+  `TCP_USER_TIMEOUT` / `TCP_KEEPCNT` knobs are not reachable from Node's API.
 - LXMF paper messaging: encrypt a message to an `lxm://` URI / QR code with
   `LXMessage.toPaperUri` (and `toPaperData`), and ingest it back with
   `LXMRouter.ingestUri` (or `LXMessage.fromPaperUri`). Byte-compatible with
@@ -35,6 +50,14 @@
   `TransportCore` and per-peer queues live on each spawned peer, so the PHP
   router's SQLite complexity is shed entirely. Deliver-once semantics and a
   configurable idle-peer reaper. Registered as `http-server`.
+
+### Changed
+- Client interface event semantics: `closed` is now reserved for terminal
+  states (deliberate `disconnect()`, reconnect exhaustion, or a non-initiator
+  teardown). A transient drop now fires `disconnected` followed by
+  `reconnecting` (and eventually `connected`) instead of `closed`. Set
+  `autoReconnect: false` to restore the old one-shot "drop closes the
+  interface" behaviour.
 
 ## [0.1.0] - 2026-07-14
 ### Added

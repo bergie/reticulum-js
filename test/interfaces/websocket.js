@@ -294,6 +294,7 @@ test("WebSocket client lifecycle events (connected, packet, closed)", async () =
 
   const client = new WebSocketClientInterface({
     url: `ws://127.0.0.1:${port}`,
+    autoReconnect: false,
   });
 
   let connectedFired = false;
@@ -338,6 +339,7 @@ test("WebSocket client lifecycle events (connected, packet, closed)", async () =
 test("WebSocket client connect failure rejects", async () => {
   const client = new WebSocketClientInterface({
     url: "ws://127.0.0.1:1", // nothing listening
+    autoReconnect: false,
   });
   await assert.rejects(() => client.connect());
   assert.ok(!client.isOpen);
@@ -439,4 +441,173 @@ test("WebSocket client ignores non-binary (text) messages", async () => {
 
   await client.disconnect();
   await server.close();
+});
+
+// ------------------------------------------------------------------
+// Reconnection (initiator only)
+// ------------------------------------------------------------------
+
+test("WebSocket client reconnects after the server closes the connection", async () => {
+  const port = 13910;
+  /** @type {number} */
+  let connectionCount = 0;
+  /** @type {TestConnection | null} */
+  let firstConn = null;
+  const server = await startWebSocketServer(port, (conn) => {
+    connectionCount++;
+    if (connectionCount === 1) firstConn = conn;
+  });
+
+  const client = new WebSocketClientInterface({
+    url: `ws://127.0.0.1:${port}`,
+    reconnectWait: 0.05,
+    connectTimeout: 2,
+  });
+  let connectCount = 0;
+  let disconnectedCount = 0;
+  let reconnectingCount = 0;
+  client.addEventListener("connected", () => {
+    connectCount++;
+  });
+  client.addEventListener("disconnected", () => {
+    disconnectedCount++;
+  });
+  client.addEventListener("reconnecting", () => {
+    reconnectingCount++;
+  });
+
+  await client.connect();
+  assert.strictEqual(connectCount, 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(firstConn);
+
+  // Server closes -> client reconnects.
+  firstConn.close();
+
+  await new Promise((resolve) => {
+    const check = () => {
+      if (connectCount >= 2) resolve();
+    };
+    client.addEventListener("connected", check);
+    check();
+  });
+  assert.strictEqual(connectCount, 2, "client should reconnect");
+  assert.ok(disconnectedCount >= 1, "disconnected fires on drop");
+  assert.ok(reconnectingCount >= 1, "reconnecting fires");
+  assert.ok(client.isOpen);
+
+  await client.disconnect();
+  await server.close();
+});
+
+test("WebSocket client reconnects in the background after a first failed dial", async () => {
+  const port = 13911;
+  const client = new WebSocketClientInterface({
+    url: `ws://127.0.0.1:${port}`,
+    reconnectWait: 0.1,
+    connectTimeout: 1,
+  });
+
+  // Nothing is listening yet -> first dial rejects, reconnect loop starts.
+  await assert.rejects(() => client.connect());
+  assert.ok(!client.isOpen);
+
+  // Bring the server up so the next reconnect attempt succeeds.
+  const server = await startWebSocketServer(port, () => {});
+
+  await new Promise((resolve) => {
+    const check = () => {
+      if (client.isOpen) resolve();
+    };
+    client.addEventListener("connected", check);
+    check();
+  });
+  assert.ok(client.isOpen, "background reconnect establishes the link");
+
+  await client.disconnect();
+  await server.close();
+});
+
+test("WebSocket client gives up after maxReconnectTries and fires closed", async () => {
+  const client = new WebSocketClientInterface({
+    url: "ws://127.0.0.1:1", // nothing listening
+    reconnectWait: 0.02,
+    connectTimeout: 0.5,
+    maxReconnectTries: 2,
+  });
+
+  let reconnectingCount = 0;
+  client.addEventListener("reconnecting", () => {
+    reconnectingCount++;
+  });
+
+  await assert.rejects(() => client.connect());
+
+  await new Promise((resolve) => {
+    client.addEventListener("closed", () => resolve());
+  });
+
+  assert.ok(!client.isOpen, "stays offline after exhaustion");
+  assert.strictEqual(reconnectingCount, 2);
+});
+
+test("WebSocket client disconnect() cancels a pending reconnect backoff", async () => {
+  const client = new WebSocketClientInterface({
+    url: "ws://127.0.0.1:1", // nothing listening
+    reconnectWait: 5, // long backoff we can interrupt
+    connectTimeout: 1,
+  });
+
+  let reconnectingCount = 0;
+  client.addEventListener("reconnecting", () => {
+    reconnectingCount++;
+  });
+
+  await assert.rejects(() => client.connect());
+  assert.strictEqual(reconnectingCount, 1, "reconnecting fires before backoff");
+
+  let closedCount = 0;
+  client.addEventListener("closed", () => {
+    closedCount++;
+  });
+
+  await client.disconnect();
+  assert.strictEqual(closedCount, 1, "deliberate disconnect fires closed once");
+
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.strictEqual(reconnectingCount, 1, "no further attempts after cancel");
+});
+
+test("WebSocket client reconnecting event carries attempt/wait/maxTries", async () => {
+  const client = new WebSocketClientInterface({
+    url: "ws://127.0.0.1:1",
+    reconnectWait: 0.02,
+    connectTimeout: 0.5,
+    maxReconnectTries: 1,
+  });
+
+  /** @type {any} */
+  let detail = null;
+  client.addEventListener("reconnecting", (event) => {
+    detail = event.detail;
+  });
+
+  await assert.rejects(() => client.connect());
+  await new Promise((resolve) => {
+    client.addEventListener("closed", () => resolve());
+  });
+
+  assert.ok(detail);
+  assert.strictEqual(detail.attempt, 1);
+  assert.strictEqual(detail.waitSeconds, 0.02);
+  assert.strictEqual(detail.maxTries, 1);
+});
+
+test("WebSocket client defaults match the Python reference", () => {
+  const client = new WebSocketClientInterface({ url: "ws://x" });
+  assert.strictEqual(client.autoReconnect, true);
+  assert.strictEqual(client.reconnectWait, 5);
+  assert.strictEqual(client.maxReconnectTries, Number.POSITIVE_INFINITY);
+  assert.strictEqual(client.connectTimeout, 5);
+  assert.strictEqual(client.initiator, true);
 });

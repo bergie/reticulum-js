@@ -1,6 +1,6 @@
 import { Packet } from "../core/packet.js";
 import { LogLevel, log } from "../utils/log.js";
-import { Interface } from "./base.js";
+import { Interface, reconnectSchemaProperties } from "./base.js";
 
 /**
  * @file websocket.js
@@ -74,6 +74,13 @@ export function packetFromMessage(bytes, ifacSize) {
  * @property {number} [ifacSize] - Optional IFAC field size, if the remote peer
  *   signs packets with an interface authentication code.
  * @property {string} [name] - Interface name.
+ * @property {boolean} [autoReconnect] - Reconnect after drops (initiator
+ *   only). Defaults to `true`.
+ * @property {number} [reconnectWait] - Seconds between attempts. Defaults to 5.
+ * @property {number|null} [maxReconnectTries] - Attempt cap, or `null` for
+ *   unlimited. Defaults to unlimited.
+ * @property {number} [connectTimeout] - Per-dial timeout in seconds. Defaults
+ *   to 5.
  */
 
 /**
@@ -102,7 +109,8 @@ export class WebSocketClientInterface extends Interface {
       ...base,
       title: "WebSocket Client Interface",
       description:
-        "Connects to a remote Reticulum node over a WebSocket. " +
+        "Connects to a remote Reticulum node over a WebSocket and " +
+        "automatically reconnects (as the initiator) after a drop. " +
         "JS-specific; there is no direct Python reference equivalent.",
       properties: {
         ...base.properties,
@@ -129,6 +137,7 @@ export class WebSocketClientInterface extends Interface {
           description:
             "Target port. Used to build ws://host:port when url is omitted.",
         },
+        ...reconnectSchemaProperties(),
       },
       required: [],
       additionalProperties: false,
@@ -149,6 +158,7 @@ export class WebSocketClientInterface extends Interface {
    */
   constructor(options) {
     super();
+    this._initReconnectState(options);
     if (options.url) {
       this.url = options.url;
     } else {
@@ -168,10 +178,11 @@ export class WebSocketClientInterface extends Interface {
     this.online = false;
     /** @type {Promise<void> | null} */
     this._loopPromise = null;
-    /** @type {boolean} */
-    this._closed = false;
     /** @type {any} */
     this._adoptedWebSocket = options.websocket || null;
+    // Only the initiator (the outbound dialer) reconnects. An adopted
+    // websocket is a server-spawned connection and tears down on close.
+    this.initiator = !this._adoptedWebSocket;
   }
 
   /** @returns {boolean} */
@@ -191,59 +202,100 @@ export class WebSocketClientInterface extends Interface {
   /**
    * Opens the WebSocket connection (or adopts the provided one) and starts the
    * inbound loop.
+   *
+   * For an initiator whose first dial fails with auto-reconnect enabled, the
+   * promise rejects (so the caller knows the first attempt failed) but the
+   * reconnect loop keeps retrying in the background.
    * @returns {Promise<void>}
    */
   async connect() {
     if (this._adoptedWebSocket) {
       this.socket = this._adoptedWebSocket;
+      this.initiator = false;
       this._setupStreams(this.socket);
       this.online = true;
+      this._closed = false;
       this.dispatchEvent(
         new CustomEvent("connected", { detail: { url: this.url } }),
       );
       return;
     }
 
+    this.initiator = true;
+    try {
+      await this._establishConnection();
+    } catch (e) {
+      if (this.autoReconnect && !this.detached) {
+        this._runReconnectLoop();
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * Dials the WebSocket URL (with the configured connect timeout), sets up the
+   * RNS streams, and dispatches `connected`.
+   *
+   * Used both for the initial connection and for each reconnect attempt.
+   * @returns {Promise<void>} Resolves once connected; rejects on failure.
+   * @protected
+   */
+  _establishConnection() {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(this.url);
       ws.binaryType = "arraybuffer";
       this.socket = ws;
-
-      let opened = false;
+      let settled = false;
+      const timeoutMs = Math.max(0, this.connectTimeout) * 1000;
+      const timeoutHandle =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              if (settled) return;
+              settled = true;
+              try {
+                ws.close();
+              } catch (_e) {
+                // ignore
+              }
+              reject(
+                new Error(
+                  `WebSocket connect to ${this.url} timed out after ${this.connectTimeout}s`,
+                ),
+              );
+            }, timeoutMs)
+          : null;
       const fail = () => {
-        if (opened) return;
+        if (settled) return;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        settled = true;
         this.online = false;
-        this.dispatchEvent(
-          new CustomEvent("disconnected", { detail: { url: this.url } }),
-        );
         reject(new Error(`WebSocket connection to ${this.url} failed`));
       };
       ws.addEventListener("open", () => {
-        opened = true;
+        if (settled) return;
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+        settled = true;
         this._setupStreams(ws);
         this.online = true;
+        this._closed = false;
         this.dispatchEvent(
           new CustomEvent("connected", { detail: { url: this.url } }),
         );
         resolve();
       });
-      ws.addEventListener("error", () => {
-        // Some implementations surface connection refusal only via `close`;
-        // others fire `error` first. Either way, fail the connect promise if
-        // the socket never opened. Post-open errors propagate via the stream.
-        fail();
-      });
-      ws.addEventListener("close", () => {
-        fail();
-      });
+      ws.addEventListener("error", () => fail());
+      ws.addEventListener("close", () => fail());
     });
   }
 
   /**
-   * Tears down the WebSocket and marks the interface offline.
+   * Tears down the WebSocket, cancels any pending reconnect, and marks the
+   * interface offline. Dispatches a terminal `disconnected` followed by
+   * `closed`.
    * @returns {Promise<void>}
    */
   async disconnect() {
+    this._cancelReconnect();
     if (this.socket) {
       try {
         this.socket.close();
@@ -256,6 +308,7 @@ export class WebSocketClientInterface extends Interface {
     this.dispatchEvent(
       new CustomEvent("disconnected", { detail: { url: this.url } }),
     );
+    this._dispatchClosed();
     if (this._loopPromise) {
       await this._loopPromise;
     }
@@ -270,6 +323,9 @@ export class WebSocketClientInterface extends Interface {
    */
   _setupStreams(ws) {
     ws.binaryType = "arraybuffer";
+    // Streams are replaced on every reconnect; drop any stale writer so the
+    // next `send()` re-acquires one bound to the fresh writable.
+    this._packetWriter = null;
 
     // Inbound: WebSocket binary messages -> packets
     const incoming = new ReadableStream({
@@ -367,34 +423,35 @@ export class WebSocketClientInterface extends Interface {
    */
   async _startInboundLoop() {
     const reader = this._readable.getReader();
+    let lost = false;
     try {
       while (true) {
         const { value: packet, done } = await reader.read();
         if (done) {
-          if (!this._closed) {
-            this._closed = true;
-            this.dispatchEvent(new CustomEvent("closed"));
-          }
+          lost = true;
           break;
         }
         this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
       }
     } catch (e) {
+      lost = true;
       if (
-        /** @type {any} */ (e).name === "AbortError" ||
-        /** @type {any} */ (e).code === "ABORT_ERR"
+        /** @type {any} */ (e).name !== "AbortError" &&
+        /** @type {any} */ (e).code !== "ABORT_ERR"
       ) {
-        if (!this._closed) {
-          this._closed = true;
-          this.dispatchEvent(new CustomEvent("closed"));
-        }
-      } else {
         this.dispatchEvent(
           new CustomEvent("error", { detail: /** @type {any} */ (e) }),
         );
       }
     } finally {
-      reader.releaseLock();
+      try {
+        reader.releaseLock();
+      } catch (_e) {
+        // already released
+      }
+      if (lost) {
+        this._handleConnectionLost();
+      }
     }
   }
 }

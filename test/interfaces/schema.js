@@ -62,6 +62,15 @@ test("TCPClientInterface schema documents its options", () => {
   assert.ok(schema.properties.port, "should expose port");
   assert.ok(schema.properties.ifacSize, "should expose ifacSize");
   assert.ok(schema.properties.name, "should expose name");
+  assert.ok(schema.properties.i2pTunneled, "should expose i2pTunneled");
+  // Reconnect options are shared with the WebSocket client.
+  assert.ok(schema.properties.autoReconnect, "should expose autoReconnect");
+  assert.ok(schema.properties.reconnectWait, "should expose reconnectWait");
+  assert.ok(
+    schema.properties.maxReconnectTries,
+    "should expose maxReconnectTries",
+  );
+  assert.ok(schema.properties.connectTimeout, "should expose connectTimeout");
   // The internal `socket` adoption option is deliberately excluded.
   assert.ok(!schema.properties.socket, "should not expose internal socket");
   assert.deepStrictEqual(schema.required, ["host", "port"]);
@@ -82,6 +91,13 @@ test("WebSocketClientInterface schema documents its options", () => {
   assert.ok(schema.properties.url);
   assert.ok(schema.properties.host);
   assert.ok(schema.properties.port);
+  assert.ok(schema.properties.autoReconnect, "should expose autoReconnect");
+  assert.ok(schema.properties.reconnectWait, "should expose reconnectWait");
+  assert.ok(
+    schema.properties.maxReconnectTries,
+    "should expose maxReconnectTries",
+  );
+  assert.ok(schema.properties.connectTimeout, "should expose connectTimeout");
   // The internal `websocket` adoption option is deliberately excluded.
   assert.ok(
     !schema.properties.websocket,
@@ -125,6 +141,30 @@ test("TCP ports default to the standard rnsd port 4242", () => {
     TCPServerInterface.getConfigurationSchema().properties.port.default,
     4242,
   );
+});
+
+test("reconnect schema defaults mirror the Python reference", () => {
+  for (const cls of [TCPClientInterface, WebSocketClientInterface]) {
+    const props = cls.getConfigurationSchema().properties;
+    assert.strictEqual(props.autoReconnect.default, true);
+    assert.strictEqual(props.reconnectWait.default, 5);
+    assert.strictEqual(props.connectTimeout.default, 5);
+    // maxReconnectTries is null/unlimited by default.
+    assert.ok(
+      props.maxReconnectTries.anyOf,
+      "maxReconnectTries accepts null for unlimited",
+    );
+  }
+});
+
+test("server interfaces do not expose reconnect options", () => {
+  // Reconnect is an initiator-only concern; server interfaces must not list it.
+  const tcpServer = TCPServerInterface.getConfigurationSchema().properties;
+  const wsServer = WebSocketServerInterface.getConfigurationSchema().properties;
+  assert.ok(!tcpServer.autoReconnect);
+  assert.ok(!tcpServer.reconnectWait);
+  assert.ok(!wsServer.autoReconnect);
+  assert.ok(!wsServer.reconnectWait);
 });
 
 test("schema defaults track the constructor fallbacks", () => {

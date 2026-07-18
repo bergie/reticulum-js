@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import net from "node:net";
 import { test } from "node:test";
 import {
   DestType,
@@ -87,7 +88,11 @@ test("TCP interface connection and packet transfer", async () => {
 test("TCP interface lifecycle events (packet, closed, error)", async () => {
   const port = 12346;
   const server = new TCPServerInterface({ port });
-  const client = new TCPClientInterface({ host: "127.0.0.1", port });
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    autoReconnect: false,
+  });
 
   // The server emits its `connection` event during the client's connect()
   // handshake, so the listener must be registered before connecting to avoid
@@ -142,4 +147,273 @@ test("TCP interface lifecycle events (packet, closed, error)", async () => {
 
   await server.disconnect();
   await client.disconnect();
+});
+
+// ------------------------------------------------------------------
+// Reconnection (initiator only), matching the Python reference TCPClientInterface
+// ------------------------------------------------------------------
+
+/**
+ * Reserves an ephemeral port and releases it, so nothing is listening on it
+ * and a dial fails fast with ECONNREFUSED.
+ * @returns {Promise<number>}
+ */
+function getClosedPort() {
+  return new Promise((resolve, reject) => {
+    const s = net.createServer();
+    s.on("error", reject);
+    s.listen(0, "127.0.0.1", () => {
+      const { port } = /** @type {import('node:net').AddressInfo} */ (
+        s.address()
+      );
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+test("TCP client reconnects after the remote end drops", async () => {
+  const rawServer = net.createServer();
+  /** @type {import('node:net').Socket[]} */
+  const accepted = [];
+  rawServer.on("connection", (socket) => {
+    accepted.push(socket);
+    // Drop only the first connection to force a reconnect; leave later ones.
+    if (accepted.length === 1) {
+      setImmediate(() => socket.destroy());
+    }
+  });
+  await new Promise((resolve) => rawServer.listen(0, "127.0.0.1", resolve));
+  const port = /** @type {import('node:net').AddressInfo} */ (
+    rawServer.address()
+  ).port;
+
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    reconnectWait: 0.05,
+    connectTimeout: 2,
+  });
+
+  let connectCount = 0;
+  let disconnectedCount = 0;
+  const reconnectingDetails = [];
+  client.addEventListener("connected", () => {
+    connectCount++;
+  });
+  client.addEventListener("disconnected", () => {
+    disconnectedCount++;
+  });
+  client.addEventListener("reconnecting", (event) => {
+    reconnectingDetails.push(event.detail);
+  });
+
+  await client.connect();
+  assert.strictEqual(connectCount, 1);
+
+  // After the drop: disconnected -> reconnecting -> connected.
+  await new Promise((resolve) => {
+    const check = () => {
+      if (connectCount >= 2) resolve();
+    };
+    client.addEventListener("connected", check);
+    check();
+  });
+
+  assert.strictEqual(connectCount, 2, "client should reconnect");
+  assert.ok(disconnectedCount >= 1, "disconnected should fire on drop");
+  assert.ok(client.isOpen, "client should be back online");
+  assert.ok(reconnectingDetails.length >= 1, "reconnecting event should fire");
+  assert.strictEqual(reconnectingDetails[0].attempt, 1);
+  assert.strictEqual(reconnectingDetails[0].waitSeconds, 0.05);
+
+  await client.disconnect();
+  for (const s of accepted) s.destroy();
+  await new Promise((resolve) => rawServer.close(resolve));
+});
+
+test("TCP client reconnects in the background after a first failed dial", async () => {
+  // Start a server AFTER the first dial fails, so the background reconnect
+  // is what finally establishes the link (mirrors Python initial_connect).
+  const portHolder = await getClosedPort();
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port: portHolder,
+    reconnectWait: 0.1,
+    connectTimeout: 1,
+  });
+
+  // First dial fails (nothing listening) -> rejects, but reconnects in bg.
+  await assert.rejects(() => client.connect());
+  assert.ok(!client.isOpen);
+
+  // Now bring the server up so the next reconnect attempt can succeed.
+  const rawServer = net.createServer();
+  rawServer.on("connection", () => {});
+  await new Promise((resolve) =>
+    rawServer.listen(portHolder, "127.0.0.1", resolve),
+  );
+
+  await new Promise((resolve) => {
+    const check = () => {
+      if (client.isOpen) resolve();
+    };
+    client.addEventListener("connected", check);
+    check();
+  });
+  assert.ok(client.isOpen, "background reconnect should establish the link");
+
+  await client.disconnect();
+  await new Promise((resolve) => rawServer.close(resolve));
+});
+
+test("TCP client gives up after maxReconnectTries and fires closed", async () => {
+  const port = await getClosedPort();
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    reconnectWait: 0.02,
+    connectTimeout: 1,
+    maxReconnectTries: 2,
+  });
+
+  let reconnectingCount = 0;
+  client.addEventListener("reconnecting", () => {
+    reconnectingCount++;
+  });
+
+  await assert.rejects(() => client.connect());
+
+  await new Promise((resolve) => {
+    client.addEventListener("closed", () => resolve());
+  });
+
+  assert.ok(!client.isOpen, "stays offline after exhaustion");
+  assert.strictEqual(
+    reconnectingCount,
+    2,
+    "one reconnecting event per allowed attempt",
+  );
+});
+
+test("TCP client disconnect() cancels a pending reconnect backoff", async () => {
+  const port = await getClosedPort();
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    reconnectWait: 5, // long backoff we can interrupt
+    connectTimeout: 1,
+  });
+
+  let reconnectingCount = 0;
+  client.addEventListener("reconnecting", () => {
+    reconnectingCount++;
+  });
+
+  await assert.rejects(() => client.connect());
+  // The loop dispatches `reconnecting` synchronously before its first sleep.
+  assert.strictEqual(reconnectingCount, 1);
+
+  let closedCount = 0;
+  client.addEventListener("closed", () => {
+    closedCount++;
+  });
+
+  await client.disconnect();
+  assert.strictEqual(closedCount, 1, "deliberate disconnect fires closed once");
+
+  // No further reconnect attempts after cancellation.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.strictEqual(reconnectingCount, 1);
+});
+
+test("TCP server-spawned (adopted) socket never reconnects on close", async () => {
+  const rawServer = net.createServer();
+  /** @type {import('node:net').Socket | null} */
+  let accepted = null;
+  rawServer.on("connection", (socket) => {
+    accepted = socket;
+  });
+  await new Promise((resolve) => rawServer.listen(0, "127.0.0.1", resolve));
+  const port = /** @type {import('node:net').AddressInfo} */ (
+    rawServer.address()
+  ).port;
+
+  // Dial from a raw socket so we can hand the accepted socket to the client.
+  const dialer = net.createConnection({ host: "127.0.0.1", port });
+  await new Promise((resolve) => dialer.once("connect", resolve));
+  // Wait until the server has actually accepted the connection.
+  await new Promise((resolve) => {
+    const check = () => (accepted ? resolve() : setImmediate(check));
+    check();
+  });
+  assert.ok(accepted);
+
+  const adopted = new TCPClientInterface({ socket: accepted });
+  await adopted.connect();
+  assert.strictEqual(adopted.initiator, false);
+  assert.strictEqual(adopted.autoReconnect, true); // default, but ignored for non-initiator
+
+  let closed = false;
+  let reconnecting = false;
+  adopted.addEventListener("closed", () => {
+    closed = true;
+  });
+  adopted.addEventListener("reconnecting", () => {
+    reconnecting = true;
+  });
+
+  // Drop the connection from the peer side.
+  dialer.destroy();
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  assert.ok(closed, "adopted socket fires closed on remote drop");
+  assert.ok(!reconnecting, "adopted socket must never reconnect");
+
+  await new Promise((resolve) => rawServer.close(resolve));
+});
+
+test("TCP client applies TCP_NODELAY and keepalive on the dialed socket", async () => {
+  // Node does not expose portable getters for SO_KEEPALIVE / TCP_NODELAY, so
+  // this is a smoke test: connect to a real server and assert the option
+  // tuning runs without breaking the socket. The i2pTunneled flag selects the
+  // longer probe interval and must be stored on the interface.
+  const rawServer = net.createServer();
+  rawServer.on("connection", () => {});
+  await new Promise((resolve) => rawServer.listen(0, "127.0.0.1", resolve));
+  const port = /** @type {import('node:net').AddressInfo} */ (
+    rawServer.address()
+  ).port;
+
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    autoReconnect: false,
+    i2pTunneled: true,
+  });
+  await client.connect();
+  assert.ok(client.socket, "socket should be set");
+  assert.strictEqual(
+    typeof client.socket.setNoDelay,
+    "function",
+    "socket supports setNoDelay",
+  );
+  assert.strictEqual(
+    typeof client.socket.setKeepAlive,
+    "function",
+    "socket supports setKeepAlive",
+  );
+  assert.ok(client.socket.writable, "socket is writable after tuning");
+  assert.strictEqual(client.i2pTunneled, true);
+
+  await client.disconnect();
+  await new Promise((resolve) => rawServer.close(resolve));
+});
+
+test("TCP client defaults match the Python reference", () => {
+  const client = new TCPClientInterface({ host: "127.0.0.1", port: 1 });
+  assert.strictEqual(client.autoReconnect, true);
+  assert.strictEqual(client.reconnectWait, 5);
+  assert.strictEqual(client.maxReconnectTries, Number.POSITIVE_INFINITY);
+  assert.strictEqual(client.connectTimeout, 5);
+  assert.strictEqual(client.initiator, true);
 });
