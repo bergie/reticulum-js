@@ -9,6 +9,14 @@ Currently supported are:
 * **WebSockets**: JavaScript client can connect to a Reticulum daemon supporting the WebSocket interface. Drop-in implementations exist, including https://github.com/nilu96/rnsWebsocketInterface
 * **HTTP POST exchange**: the client polls an HTTP exchange server (a Reticulum "backbone") using plain `POST` requests — no WebSockets, no open ports, no persistent connection. The most firewall- and shared-hosting-friendly option. See [HTTP POST exchange](#http-post-exchange) below.
 
+See [Custom Interfaces](https://reticulum.network/manual/examples.html#example-custominterface) in Reticulum documentation.
+
+## Make interfaces configurable
+
+As networking situations differ, it is _very important_ to allow your users to configure their own Reticulum interfaces. Supply a reasonable default, but provide some user interface for changing interfaces.
+
+reticulum-js interfaces supply JSON Schemas for their configuration parameters. This can be used to construct a dynamic user interface for setting up interfaces.
+
 ## HTTP POST exchange
 
 As an alternative to WebSockets, reticulum-js ships an **HTTP POST exchange** transport (`HttpPostClientInterface`, registered as `http-client`). The client never holds an open connection: it periodically POSTs its queued outbound packets to an exchange server and receives any queued inbound packets in the HTTP response. The poll interval is adaptive — roughly 1 second while traffic is flowing, backing off to a few seconds when idle.
@@ -28,6 +36,5 @@ The exchange server is a Reticulum backbone that browser clients (and other node
 
 ## Hosting a default server
 
-If you are planning to release a browser application using reticulum-js, at this stage it is probably a good idea to host at least one server your clients can use as a default connection point — either an `rnsd` instance with the `WebSocketServerInterface`, or an HTTP exchange backbone (`HttpPostServerInterface` in Node.js, or the Reticulum Post PHP router). However, as networking situations differ, it is _very important_ to allow your users to configure their own Reticulum interfaces.
+If you are planning to release a browser application using reticulum-js, at this stage it is probably a good idea to host at least one server your clients can use as a default connection point — either an `rnsd` instance with the `WebSocketServerInterface`, or an HTTP exchange backbone (`HttpPostServerInterface` in Node.js, or the Reticulum Post PHP router).
 
-reticulum-js interfaces supply JSON Schemas for their configuration parameters. This can be used to construct a dynamic user interface for setting up interfaces.
