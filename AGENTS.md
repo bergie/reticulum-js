@@ -14,12 +14,9 @@ When the two protocol specifications disagree, the Python implementation is corr
 
 ## Work documents
 
-Technical work is planned with work documents (in Markdown) that are managed using `rngit` tool and repository in `rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js`. Commands to read work documents:
+Technical work is planned with work documents (in Markdown) that are managed using `rngit` tool and repository in `rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js`. The appropriate [pi skill extension](https://github.com/bergie/pi-rngit-work-document-skill) should be available.
 
-- List work documents: `rngit work rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js list`.
-- Read work document: `rngit work rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js view -d N` (where `N` is the document number from the work documents list)
-
-AI agents may not create work documents on their own. Create a markdown file in the root folder of the project and ask user to move it to rngit.
+When planning new work, there should always be a corresponding work document created explaining the idea. When implementing, the appropriate work document should be kept up-to-date by posting updates to it.
 
 ## Designing interfaces
 
@@ -55,7 +52,9 @@ https://min-common-api.proposal.wintertc.org/
 - ✅ **Always**: Use `git mv` instead of `mv' for renaming files
 - ✅ **Always**: Remove ambiguity and legacy support from APIs you modify. Right now there are no API consumers outside this repo so we can keep things fluid
 - ✅ **Always**: Use the logging helper from `src/utils/log.js` instead of `console.log` (and `.warn/.error`)
+- ✅ **Always**: Keep the work document associated with current task up-to-date
 - ⚠️ **Ask first**: adding dependencies
 - ⚠️ **Ask first**: modify CI config
 - ⚠️ **Ask first**: allow an optional input to a method
 - 🚫 **Never**: AI agents may not make commits on their own, instead notify user that there are uncommitted changes to review
+- 🚫 **Never**: AI agents may not mark work documents completed on their own, instead ask user to do so
