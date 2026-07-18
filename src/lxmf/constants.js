@@ -53,6 +53,13 @@ export const PROPAGATION_COST_FLEX = 3;
 export const PEERING_COST = 18;
 export const MAX_PEERING_COST = 26;
 
+/** Sync strategy: sync only when explicitly requested (LXMPeer.STRATEGY_LAZY). */
+export const SYNC_STRATEGY_LAZY = 0x01;
+/** Sync strategy: keep syncing until the peer is up to date (default). */
+export const SYNC_STRATEGY_PERSISTENT = 0x02;
+/** Default peer sync strategy (`LXMPeer.DEFAULT_SYNC_STRATEGY`). */
+export const DEFAULT_SYNC_STRATEGY = SYNC_STRATEGY_PERSISTENT;
+
 // --- Peer error codes returned from propagation request handlers (LXMPeer.py) ---
 export const PEER_ERROR_NO_IDENTITY = 0xf0;
 export const PEER_ERROR_NO_ACCESS = 0xf1;

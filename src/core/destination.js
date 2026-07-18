@@ -174,6 +174,15 @@ export class Destination extends EventTarget {
      */
     this.requestHandlers = new Map();
 
+    /**
+     * Per-destination `app_data` override (§4.5). When set it takes precedence
+     * over `identity.appData` in announces, so destinations sharing an identity
+     * (e.g. `lxmf.delivery` and `lxmf.propagation`) can each advertise their
+     * own app_data.
+     * @type {Uint8Array|null}
+     */
+    this.appData = null;
+
     // §7.4 ratchet ownership (receiver side). When enabled this destination
     // generates and rotates X25519 ratchet keypairs, advertises the newest
     // public key in announces, and decrypts with the private ring. Disabled
@@ -256,7 +265,7 @@ export class Destination extends EventTarget {
     const pubKey = await this.identity.getPublicKey();
 
     // 3. Prepare App Data (The human-readable name or metadata)
-    const appData = this.identity.appData;
+    const appData = this.appData ?? this.identity.appData;
 
     // §7.4 ratchet: when forward-secrecy ratchets are enabled on this
     // destination, rotate if due and embed the current ratchet public (32 B)

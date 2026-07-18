@@ -128,12 +128,14 @@ async function startSender() {
   await sendDirectOverLink(rns, lxmf, senderIdentity, targetHash, peerIdentity);
 
   // --------------------------------------------------------------------------
-  // Method 3: Delivery over a propagation node (TODO)
+  // Method 3: Delivery via a propagation node (store-and-forward)
   //
-  // Submit the message to an LXMF propagation node for store-and-forward
-  // delivery when the recipient is offline (LXMF.md §5.8). Not implemented yet.
+  // Submit the message to an LXMF propagation node. The node stores it
+  // encrypted until the recipient syncs — enabling delivery to offline peers
+  // (LXMF.md §5.8). Set LXMF_PROPAGATION_NODE to the node's `lxmf.propagation`
+  // destination hash to enable; otherwise this step is skipped.
   // --------------------------------------------------------------------------
-  // await sendViaPropagationNode(rns, lxmf, senderIdentity, targetHash);
+  await sendViaPropagationNode(lxmf, senderIdentity, targetHash);
 
   console.log("\nAll delivery attempts finished.");
 }
@@ -158,6 +160,46 @@ async function sendOpportunistic(lxmf, senderIdentity, targetHash) {
     console.log("[->] Opportunistic message sent.");
   } catch (error) {
     console.error("[!] Opportunistic delivery failed:", error.message);
+  }
+}
+
+/**
+ * Submits the message to an LXMF propagation node for store-and-forward
+ * delivery. Enabled by setting `LXMF_PROPAGATION_NODE` to the node's
+ * `lxmf.propagation` destination hash; skipped otherwise.
+ *
+ * @param {LXMRouter} lxmf
+ * @param {import("../src/core/identity.js").Identity} senderIdentity
+ * @param {Uint8Array} targetHash
+ */
+async function sendViaPropagationNode(lxmf, senderIdentity, targetHash) {
+  const propagationNodeHex = process.env.LXMF_PROPAGATION_NODE;
+  if (!propagationNodeHex) {
+    console.log(
+      "\n--- Method 3: Propagation node delivery (skipped; set LXMF_PROPAGATION_NODE) ---",
+    );
+    return;
+  }
+  console.log("\n--- Method 3: Propagation node delivery ---");
+  try {
+    lxmf.setOutboundPropagationNode(fromHex(propagationNodeHex));
+    const message = new LXMessage({
+      sourceHash: lxmf.deliveryDest.destinationHash,
+      destinationHash: targetHash,
+      title: "Hello (propagation)",
+      content:
+        "Hi! This message was stored on a propagation node for offline delivery.",
+    });
+    const { transientId, stampCost } = await lxmf.submitToPropagationNode(
+      message,
+      senderIdentity,
+    );
+    console.log(
+      `[->] Submitted to propagation node (stamp cost ${stampCost}, ` +
+        `transient_id ${toHex(transientId).slice(0, 16)}…).`,
+    );
+  } catch (error) {
+    console.error("[!] Propagation delivery failed:", error.message);
   }
 }
 

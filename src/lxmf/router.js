@@ -9,8 +9,29 @@ import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { Resource } from "../core/resource.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
-import { buildAnnounceAppData, parseAnnounceAppData } from "./announce_data.js";
+import {
+  buildAnnounceAppData,
+  parseAnnounceAppData,
+  parsePropagationNodeAppData,
+} from "./announce_data.js";
+import {
+  ALL_MESSAGES,
+  DEFAULT_SYNC_STRATEGY,
+  DELIVERY_LIMIT,
+  MAX_PEERING_COST,
+  MESSAGE_GET_PATH,
+  OFFER_REQUEST_PATH,
+  PROPAGATION_COST,
+  STAMP_SIZE,
+} from "./constants.js";
 import { Message } from "./message.js";
+import { LXMPeer } from "./peer.js";
+import {
+  packPropagationContainer,
+  unpackPropagationContainer,
+} from "./propagation.js";
+import { PropagationNode } from "./propagation_node.js";
+import { generateStamp, WORKBLOCK_EXPAND_ROUNDS_PN } from "./stamper.js";
 
 /**
  * Handles LXMF routing and message processing.
@@ -27,6 +48,17 @@ export class LXMRouter extends EventTarget {
     this.identity = identity;
     this.rns = rnsCore;
     this.deliveryDest = null;
+    /** @type {import("./propagation_node.js").PropagationNode|null} */
+    this.propagationNode = null;
+    /** @type {import("../core/destination.js").Destination|null} */
+    this.propagationDest = null;
+    // --- Client-side propagation (submit + sync) ---
+    /** @type {Uint8Array|null} destination hash of the configured propagation node. */
+    this.outboundPropagationNode = null;
+    /** @type {import("../transport/link.js").Link|null} cached link to the node. */
+    this.outboundPropagationLink = null;
+    /** Client per-transfer download limit (KB) advertised in `/get` requests. */
+    this.deliveryPerTransferLimit = DELIVERY_LIMIT;
     this.pendingMessages = new Map();
     this.pendingLinks = new Map();
     // Tracks outbound links (by hex link_id) we have already sent LINKIDENTIFY
@@ -40,6 +72,9 @@ export class LXMRouter extends EventTarget {
     // (LXMRouter.locally_processed_transient_ids).
     /** @type {Map<string, number>} */
     this.processedTransientIds = new Map();
+    // --- Peer mesh (§5.8.4): peered propagation nodes keyed by dest hash. ---
+    /** @type {Map<string, LXMPeer>} */
+    this.peers = new Map();
   }
 
   /**
@@ -102,6 +137,496 @@ export class LXMRouter extends EventTarget {
       stampCost,
     ).slice();
     await this.deliveryDest.announce();
+  }
+
+  /**
+   * Enables the propagation-node role (§5.3): creates the `lxmf.propagation`
+   * destination, registers the `/get` message-download handler, and ingests
+   * submitted messages received via link Resources.
+   *
+   * The node stores propagated messages addressed to *other* identities and
+   * serves them to clients over `/get`; messages addressed to this router's
+   * own delivery identity are locally delivered (decrypted + dispatched as a
+   * `message` event). Returns the {@link PropagationNode} for direct access
+   * (e.g. inspecting {@link PropagationNode.store}).
+   *
+   * Call {@link announcePropagationNode} afterwards to broadcast the node.
+   *
+   * @param {import("./propagation_node.js").PropagationNodeOptions} [options]
+   * @returns {Promise<PropagationNode>}
+   */
+  async enablePropagation(options = {}) {
+    if (this.propagationNode) return this.propagationNode;
+
+    const propDest = await Destination.IN(
+      "lxmf.propagation",
+      DestType.SINGLE,
+      this.identity,
+      this.rns,
+    );
+    this.propagationDest = propDest;
+    this.rns.transport.bindLocalDestination(propDest);
+    this.rns.registerDestination(propDest);
+
+    const deliveryHash = this.deliveryDest?.destinationHash ?? null;
+    const node = new PropagationNode({
+      ...options,
+      getLocalIdentityHash: () => this.identity.identityHash,
+      getDeliveryDestination: (hash) => {
+        if (!deliveryHash) return null;
+        return toHex(hash) === toHex(deliveryHash)
+          ? /** @type {any} */ (this.deliveryDest)
+          : null;
+      },
+      onLocalDelivery: (msg) => {
+        // Locally-delivered propagated messages are dispatched through the
+        // same `message` event as direct ones (SOURCE_UNKNOWN semantics: the
+        // sender identity may not be known, so the signature is not verified
+        // here, mirroring Python lxmf_delivery).
+        this._dispatchMessage(/** @type {any} */ (msg), null);
+      },
+    });
+    this.propagationNode = node;
+
+    // Per-destination app_data: advertise this node's limits/costs.
+    propDest.appData = node.buildAnnounceAppData().slice();
+
+    // §5.3: serve stored messages to clients over /get.
+    await propDest.registerRequestHandler(MESSAGE_GET_PATH, {
+      responseGenerator: node.getRequestHandler(),
+    });
+    // §5.8.4: accept sync offers from peered propagation nodes.
+    await propDest.registerRequestHandler(OFFER_REQUEST_PATH, {
+      responseGenerator: node.getOfferRequestHandler(),
+    });
+
+    // Accept links and ingest submitted propagation containers (Resources).
+    /** @type {any} */ (propDest).addEventListener(
+      "link_request",
+      async (/** @type {any} */ event) => {
+        try {
+          const link = await /** @type {any} */ (propDest).acceptLink(
+            event.detail.packet,
+          );
+          link.bz2 = this.rns.compressionProvider || undefined;
+          link.addEventListener("resource", (/** @type {any} */ resEvent) => {
+            const resource = /** @type {any} */ (resEvent).detail.resource;
+            resource
+              .whenComplete()
+              .then(async () => {
+                const container = unpackPropagationContainer(
+                  /** @type {Uint8Array} */ (resource.data),
+                );
+                if (container) {
+                  const res = await node.ingestBlobs(container.messages);
+                  log(
+                    "LXMF",
+                    `Propagation submit ingested: ${res.stored} stored, ${res.delivered} delivered, ${res.rejected} rejected`,
+                    LogLevel.DEBUG,
+                  );
+                  // Queue newly-stored messages for distribution to every
+                  // peered node (LXMRouter.flush_peer_distribution_queue).
+                  this._distributeStored(res.storedIds);
+                }
+              })
+              .catch((/** @type {Error} */ err) => {
+                log(
+                  "LXMF",
+                  `Propagation resource transfer failed: ${err}`,
+                  LogLevel.ERROR,
+                );
+              });
+          });
+        } catch (e) {
+          log(
+            "LXMF",
+            `Failed to accept propagation link: ${e}`,
+            LogLevel.ERROR,
+          );
+        }
+      },
+    );
+
+    return node;
+  }
+
+  /**
+   * Announces the `lxmf.propagation` destination, advertising this node to the
+   * network. Requires {@link enablePropagation} first.
+   * @returns {Promise<void>}
+   */
+  async announcePropagationNode() {
+    if (!this.propagationDest) {
+      throw new Error(
+        "Propagation not enabled; call enablePropagation() first.",
+      );
+    }
+    await this.propagationDest.announce();
+  }
+
+  // ----------------------------------------------------------------
+  // Peer mesh (§5.8.4): peered propagation nodes
+  // ----------------------------------------------------------------
+
+  /**
+   * Establishes (or updates) a peering relationship with another propagation
+   * node (`LXMRouter.peer`). The peer's advertised limits and costs are read
+   * from its app_data; messages this node stores are then offered to it on the
+   * next {@link syncPeers}.
+   *
+   * @param {Uint8Array} destinationHash Peer's `lxmf.propagation` hash.
+   * @param {Object} config
+   * @param {number} config.stampCost Peer's propagation stamp cost.
+   * @param {number} config.stampCostFlexibility Peer's stamp cost flexibility.
+   * @param {number} config.peeringCost Peer's peering cost (≤ MAX_PEERING_COST).
+   * @param {number|null} [config.perTransferLimitKb] Per-message transfer limit.
+   * @param {number|null} [config.perSyncLimitKb] Per-sync cumulative limit.
+   * @param {Map<number, Uint8Array>|null} [config.metadata] Node metadata map.
+   * @returns {LXMPeer|null} the peer, or null if peering was rejected.
+   */
+  peer(destinationHash, config) {
+    if (config.peeringCost > MAX_PEERING_COST) {
+      log(
+        "LXMF",
+        `Not peering with ${toHex(destinationHash)}: peering cost ${config.peeringCost} > max ${MAX_PEERING_COST}`,
+        LogLevel.LOG,
+      );
+      this.unpeer(destinationHash);
+      return null;
+    }
+    const key = toHex(destinationHash);
+    /** @type {LXMPeer} */
+    let peer;
+    if (this.peers.has(key)) {
+      peer = /** @type {LXMPeer} */ (this.peers.get(key));
+    } else {
+      peer = new LXMPeer(this, destinationHash.slice(), DEFAULT_SYNC_STRATEGY);
+      this.peers.set(key, peer);
+    }
+    peer.alive = true;
+    peer.lastHeard = Date.now() / 1000;
+    peer.propagationStampCost = config.stampCost;
+    peer.propagationStampCostFlexibility = config.stampCostFlexibility;
+    peer.peeringCost = config.peeringCost;
+    peer.propagationTransferLimit = config.perTransferLimitKb ?? null;
+    peer.propagationSyncLimit =
+      config.perSyncLimitKb ?? config.perTransferLimitKb ?? null;
+    peer.metadata = config.metadata ?? null;
+    // Invalidate any stale peering key so a cost change regenerates it.
+    if (!peer.peeringKeyReady()) peer.peeringKey = null;
+    log("LXMF", `Peered with ${toHex(destinationHash)}`, LogLevel.LOG);
+    return peer;
+  }
+
+  /**
+   * Breaks a peering relationship (`LXMRouter.unpeer`).
+   * @param {Uint8Array} destinationHash
+   */
+  unpeer(destinationHash) {
+    const removed = this.peers.delete(toHex(destinationHash));
+    if (removed)
+      log("LXMF", `Broke peering with ${toHex(destinationHash)}`, LogLevel.LOG);
+  }
+
+  /**
+   * Runs one outbound sync pass against every peered node. Resolves when all
+   * peers have completed (or postponed) their sync.
+   * @returns {Promise<void>}
+   */
+  async syncPeers() {
+    for (const peer of this.peers.values()) {
+      try {
+        await peer.sync();
+      } catch (err) {
+        log("LXMF", `Sync with peer ${peer.id} failed: ${err}`, LogLevel.ERROR);
+      }
+    }
+  }
+
+  /**
+   * Marks newly-stored messages as unhandled for every peered node so they will
+   * be offered on the next {@link syncPeers} (`flush_peer_distribution_queue`).
+   * @param {Uint8Array[]} storedIds
+   * @private
+   */
+  _distributeStored(storedIds) {
+    const store = this.propagationNode?.store;
+    if (!store || storedIds.length === 0 || this.peers.size === 0) return;
+    for (const tid of storedIds) {
+      for (const peer of this.peers.values()) {
+        store.markUnhandledForPeer(tid, peer.destinationHash);
+      }
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Client-side propagation: submit (PROPAGATED) + sync (download)
+  // ----------------------------------------------------------------
+
+  /**
+   * Sets the propagation node to submit messages to and sync from, by its
+   * `lxmf.propagation` destination hash. The node's identity/app_data must be
+   * learned from an announce before submit/sync can run.
+   *
+   * @param {Uint8Array} destinationHash
+   */
+  setOutboundPropagationNode(destinationHash) {
+    this.outboundPropagationNode = destinationHash;
+    this.outboundPropagationLink = null; // force a fresh link to the new node
+  }
+
+  /**
+   * Establishes (and caches) a Link to the configured propagation node's
+   * `lxmf.propagation` destination, waiting until it is ACTIVE.
+   * @returns {Promise<import("../transport/link.js").Link>}
+   * @private
+   */
+  async _ensurePropagationLink() {
+    if (!this.outboundPropagationNode) {
+      throw new Error("No outbound propagation node configured.");
+    }
+    const cached = this.outboundPropagationLink;
+    if (cached && cached.status === 2 /* LinkStatus.ACTIVE */) {
+      return cached;
+    }
+    const nodeIdentity = await Destination.recall(this.outboundPropagationNode);
+    if (!nodeIdentity) {
+      throw new Error(
+        `Propagation node identity unknown for ${toHex(
+          this.outboundPropagationNode,
+        )}; wait for its announce.`,
+      );
+    }
+    const nodeDest = await Destination.OUT(
+      "lxmf.propagation",
+      DestType.SINGLE,
+      nodeIdentity,
+      this.rns,
+    );
+    const link = await nodeDest.createLink();
+    await link.whenActive();
+    this.outboundPropagationLink = link;
+    return link;
+  }
+
+  /**
+   * Submits a message to the configured propagation node for store-and-forward
+   * delivery (LXMF.md §5.8 / LXMessage PROPAGATED).
+   *
+   * Packs the message into propagation form (`dest_hash ‖ E(src‖sig‖payload)`,
+   * §5.3), appends a propagation stamp meeting the node's advertised cost, and
+   * sends the `msgpack([time, [lxmf_data]])` container to the node as a Link
+   * Resource. The node stores it until the recipient syncs.
+   *
+   * @param {Message} message
+   * @param {import("../core/identity.js").Identity} senderIdentity
+   * @param {{stampCost?: number}} [options] Override the stamp cost (defaults
+   *   to the node's advertised cost, then {@link PROPAGATION_COST}).
+   * @returns {Promise<{transientId: Uint8Array, stampCost: number}>}
+   */
+  async submitToPropagationNode(message, senderIdentity, options = {}) {
+    if (!this.outboundPropagationNode) {
+      throw new Error("No outbound propagation node configured.");
+    }
+
+    // Resolve the stamp cost: explicit option > node's advertised cost > default.
+    let stampCost = options.stampCost;
+    if (stampCost == null) {
+      const nodeIdentity = await Destination.recall(
+        this.outboundPropagationNode,
+      );
+      const pn = nodeIdentity
+        ? parsePropagationNodeAppData(nodeIdentity.appData)
+        : null;
+      stampCost = pn?.stampCost ?? PROPAGATION_COST;
+    }
+
+    const { container, transientId } = await this._packForPropagationSubmit(
+      message,
+      senderIdentity,
+      stampCost,
+    );
+
+    const link = await this._ensurePropagationLink();
+    if (!link.bz2)
+      link.bz2 = /** @type {any} */ (this.rns.compressionProvider) || undefined;
+    const resource = new Resource({
+      data: container,
+      link,
+      bz2: link.bz2,
+    });
+    await resource.advertise();
+
+    return { transientId, stampCost };
+  }
+
+  /**
+   * Packs a message into the propagation submit container
+   * (`msgpack([time, [lxmf_data || stamp]])`) for a given stamp cost, without
+   * touching the transport. Factored out of {@link submitToPropagationNode}
+   * so the wire format is unit-testable.
+   *
+   * @param {Message} message
+   * @param {import("../core/identity.js").Identity} senderIdentity
+   * @param {number} stampCost
+   * @returns {Promise<{container: Uint8Array, transientId: Uint8Array, stampCost: number}>}
+   * @private
+   */
+  async _packForPropagationSubmit(message, senderIdentity, stampCost) {
+    const recipientIdentity = await Destination.recall(message.destinationHash);
+    if (!recipientIdentity) {
+      throw new Error(
+        `Unknown recipient identity for ${toHex(message.destinationHash)}`,
+      );
+    }
+    const recipientOut = await Destination.OUT(
+      "lxmf.delivery",
+      DestType.SINGLE,
+      recipientIdentity,
+      this.rns,
+    );
+
+    const { lxmfData, transientId } = await message.toPropagationData(
+      senderIdentity,
+      recipientOut,
+    );
+
+    // Append the propagation stamp (always 32 bytes; the node strips it and
+    // validates it against transient_id). Cost 0 accepts any stamp.
+    let stamp;
+    if (stampCost > 0) {
+      const generated = await generateStamp(
+        transientId,
+        stampCost,
+        WORKBLOCK_EXPAND_ROUNDS_PN,
+      );
+      if (!generated) throw new Error("Failed to generate propagation stamp");
+      stamp = generated[0];
+    } else {
+      stamp = new Uint8Array(STAMP_SIZE);
+    }
+    const stamped = new Uint8Array(lxmfData.length + stamp.length);
+    stamped.set(lxmfData, 0);
+    stamped.set(stamp, lxmfData.length);
+
+    return {
+      container: packPropagationContainer([stamped]),
+      transientId,
+      stampCost,
+    };
+  }
+
+  /**
+   * Downloads messages addressed to `identity` from the configured propagation
+   * node (LXMRouter.request_messages_from_propagation_node).
+   *
+   * Drives the `/get` exchange: list available `transient_id`s, request those
+   * not already held, decrypt + dispatch each, then ack so the node purges
+   * them. Resolves with counts of received / duplicate messages.
+   *
+   * @param {import("../core/identity.js").Identity} identity The recipient
+   *   identity to identify as (so the node serves our messages).
+   * @param {number} [maxMessages=ALL_MESSAGES] Cap on messages fetched.
+   * @returns {Promise<{received: number, duplicates: number}>}
+   */
+  async syncFromPropagationNode(identity, maxMessages = ALL_MESSAGES) {
+    if (!this.outboundPropagationNode) {
+      throw new Error("No outbound propagation node configured.");
+    }
+
+    const link = await this._ensurePropagationLink();
+    // The node serves messages for the identified recipient only.
+    await link.identify(identity);
+
+    // Phase 1: list available transient_ids.
+    const list = await link.request(MESSAGE_GET_PATH, [null, null]);
+    this._throwOnPeerError(list);
+    if (!Array.isArray(list)) {
+      throw new Error("Invalid message list from propagation node");
+    }
+
+    // Phase 2: split into wants (fetch) and haves (tell the node to purge).
+    const wants = [];
+    const haves = [];
+    for (const tid of list) {
+      if (this.processedTransientIds.has(toHex(tid))) {
+        haves.push(tid);
+      } else if (maxMessages === ALL_MESSAGES || wants.length < maxMessages) {
+        wants.push(tid);
+      }
+    }
+    if (wants.length === 0 && haves.length === 0) {
+      return { received: 0, duplicates: 0 };
+    }
+
+    const messages = await link.request(MESSAGE_GET_PATH, [
+      wants,
+      haves,
+      this.deliveryPerTransferLimit,
+    ]);
+    this._throwOnPeerError(messages);
+    if (!Array.isArray(messages)) {
+      throw new Error("Invalid message data from propagation node");
+    }
+
+    // Phase 3: decrypt + deliver each received lxmf_data.
+    const receivedIds = [];
+    let received = 0;
+    for (const lxmfData of messages) {
+      const tid = await Message.transientIdFromPropagationData(lxmfData);
+      const tidHex = toHex(tid);
+      if (this.processedTransientIds.has(tidHex)) continue;
+      if (await this._ingestPropagationData(lxmfData)) {
+        this.processedTransientIds.set(tidHex, Date.now() / 1000);
+        receivedIds.push(tid);
+        received++;
+      }
+    }
+
+    // Phase 4: ack so the node purges the messages we received.
+    if (receivedIds.length > 0) {
+      await link.request(MESSAGE_GET_PATH, [null, receivedIds]);
+    }
+
+    return { received, duplicates: messages.length - received };
+  }
+
+  /**
+   * Decrypts a synced `lxmf_data` (base form, stamp already stripped by the
+   * node) addressed to this router's delivery destination and dispatches it as
+   * a `message` event. Returns false if it is not for us or undecryptable.
+   *
+   * @param {Uint8Array} lxmfData
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _ingestPropagationData(lxmfData) {
+    if (!this.deliveryDest || !this.deliveryDest.destinationHash) return false;
+    const destinationHash = lxmfData.subarray(0, 16);
+    if (toHex(destinationHash) !== toHex(this.deliveryDest.destinationHash)) {
+      return false;
+    }
+    const message = await Message.fromPropagationData(
+      lxmfData,
+      this.deliveryDest,
+    );
+    if (!message) return false;
+    const senderIdentity = await Destination.recall(message.sourceHash);
+    await this._dispatchMessage(message, null, senderIdentity ?? undefined);
+    return true;
+  }
+
+  /**
+   * Throws when a `/get` response is a peer error code.
+   * @param {any} response
+   * @private
+   */
+  _throwOnPeerError(response) {
+    if (typeof response === "number" && response >= 0xf0) {
+      throw new Error(
+        `Propagation node returned error code 0x${response.toString(16)}`,
+      );
+    }
   }
 
   /**

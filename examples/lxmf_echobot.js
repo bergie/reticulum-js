@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
+  fromHex,
   Identity,
   LXMessage,
   LXMRouter,
@@ -60,6 +61,45 @@ async function startEchoBot() {
   // list) so peers like Sideband/Nomadnet display our name correctly.
   await lxmf.announce(`JS echo bot (${data.version})`);
   console.log("Bot announced to the mesh. Listening for messages...");
+
+  // --------------------------------------------------------------------------
+  // Propagation node role (store-and-forward, LXMF.md §5.8)
+  //
+  // The bot also acts as a propagation node: it stores encrypted messages for
+  // offline peers and serves them over `/get`. The node runs with stamp cost 0
+  // (open node) so no proof-of-work is required to submit.
+  // --------------------------------------------------------------------------
+  await lxmf.enablePropagation({
+    stampCost: 0,
+    stampCostFlexibility: 0,
+    name: "JS echo PN",
+  });
+  await lxmf.announcePropagationNode();
+  console.log(
+    `Propagation node enabled: ${toHex(lxmf.propagationDest.destinationHash)}`,
+  );
+
+  // --------------------------------------------------------------------------
+  // Optional: periodically sync our own messages from an upstream propagation
+  // node (set LXMF_SYNC_NODE to its `lxmf.propagation` hash).
+  // --------------------------------------------------------------------------
+  const upstreamHex = process.env.LXMF_SYNC_NODE;
+  if (upstreamHex) {
+    lxmf.setOutboundPropagationNode(fromHex(upstreamHex));
+    console.log(`Will sync from upstream node ${upstreamHex} every 60s.`);
+    setInterval(async () => {
+      try {
+        const res = await lxmf.syncFromPropagationNode(botIdentity);
+        if (res.received > 0) {
+          console.log(
+            `[sync] Downloaded ${res.received} message(s) from propagation node.`,
+          );
+        }
+      } catch (err) {
+        console.error("[sync] sync failed:", err.message);
+      }
+    }, 60000);
+  }
 
   // Handle Incoming Messages
   lxmf.addEventListener("message", async (event) => {
