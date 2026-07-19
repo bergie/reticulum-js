@@ -216,6 +216,23 @@ export class Interface extends EventTarget {
   }
 
   /**
+   * Optional hook invoked by {@link import("../transport/transport.js").TransportCore#addInterface}
+   * with the transport that owns this interface, right after the interface is
+   * attached.
+   *
+   * The base implementation is a no-op. Interfaces that spawn sub-interfaces
+   * dynamically — notably {@link AutoInterface}, which discovers peers and
+   * spawns one per peer — override it to remember the transport so the spawned
+   * peers can be auto-registered without a separate `Reticulum` global (the
+   * Python reference uses the global `RNS.Transport.add_interface` for this).
+   *
+   * Overriders should also register any peers spawned before the transport was
+   * attached, so the `addInterface`/`connect` call order doesn't matter.
+   * @param {import("../transport/transport.js").TransportCore} _transport
+   */
+  attachTransport(_transport) {}
+
+  /**
    * Sends bytes wrapped in KISS framing
    * @param {import("../core/packet.js").Packet} packet
    */

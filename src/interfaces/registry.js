@@ -5,6 +5,7 @@
  *   (e.g. for dynamically-generated setup UIs).
  */
 
+import { AutoInterface } from "./auto.js";
 import { Interface } from "./base.js";
 import { HttpPostClientInterface } from "./http.js";
 import { HttpPostServerInterface } from "./http_server.js";
@@ -33,6 +34,7 @@ import {
 
 /** @type {Map<string, InterfaceConstructor>} */
 const registry = new Map();
+registry.set("auto", AutoInterface);
 registry.set("http-client", HttpPostClientInterface);
 registry.set("http-server", HttpPostServerInterface);
 registry.set("tcp-client", TCPClientInterface);

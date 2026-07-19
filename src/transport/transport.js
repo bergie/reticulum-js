@@ -78,6 +78,13 @@ export class TransportCore extends EventTarget {
       ),
     );
 
+    // 4. Offer the transport to interfaces that spawn sub-interfaces (e.g.
+    // AutoInterface) so they can auto-register them. No-op for interfaces that
+    // don't override attachTransport.
+    if (typeof iface.attachTransport === "function") {
+      iface.attachTransport(this);
+    }
+
     log("Transport", `[+] Transport bound to interface: ${iface.name}`);
   }
 

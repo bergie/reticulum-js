@@ -1,6 +1,18 @@
 # Changelog
 ## [unreleased]
 ### Added
+- `AutoInterface`: zero-config IPv6-multicast local-network (LAN/Wi-Fi)
+  peering, a port of the Python `RNS/Interfaces/AutoInterface.py`. Nodes on
+  the same link discover each other via the group-derived multicast address
+  and authenticated discovery token (`SHA-256(group || own_link_local)`),
+  then exchange raw RNS packets (one per UDP datagram, no KISS framing) over a
+  per-peer unicast data socket spawned as an `AutoInterfacePeer`. Implements
+  the full peer lifecycle: announce loop, reverse-peering, peer expiry
+  (`PEERING_TIMEOUT` 22s), link-local-address rebind, a multicast-echo carrier
+  watchdog, and the multi-interface dedup deque. Node.js only; IPv6 link-local
+  scope handling (`addr%ifname`) matches the Python receiver semantics.
+  Registered as `auto`. IFAC and announce ingress/egress rate control are
+  deferred (v1: IFAC disabled, rate control stubbed).
 - Automatic reconnection for client interfaces (`TCPClientInterface`,
   `WebSocketClientInterface`): the initiator (outbound dialer) reconnects after
   a connection drop with a fixed backoff, indefinitely by default, matching the

@@ -1,6 +1,7 @@
 {
   "$schema": "https://typedoc.org/schema.json",
   "name": "reticulum-js",
+  "entryPoints": ["src/index.js"],
   "lang": "en",
   "customCss": "./assets/reticulum-js.css",
   "customFooterHtml": "<code>rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js</code>",

@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import { test } from "node:test";
+import { AutoInterface } from "../../src/interfaces/auto.js";
 import { Interface } from "../../src/interfaces/base.js";
 import {
   getInterface,
@@ -34,6 +35,7 @@ test("Interface base class declares the common options (name, ifacSize)", () => 
 test("subclasses inherit name and ifacSize from the base schema", () => {
   const baseSchema = Interface.getConfigurationSchema();
   for (const cls of [
+    AutoInterface,
     TCPClientInterface,
     TCPServerInterface,
     WebSocketClientInterface,
@@ -117,6 +119,7 @@ test("WebSocketServerInterface schema documents its options", () => {
 
 test("every declared option has a description", () => {
   for (const cls of [
+    AutoInterface,
     TCPClientInterface,
     TCPServerInterface,
     WebSocketClientInterface,
@@ -197,8 +200,22 @@ test("port options carry illustrative examples", () => {
   }
 });
 
+test("AutoInterface schema documents its options", () => {
+  const schema = AutoInterface.getConfigurationSchema();
+  assertValidSchema(schema);
+  assert.ok(schema.properties.groupId, "should expose groupId");
+  assert.ok(schema.properties.discoveryPort, "should expose discoveryPort");
+  assert.ok(schema.properties.dataPort, "should expose dataPort");
+  assert.ok(schema.properties.devices, "should expose devices allow-list");
+  assert.ok(schema.properties.ignoredDevices, "should expose ignoredDevices");
+  assert.strictEqual(schema.title, "AutoInterface");
+  // AutoInterface needs no single option at construction time.
+  assert.deepStrictEqual(schema.required, []);
+});
+
 test("registry lists all built-in interfaces", () => {
   const ids = listInterfaces().map((entry) => entry.id);
+  assert.ok(ids.includes("auto"));
   assert.ok(ids.includes("tcp-client"));
   assert.ok(ids.includes("tcp-server"));
   assert.ok(ids.includes("ws-client"));
