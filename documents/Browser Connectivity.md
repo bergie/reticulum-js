@@ -17,6 +17,10 @@ As networking situations differ, it is _very important_ to allow your users to c
 
 reticulum-js interfaces supply JSON Schemas for their configuration parameters. This can be used to construct a dynamic user interface for setting up interfaces.
 
+## RNode
+
+An interesting option is connecting the browser to a microcontroller running the [microReticulum Firmware](https://github.com/attermann/microReticulum_Firmware). These RNodes support KISS-framed WebSockets, and would allow browser applications to talk to other Reticulum instances over LoRa.
+
 ## HTTP POST exchange
 
 As an alternative to WebSockets, reticulum-js ships an **HTTP POST exchange** transport (`HttpPostClientInterface`, registered as `http-client`). The client never holds an open connection: it periodically POSTs its queued outbound packets to an exchange server and receives any queued inbound packets in the HTTP response. The poll interval is adaptive — roughly 1 second while traffic is flowing, backing off to a few seconds when idle.
