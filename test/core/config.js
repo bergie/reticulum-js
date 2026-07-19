@@ -94,11 +94,19 @@ test("getSharedInstanceEndpoint returns defaults for an empty config", () => {
   writeFileSync(join(dir, "config"), "[reticulum]\n");
   const endpoint = getSharedInstanceEndpoint({ configDir: dir });
   assert.strictEqual(endpoint.shareInstance, true);
-  assert.strictEqual(endpoint.port, 37428);
   assert.strictEqual(endpoint.instanceName, "default");
-  // On this platform (macOS, no abstract AF_UNIX) transport is always tcp.
+  // Transport resolution is platform-dependent, mirroring the Python
+  // reference: on Linux an empty config defaults to the abstract AF_UNIX
+  // socket (port left unset); everywhere else (macOS/Windows) it's tcp with
+  // the default port.
   if (!supportsAbstractAfUnix()) {
     assert.strictEqual(endpoint.transport, "tcp");
+    assert.strictEqual(endpoint.host, "127.0.0.1");
+    assert.strictEqual(endpoint.port, 37428);
+  } else {
+    assert.strictEqual(endpoint.transport, "unix");
+    assert.strictEqual(endpoint.socketPath, "\0rns/default");
+    assert.strictEqual(endpoint.port, undefined);
   }
 });
 
