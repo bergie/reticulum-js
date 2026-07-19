@@ -1,8 +1,6 @@
-import { LocalClientInterface } from "../interfaces/local_client.js";
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
-import { LogLevel, log } from "../utils/log.js";
-import { getSharedInstanceEndpoint } from "./config.js";
+import { log } from "../utils/log.js";
 import { Packet } from "./packet.js";
 
 /**
@@ -32,24 +30,18 @@ export class Reticulum {
     // Local registered endpoints (e.g., the Yjs sync endpoint, LXMF delivery)
     this.localDestinations = new Map();
 
-    // Shared-instance role state (Python reference: is_shared_instance /
-    // is_connected_to_shared_instance / is_standalone_instance). A node is at
-    // most one of these; see connectToSharedInstance().
-    /** @type {boolean} */
-    this.isSharedInstance = false;
-    /** @type {boolean} */
-    this.isConnectedToSharedInstance = false;
-    /** @type {boolean} */
-    this.isStandaloneInstance = false;
-    /** @type {LocalClientInterface | null} */
-    this.sharedInstanceInterface = null;
-
     log("Reticulum", "Reticulum Engine initialized.");
   }
 
   /**
    * Attaches a physical or virtual network interface to the router.
-   * @param {import("../interfaces/base.js").Interface} rnsInterface - An instantiated interface (TCP, WebSocket, RNode)
+   *
+   * Connecting to a local shared instance is now the caller's job — use the
+   * `LocalClientInterface.connectToSharedInstance()` static factory (from
+   * `reticulum-js/src/interfaces/local_client.js`) and pass the resulting
+   * interface here. Keeping shared-instance discovery out of the core keeps
+   * `Reticulum` free of Node.js builtins and browser-safe.
+   * @param {import("../interfaces/base.js").Interface} rnsInterface - An instantiated interface (TCP, WebSocket, RNode, shared-instance client, ...)
    * @param {boolean} isDefault - If true, unroutable packets fallback to this interface
    */
   addInterface(rnsInterface, isDefault = false) {
@@ -124,97 +116,5 @@ export class Reticulum {
   broadcast(packet) {
     // The core acts as the mediator
     this.transport.broadcast(packet);
-  }
-
-  /**
-   * Connects this node to a locally running shared instance — a Python `rnsd`
-   * or our own daemon — over a loopback socket, sharing its interfaces instead
-   * of opening our own. Mirrors the client side of the Python reference
-   * `Reticulum.__start_local_interface`.
-   *
-   * If none of `options.host`, `options.port`, `options.socketPath` is given,
-   * the endpoint is discovered from the Python config
-   * (`~/.reticulum/config`): `shared_instance_port`, `shared_instance_type`
-   * and `instance_name`, with the Python defaults (`share_instance = Yes`,
-   * port `37428`) when absent. On platforms without the abstract AF_UNIX
-   * namespace (macOS, Windows) the transport is always TCP.
-   *
-   * Returns the connected {@link LocalClientInterface} on success, or `null`
-   * if `share_instance = No` in the config or the endpoint is not currently
-   * reachable (the background reconnect loop is cancelled in the latter case,
-   * so a caller can cleanly fall back to a standalone interface). On success
-   * sets {@link Reticulum#isConnectedToSharedInstance}.
-   * @param {Object} [options]
-   * @param {string} [options.host] - Override the discovered TCP host
-   *   (defaults to `127.0.0.1`).
-   * @param {number} [options.port] - Override the discovered TCP port.
-   * @param {string} [options.socketPath] - Connect over a Unix domain socket /
-   *   named pipe instead of TCP.
-   * @param {string} [options.configDir] - Config directory to discover from.
-   * @param {number} [options.ifacSize] - Optional IFAC size in bytes.
-   * @param {string} [options.name] - Interface name.
-   * @param {boolean} [options.autoReconnect=true] - Reconnect after drops.
-   * @param {number} [options.reconnectWait=8] - Seconds between attempts.
-   * @param {number|null} [options.maxReconnectTries] - Attempt cap, or `null`
-   *   for unlimited.
-   * @param {number} [options.connectTimeout=5] - Per-dial timeout in seconds.
-   * @returns {Promise<LocalClientInterface | null>}
-   */
-  async connectToSharedInstance(options = {}) {
-    let { host, port, socketPath } = options;
-
-    // Discovery is all-or-nothing: if the caller did not pin an endpoint, look
-    // it up from the Python config.
-    if (socketPath === undefined && port === undefined) {
-      const endpoint = getSharedInstanceEndpoint({
-        configDir: options.configDir,
-      });
-      if (!endpoint.shareInstance) {
-        log(
-          "Reticulum",
-          "share_instance disabled in config; not connecting to a shared instance",
-          LogLevel.VERBOSE,
-        );
-        return null;
-      }
-      socketPath = endpoint.socketPath;
-      host = endpoint.host;
-      port = endpoint.port;
-    }
-
-    if (!socketPath) host = host || "127.0.0.1";
-
-    const iface = new LocalClientInterface({
-      host,
-      port,
-      socketPath,
-      name: options.name,
-      ifacSize: options.ifacSize,
-      autoReconnect: options.autoReconnect,
-      reconnectWait: options.reconnectWait,
-      maxReconnectTries: options.maxReconnectTries,
-      connectTimeout: options.connectTimeout,
-    });
-
-    try {
-      await iface.connect();
-    } catch (e) {
-      // First dial failed: cancel the background reconnect loop so we don't
-      // leak an endlessly-retrying interface, and let the caller fall back.
-      await iface.disconnect();
-      log(
-        "Reticulum",
-        `Shared instance not reachable: ${/** @type {any} */ (e).message}`,
-        LogLevel.WARN,
-      );
-      return null;
-    }
-
-    this.addInterface(iface, true);
-    this.isConnectedToSharedInstance = true;
-    this.isStandaloneInstance = false;
-    this.sharedInstanceInterface = iface;
-    log("Reticulum", `[+] Connected to shared instance via ${iface.name}`);
-    return iface;
   }
 }

@@ -5,9 +5,10 @@ import {
   LXMessage,
   LXMRouter,
   Reticulum,
-  TCPClientInterface,
   toHex,
 } from "../src/index.js";
+import { LocalClientInterface } from "../src/interfaces/local_client.js";
+import { TCPClientInterface } from "../src/interfaces/tcp.js";
 
 // A simple Node.js file storage adapter for the bot's private key
 class FileStorageAdapter {
@@ -35,8 +36,10 @@ async function startEchoBot() {
   // instance socket (auto-discovered from ~/.reticulum/config) instead of
   // opening our own. Falls back to a direct TCP interface when no shared
   // instance is reachable.
-  const shared = await rns.connectToSharedInstance();
-  if (!shared) {
+  const shared = await LocalClientInterface.connectToSharedInstance();
+  if (shared) {
+    rns.addInterface(shared, true);
+  } else {
     const tcpInterface = new TCPClientInterface({
       host: "127.0.0.1",
       port: 42424,

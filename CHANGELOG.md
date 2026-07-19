@@ -1,5 +1,49 @@
 # Changelog
 ## [Unreleased]
+### Removed (breaking)
+- Network interfaces are no longer re-exported from the package main entry
+  (`src/index.js`). The eight interface classes (`AutoInterface`,
+  `HttpPostClientInterface`, `HttpPostServerInterface`, `LocalClientInterface`,
+  `TCPClientInterface`, `TCPServerInterface`, `WebSocketClientInterface`,
+  `WebSocketServerInterface`) and the interface-registry helpers
+  (`listInterfaces`, `getInterface`, `getSchema`, `registerInterface`) must now
+  be imported directly by subpath, e.g.
+  `import { TCPClientInterface } from "reticulum-js/src/interfaces/tcp.js"`.
+  **Why:** several interfaces import Node.js builtins (`node:net`,
+  `node:dgram`, `node:http`, `node:crypto`, `node:stream`) at module top level,
+  and ESM eagerly evaluates the whole static import graph — so re-exporting
+  them from the main entry meant `import { Reticulum } from "reticulum-js"`
+  pulled in those builtins and failed in browsers / bundlers without Node
+  shims. The registry was the same: `src/interfaces/registry.js` statically
+  imports every interface, so it is Node-only too. Removing these re-exports
+  makes the core (and everything else in the main entry) browser-safe.
+- `Reticulum.connectToSharedInstance()` has been removed from the `Reticulum`
+  core class, along with its write-only shared-instance role state
+  (`isSharedInstance` / `isConnectedToSharedInstance` /
+  `isStandaloneInstance` / `sharedInstanceInterface`, none of which were read
+  anywhere). It is replaced by a static factory on the interface itself (see
+  *Changed*). The core no longer references the local-client interface or the
+  config reader at all, so importing `Reticulum` pulls in zero Node.js
+  builtins.
+- `src/core/config.js` has been deleted. Its contents — the Python
+  `~/.reticulum/config` discovery helpers (`getSharedInstanceEndpoint`,
+  `loadConfig`, `parseConfigFile`, `resolveConfigDir`, `supportsAbstractAfUnix`,
+  `asBool`/`asInt`, and the `DEFAULT_SHARED_INSTANCE_PORT` / `AF_UNIX_PREFIX`
+  constants) — moved into `src/interfaces/local_client.js`, the only consumer.
+  They are no longer re-exported from the main entry (they need `node:fs` /
+  `node:os` / `node:path`); import them from
+  `reticulum-js/src/interfaces/local_client.js` instead.
+
+### Changed (breaking)
+- Shared-instance connection is now a static factory on the interface:
+  `const shared = await LocalClientInterface.connectToSharedInstance()`
+  (from `reticulum-js/src/interfaces/local_client.js`). It discovers the
+  endpoint from the Python config, connects, and returns the connected
+  `LocalClientInterface` (or `null` if `share_instance = No` / unreachable) —
+  but, unlike the old `Reticulum` method, it does **not** attach the interface
+  to the transport; the caller now does `rns.addInterface(shared, true)`.
+  `examples/*` and the README usage snippet updated to the new pattern.
+
 ### Added
 - Link `Channel`: reliable, bi-directional, size-constrained typed-message
   exchange over an active `Link`, a port of the Python reference

@@ -20,9 +20,10 @@ import {
   fromHex,
   Identity,
   Reticulum,
-  TCPClientInterface,
   toHex,
 } from "../src/index.js";
+import { LocalClientInterface } from "../src/interfaces/local_client.js";
+import { TCPClientInterface } from "../src/interfaces/tcp.js";
 
 // The NomadNet node to fetch from: a 16-byte destination hash (32 hex chars).
 const TARGET_HASH_HEX =
@@ -81,14 +82,15 @@ async function main() {
   // Prefer the local shared instance (auto-discovered from
   // ~/.reticulum/config); fall back to the explicit RNS_HOST:RNS_PORT TCP
   // interface when no shared instance is reachable.
-  const shared = await rns.connectToSharedInstance();
-  if (!shared) {
+  const shared = await LocalClientInterface.connectToSharedInstance();
+  if (shared) {
+    rns.addInterface(shared, true);
+    console.log("Connected via local shared instance");
+  } else {
     const tcp = new TCPClientInterface({ host: RNS_HOST, port: RNS_PORT });
     await tcp.connect();
     rns.addInterface(tcp, true);
     console.log(`Connected to ${RNS_HOST}:${RNS_PORT}`);
-  } else {
-    console.log("Connected via local shared instance");
   }
 
   const myIdentity = await Identity.loadOrGenerate(rns.storage);

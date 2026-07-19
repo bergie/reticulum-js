@@ -1,12 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { DestType } from "../src/core/packet.js";
-import {
-  AutoInterface,
-  Destination,
-  Identity,
-  Reticulum,
-  toHex,
-} from "../src/index.js";
+import { Destination, Identity, Reticulum, toHex } from "../src/index.js";
+import { AutoInterface } from "../src/interfaces/auto.js";
+import { LocalClientInterface } from "../src/interfaces/local_client.js";
 
 // A minimal file-backed storage adapter so the node keeps the same Identity
 // (and therefore the same destination hash) across restarts.
@@ -37,8 +33,10 @@ async function main() {
   // instance socket (auto-discovered from ~/.reticulum/config) instead of
   // opening our own AutoInterface. Falls back to a direct AutoInterface
   // (the original point of this example) when no shared instance is reachable.
-  const shared = await rns.connectToSharedInstance();
-  if (!shared) {
+  const shared = await LocalClientInterface.connectToSharedInstance();
+  if (shared) {
+    rns.addInterface(shared, true);
+  } else {
     const auto = new AutoInterface({ name: "auto" });
     auto.addEventListener("connection", (/** @type {any} */ event) => {
       const peer = event.detail;

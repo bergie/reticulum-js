@@ -3,13 +3,6 @@
  * Zero-dependency, EUPL-1.2 compliant protocol stack.
  */
 
-// Reticulum config discovery (shared-instance port/transport, Python `~/.reticulum/config`).
-export {
-  getSharedInstanceEndpoint,
-  loadConfig,
-  parseConfigFile,
-  resolveConfigDir,
-} from "./core/config.js";
 export { Allow, Destination } from "./core/destination.js";
 // --- 2. Cryptography & Identity ---
 // Everything needed to create, load, and sign data as an RNS node.
@@ -33,24 +26,14 @@ export {
 // The primary client class that wires the transport router, interfaces, and compression together.
 export { Reticulum } from "./core/reticulum.js";
 // --- 3. Network Interfaces ---
-// The physical and virtual pathways into the mesh.
-export { AutoInterface } from "./interfaces/auto.js";
-export { HttpPostClientInterface } from "./interfaces/http.js";
-export { HttpPostServerInterface } from "./interfaces/http_server.js";
-export { LocalClientInterface } from "./interfaces/local_client.js";
-// Interface discovery: enumerate available interfaces and their configuration
-// schemas for dynamically-generated setup UIs.
-export {
-  getInterface,
-  getSchema,
-  listInterfaces,
-  registerInterface,
-} from "./interfaces/registry.js";
-export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
-export {
-  WebSocketClientInterface,
-  WebSocketServerInterface,
-} from "./interfaces/websocket.js";
+// Interface classes are NOT re-exported here: several of them pull in
+// Node.js builtins (`node:net`, `node:dgram`, `node:http`, ...) at module
+// top level, and ESM eagerly evaluates the whole static import graph — so
+// re-exporting them here would make `import { Reticulum } from "reticulum-js"`
+// fail in browsers. Import the interface you need directly by subpath, e.g.:
+//   import { TCPClientInterface } from "reticulum-js/src/interfaces/tcp.js";
+// The interface registry (`src/interfaces/registry.js`) is likewise Node-only
+// (it imports every interface) and must be imported by subpath as well.
 export * as LXMFConstants from "./lxmf/constants.js";
 // --- 5. LXMF (Lightweight Extensible Message Format) ---
 // Asynchronous, store-and-forward messaging primitives.

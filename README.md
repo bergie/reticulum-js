@@ -62,18 +62,21 @@ import {
   LXMessage,
   LXMRouter,
   Reticulum,
-  TCPClientInterface,
   toHex,
 } from "reticulum-js";
+import { TCPClientInterface } from "reticulum-js/src/interfaces/tcp.js";
+import { LocalClientInterface } from "reticulum-js/src/interfaces/local_client.js";
 
-// 1. Start the engine and attach to a local shared instance (the `rnsd`
-//    daemon is auto-discovered from ~/.reticulum/config, so no interface setup
-//    is needed when one is running). Falls back to a direct TCP interface
-//    when no shared instance is available.
+// 1. Start the engine and configure interfaces
 const rns = new Reticulum();
 
-const shared = await rns.connectToSharedInstance();
-if (!shared) {
+const shared = await LocalClientInterface.connectToSharedInstance();
+if (shared) {
+  // Shared `rnsd` daemon is auto-discovered from ~/.reticulum/config, so no
+  // interface setup is needed when one is running).
+  rns.addInterface(shared, true);
+} else {
+  // Fall back to a direct TCP interface when no shared instance is available.
   const tcp = new TCPClientInterface({ host: "127.0.0.1", port: 42424 });
   await tcp.connect();
   rns.addInterface(tcp, true);
@@ -111,6 +114,39 @@ await lxmf.send(outgoing, identity, null);
 
 A complete runnable version (with identity persistence and echo replies) lives
 in [`examples/lxmf_echobot.js`](examples/lxmf_echobot.js).
+
+## Interfaces
+
+Network interfaces are **not** re-exported from the package main entry —
+import the one you need directly by subpath:
+
+```js
+import { TCPClientInterface } from "reticulum-js/src/interfaces/tcp.js";
+import { WebSocketClientInterface } from "reticulum-js/src/interfaces/websocket.js";
+```
+
+| Interface subpath (`src/interfaces/...`) | Browser-safe | Node.js runtime deps |
+| --- | --- | --- |
+| `base.js` | ✅ | none |
+| `http.js` (`HttpPostClientInterface`) | ✅ | none (uses `fetch`) |
+| `websocket.js` (`WebSocketClientInterface`) | ✅ | none (Web APIs) |
+| `auto.js` (`AutoInterface`) | ❌ | `node:dgram` |
+| `tcp.js` (`TCPClientInterface` / `TCPServerInterface`) | ❌ | `node:net`, `node:stream` |
+| `local_client.js` (`LocalClientInterface`) | ❌ | `node:net`, `node:stream`, `node:fs`, `node:os`, `node:path` |
+| `http_server.js` (`HttpPostServerInterface`) | ❌ | `node:crypto`, `node:http` |
+
+`LocalClientInterface` also hosts the shared-instance endpoint discovery
+(`getSharedInstanceEndpoint` / `loadConfig` / `parseConfigFile` /
+`resolveConfigDir`, ported from the Python `~/.reticulum/config`) and a static
+factory that discovers + connects in one call, returning a connected interface
+(or `null` if `share_instance = No` / unreachable) for the caller to attach:
+
+```js
+import { LocalClientInterface } from "reticulum-js/src/interfaces/local_client.js";
+
+const shared = await LocalClientInterface.connectToSharedInstance();
+if (shared) rns.addInterface(shared, true);
+```
 
 ### Paper messaging
 
