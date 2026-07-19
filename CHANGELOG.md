@@ -22,8 +22,22 @@
   zero-latency proof race Python avoids via real network latency. Public API
   (`Channel`, `MessageBase`, `Envelope`, `ChannelException`, `CEType`,
   `MessageState`, `SystemMessageTypes`, `LinkChannelOutlet`) exported from
-  `src/index.js`. The Web-Stream buffer layer (`StreamDataMessage`) is still
-  pending.
+  `src/index.js`.
+- Link Channel **Web Stream buffer layer**: byte streams over a `Channel`,
+  the JS analog of Python `RNS/Buffer.py`. `StreamDataMessage` (system
+  `MSGTYPE 0xff00`, wire `header(2) ‖ data` packing `stream_id` / `compressed` /
+  `eof`) frames a continuous byte flow, multiplexed by `stream_id`. Obtain a
+  stream from a channel: `channel.openReadable(streamId)` →
+  `ReadableStream<Uint8Array>`, `channel.openWritable(streamId)` →
+  `WritableStream<Uint8Array>`, `channel.openDuplex(rxId, txId)` →
+  `{ readable, writable }` (also exported as standalone `openReadable` /
+  `openWritable` / `openDuplex`). The writable side chunks writes to the
+  per-frame budget and backpressures on the channel send window; `close()` sends
+  a final `eof` frame. Compression reuses the resource-layer bz2 injection
+  (`link.bz2`, or an `options.bz2` override): the writer compresses a frame
+  when it actually shrinks (segment-size search mirroring Python); the reader
+  decompresses, erroring the stream if a compressed frame arrives with no bz2
+  available.
 - KISS stream framing (`src/transport/kiss-framer.js`): `createKissFramerStream`,
   `createKissUnframerStream`, `kissEscape`, `kissUnescape`, and `kissFrame`. The
   unframer is a byte-for-byte port of the Python reference

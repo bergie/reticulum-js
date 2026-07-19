@@ -114,6 +114,84 @@ export class MessageBase {
 const ENVELOPE_HEADER_SIZE = 6;
 
 /**
+ * System message carrying one framed chunk of a byte stream over a Channel
+ * (`RNS/Buffer.py` `StreamDataMessage`, MSGTYPE 0xff00). Wire body:
+ *
+ *   `header(2, BE) || data`
+ *
+ * where the header packs `stream_id` (bits 0–13, mask 0x3fff), the `compressed`
+ * flag (bit 14, 0x4000) and the `eof` flag (bit 15, 0x8000). Driven by the Web
+ * Stream buffer layer (`./buffer.js`).
+ */
+export class StreamDataMessage extends MessageBase {
+  /** System-reserved message type for stream data. */
+  static MSGTYPE = SystemMessageTypes.SMT_STREAM_DATA;
+
+  /** Stream-header size in bytes. */
+  static HEADER_SIZE = 2;
+  /** Total per-frame overhead: stream header (2) + channel envelope (6). */
+  static OVERHEAD = StreamDataMessage.HEADER_SIZE + ENVELOPE_HEADER_SIZE;
+
+  constructor() {
+    super();
+    /** Local (reader) or remote (writer) stream id, 0–0x3fff. */
+    this.streamId = 0;
+    /** Frame payload (possibly compressed). @type {Uint8Array} */
+    this.data = new Uint8Array(0);
+    /** Last frame of the stream. */
+    this.eof = false;
+    /** `data` is bz2-compressed. */
+    this.compressed = false;
+  }
+
+  pack() {
+    const header =
+      (this.streamId & 0x3fff) |
+      (this.eof ? 0x8000 : 0) |
+      (this.compressed ? 0x4000 : 0);
+    const buf = new Uint8Array(
+      StreamDataMessage.HEADER_SIZE + this.data.length,
+    );
+    const dv = new DataView(buf.buffer);
+    dv.setUint16(0, header, false);
+    buf.set(this.data, StreamDataMessage.HEADER_SIZE);
+    return buf;
+  }
+
+  /**
+   * @param {Uint8Array} raw
+   */
+  unpack(raw) {
+    const dv = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+    const header = dv.getUint16(0, false);
+    this.compressed = (header & 0x4000) !== 0;
+    this.eof = (header & 0x8000) !== 0;
+    this.streamId = header & 0x3fff;
+    this.data = raw.subarray(StreamDataMessage.HEADER_SIZE);
+    // bz2 decompression (if needed) is done by the reader, which has access to
+    // the injected bz2 module; this class stays pure.
+  }
+}
+
+/**
+ * Stream-adapter implementations, registered by `./buffer.js` so that
+ * {@link Channel#openReadable} / {@link Channel#openWritable} /
+ * {@link Channel#openDuplex} work without a static module cycle (channel.js
+ * never imports buffer.js).
+ * @type {{ openReadable: any, openWritable: any, openDuplex: any } | null}
+ */
+let _streamAdapters = null;
+
+/**
+ * Internal: called by `./buffer.js` on import to wire up the Web Stream
+ * adapters. Not part of the public API.
+ * @param {{ openReadable: any, openWritable: any, openDuplex: any }} adapters
+ */
+export function _setStreamAdapters(adapters) {
+  _streamAdapters = adapters;
+}
+
+/**
  * Internal wrapper that carries a message over a channel and tracks its state.
  *
  * On the wire: `msgtype(2) || sequence(2) || length(2) || data`. The `length`
@@ -814,6 +892,80 @@ export class Channel {
   get mdu() {
     const mdu = this._outlet.mdu - ENVELOPE_HEADER_SIZE;
     return mdu > 0xffff ? 0xffff : mdu;
+  }
+
+  /**
+   * The link this channel runs over, if any (the bz2 module injected for
+   * Resources lives here). `null` for non-link outlets.
+   * @private
+   */
+  get _link() {
+    return /** @type {any} */ (this._outlet).link ?? null;
+  }
+
+  /**
+   * Open a `ReadableStream<Uint8Array>` that receives byte-stream frames
+   * addressed to `streamId` (RNS/Buffer.py `create_reader`). Registers
+   * `StreamDataMessage` as a system type and a per-stream handler; the stream
+   * closes once an `eof` frame has been delivered.
+   *
+   * Compression: a bz2 module injected on the link (`link.bz2`, the same field
+   * Resources use) decompresses inbound frames; without it a compressed frame
+   * errors the stream.
+   *
+   * @param {number} streamId - local stream id to receive at (0–0x3fff).
+   * @param {{ bz2?: any }} [options] - override the link's injected bz2.
+   * @returns {ReadableStream<Uint8Array>}
+   */
+  openReadable(streamId, options) {
+    if (!_streamAdapters) {
+      throw new Error("Stream adapters not loaded; import the buffer module.");
+    }
+    return _streamAdapters.openReadable(this, streamId, options);
+  }
+
+  /**
+   * Open a `WritableStream<Uint8Array>` that sends byte-stream frames to the
+   * peer's `streamId` (RNS/Buffer.py `create_writer`). Each written chunk is
+   * split into `StreamDataMessage`-sized frames; backpressure follows the
+   * channel send window. `close()` sends a final `eof` frame.
+   *
+   * Compression: when a bz2 module is available (via `options.bz2` or
+   * `link.bz2`), each frame is compressed when it actually shrinks (mirroring
+   * the Python writer's segment-size search).
+   *
+   * @param {number} streamId - remote stream id to send to (0–0x3fff).
+   * @param {{ bz2?: any }} [options] - override the link's injected bz2.
+   * @returns {WritableStream<Uint8Array>}
+   */
+  openWritable(streamId, options) {
+    if (!_streamAdapters) {
+      throw new Error("Stream adapters not loaded; import the buffer module.");
+    }
+    return _streamAdapters.openWritable(this, streamId, options);
+  }
+
+  /**
+   * Open a duplex `{ readable, writable }` pair over this channel
+   * (RNS/Buffer.py `create_bidirectional_buffer`): `readable` receives
+   * `receiveStreamId`, `writable` sends `sendStreamId`. See
+   * {@link openReadable} / {@link openWritable} for compression / backpressure.
+   *
+   * @param {number} receiveStreamId - local stream id to receive at.
+   * @param {number} sendStreamId - remote stream id to send to.
+   * @param {{ bz2?: any }} [options] - override the link's injected bz2.
+   * @returns {{ readable: ReadableStream<Uint8Array>, writable: WritableStream<Uint8Array> }}
+   */
+  openDuplex(receiveStreamId, sendStreamId, options) {
+    if (!_streamAdapters) {
+      throw new Error("Stream adapters not loaded; import the buffer module.");
+    }
+    return _streamAdapters.openDuplex(
+      this,
+      receiveStreamId,
+      sendStreamId,
+      options,
+    );
   }
 }
 
