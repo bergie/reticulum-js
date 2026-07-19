@@ -11,6 +11,7 @@ Reticulum gives several building blocks for enabling applications and users to c
 * **LXMF Messages:**: one-to-one structured payloads with store-and-forward capability. Think instant messaging, email, telemetry transfer
 * **Request/Response**: calls to services, with optional request payloads and identification. Think `fetch`
 * **Resources**: large chunkable file transport
+* **Channels**: bidirectional data channels with a peer
 
 On top of these, Reticulum handles peer discovery (via the Announce mechanism) and encryption and content signing (via Identities).
 
