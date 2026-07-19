@@ -102,14 +102,19 @@ test("getSharedInstanceEndpoint returns defaults for an empty config", () => {
   }
 });
 
+// Pins `shared_instance_type = tcp` so the resolved transport is TCP on every
+// platform (Linux would otherwise pick the abstract AF_UNIX socket, leaving
+// `port` unset). Mirrors the "resolves TCP" sibling test and keeps `port`
+// assertable on both macOS and Linux CI.
 test("getSharedInstanceEndpoint respects share_instance = No", () => {
   const dir = mkdtempSync(join(tmpdir(), "rns-cfg-"));
   writeFileSync(
     join(dir, "config"),
-    "[reticulum]\nshare_instance = No\nshared_instance_port = 4242\n",
+    "[reticulum]\nshare_instance = No\nshared_instance_port = 4242\nshared_instance_type = tcp\n",
   );
   const endpoint = getSharedInstanceEndpoint({ configDir: dir });
   assert.strictEqual(endpoint.shareInstance, false);
+  assert.strictEqual(endpoint.transport, "tcp");
   assert.strictEqual(endpoint.port, 4242);
 });
 
