@@ -1,5 +1,5 @@
 # Changelog
-## [Unreleased]
+## [0.3.0] - 2026-07-18
 ### Removed (breaking)
 - Network interfaces are no longer re-exported from the package main entry
   (`src/index.js`). The eight interface classes (`AutoInterface`,
