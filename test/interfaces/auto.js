@@ -793,3 +793,46 @@ test("connect starts the peer-jobs loop and disconnect stops it", async (t) => {
   await iface.disconnect();
   assert.strictEqual(iface._peerJobsTimer, null, "peer-jobs loop stopped");
 });
+
+test("connect skips an interface whose data port is already held (no crash)", async (t) => {
+  const loopback = findLoopback();
+  if (!loopback) {
+    t.skip("no loopback fe80::1 available on this host");
+    return;
+  }
+  const discoveryPort = 39237;
+  const dataPort = 39497;
+  // Pre-hold the data port on the loopback link-local so AutoInterface's bind
+  // fails mid-connect (mirrors running alongside a local rnsd on the same link).
+  const squatter = dgram.createSocket({ type: "udp6" });
+  await bindUdp(squatter, dataPort, "fe80::1%lo0");
+  try {
+    const iface = new AutoInterface({
+      name: "auto-skip",
+      groupId: "reticulum",
+      devices: [loopback.name],
+      discoveryPort,
+      dataPort,
+      announceInterval: 5,
+      peerJobInterval: 60,
+    });
+    // Must NOT throw despite the bind conflict.
+    await iface.connect();
+    assert.strictEqual(iface.online, true, "came online despite the conflict");
+    assert.ok(
+      !iface.adoptedInterfaces[loopback.name],
+      "contended interface was skipped",
+    );
+    assert.ok(
+      !iface.dataSockets[loopback.name],
+      "no leaked data socket for the skipped interface",
+    );
+    assert.ok(
+      !iface.multicastSockets[loopback.name],
+      "no leaked discovery sockets for the skipped interface",
+    );
+    await iface.disconnect();
+  } finally {
+    await new Promise((res) => squatter.close(() => res()));
+  }
+});

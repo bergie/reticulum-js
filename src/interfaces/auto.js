@@ -372,8 +372,9 @@ export class AutoInterface extends Interface {
     /** @type {string | null} */
     this.mcastDiscoveryAddress = null;
 
-    /** @type {Set<ReturnType<typeof setInterval>>} */
-    this._announceTimers = new Set();
+    /** Per-interface announce-loop timers, keyed by ifname. */
+    /** @type {Record<string, ReturnType<typeof setInterval>>} */
+    this._announceTimers = {};
     /** Handle for the periodic peer-jobs loop (expiry, reverse peering, rebind, watchdog). */
     /** @type {ReturnType<typeof setInterval> | null} */
     this._peerJobsTimer = null;
@@ -481,8 +482,22 @@ export class AutoInterface extends Interface {
         );
         continue;
       }
-      await this._openDiscoverySockets(ifname, linkLocalAddr);
-      await this._openDataSocket(ifname, linkLocalAddr);
+      try {
+        await this._openDiscoverySockets(ifname, linkLocalAddr);
+        await this._openDataSocket(ifname, linkLocalAddr);
+      } catch (/** @type {any} */ e) {
+        // Mirrors the Python reference: a per-interface socket failure (e.g.
+        // EADDRINUSE because another Reticulum instance — like a local rnsd
+        // — already holds the discovery/data port on this link-local address)
+        // skips just this interface rather than aborting the whole interface.
+        log(
+          "AutoInterface",
+          `${this} could not configure ${ifname}, skipping it: ${e.message}`,
+          LogLevel.ERROR,
+        );
+        await this._abandonInterface(ifname, linkLocalAddr);
+        continue;
+      }
       suitable += 1;
     }
 
@@ -958,12 +973,45 @@ export class AutoInterface extends Interface {
    * @private
    */
   _startAnnounceLoop(ifname) {
+    if (this._announceTimers[ifname])
+      clearInterval(this._announceTimers[ifname]);
     const timer = setInterval(
       () => this._peerAnnounce(ifname).catch((e) => this._announceError(e)),
       this.announceInterval * 1000,
     );
-    this._announceTimers.add(timer);
+    this._announceTimers[ifname] = timer;
     this._peerAnnounce(ifname).catch((e) => this._announceError(e));
+  }
+
+  /**
+   * Tears down everything opened for one interface and drops its adoption, used
+   * when a later socket bind fails mid-`connect` (e.g. EADDRINUSE because
+   * another Reticulum instance holds the port on this link). Mirrors the
+   * Python reference's per-interface skip on configuration failure.
+   * @param {string} ifname
+   * @param {string} linkLocalAddr
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _abandonInterface(ifname, linkLocalAddr) {
+    if (this._announceTimers[ifname]) {
+      clearInterval(this._announceTimers[ifname]);
+      delete this._announceTimers[ifname];
+    }
+    const closers = [
+      this.multicastSockets[ifname],
+      this.unicastSockets[ifname],
+      this.dataSockets[ifname],
+    ]
+      .filter((s) => s)
+      .map((s) => this._close(s));
+    delete this.multicastSockets[ifname];
+    delete this.unicastSockets[ifname];
+    delete this.dataSockets[ifname];
+    delete this.adoptedInterfaces[ifname];
+    const llIdx = this.linkLocalAddresses.indexOf(linkLocalAddr);
+    if (llIdx >= 0) this.linkLocalAddresses.splice(llIdx, 1);
+    await Promise.all(closers);
   }
 
   /**
@@ -1148,8 +1196,9 @@ export class AutoInterface extends Interface {
       clearInterval(this._peerJobsTimer);
       this._peerJobsTimer = null;
     }
-    for (const timer of this._announceTimers) clearInterval(timer);
-    this._announceTimers.clear();
+    for (const timer of Object.values(this._announceTimers))
+      clearInterval(timer);
+    this._announceTimers = {};
 
     // Tear down spawned peers first: disconnecting them dispatches "closed",
     // which an attached transport turns into removeInterface().
