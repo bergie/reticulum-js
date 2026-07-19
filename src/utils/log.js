@@ -13,7 +13,7 @@ export const LogLevel = {
 };
 
 // TODO: Read from env
-const LOG_LEVEL = LogLevel.DEBUG;
+const LOG_LEVEL = LogLevel.LOG;
 
 /**
  * @param {string} module
