@@ -51,6 +51,19 @@
   router's SQLite complexity is shed entirely. Deliver-once semantics and a
   configurable idle-peer reaper. Registered as `http-server`.
 
+### Fixed
+- `LXMRouter.submitToPropagationNode` (and the large-message branch of
+  `send`) now await the outgoing Resource transfer reaching COMPLETE before
+  resolving. Previously they called `Resource.advertise()` and returned
+  immediately, reporting success before any message bytes had crossed the
+  wire — the propagation node only received the advertisement, never pulled
+  the `lxmf_data` via `RESOURCE_REQ`, so the message was silently lost when
+  the sender process wound down or the link dropped (and the recipient had
+  nothing to sync). Direct/opportunistic delivery was unaffected because
+  those paths send a single packet that completes inside the `await`. The
+  new wait races the transfer against link closure and a 60s timeout, since
+  the JS Resource has no sender-side watchdog yet.
+
 ### Changed
 - Client interface event semantics: `closed` is now reserved for terminal
   states (deliberate `disconnect()`, reconnect exhaustion, or a non-initiator
