@@ -57,13 +57,20 @@ async function startSender() {
     storageAdapter: new FileStorageAdapter("./sender-identity.key"),
   });
 
-  // Connect to the local Reticulum mesh daemon via TCP
-  const tcpInterface = new TCPClientInterface({
-    host: "127.0.0.1",
-    port: 42424,
-  });
-  await tcpInterface.connect();
-  rns.addInterface(tcpInterface, true);
+  // Prefer the local shared instance (a running rnsd, or our own daemon): it
+  // already owns the mesh interfaces, so we attach to it over the shared-
+  // instance socket (auto-discovered from ~/.reticulum/config) instead of
+  // opening our own. Falls back to a direct TCP interface when no shared
+  // instance is reachable.
+  const shared = await rns.connectToSharedInstance();
+  if (!shared) {
+    const tcpInterface = new TCPClientInterface({
+      host: "127.0.0.1",
+      port: 42424,
+    });
+    await tcpInterface.connect();
+    rns.addInterface(tcpInterface, true);
+  }
 
   // Load or generate the Sender's Ed25519 Identity
   const senderIdentity = await Identity.loadOrGenerate(rns.storage);

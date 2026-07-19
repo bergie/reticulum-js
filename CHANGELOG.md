@@ -1,4 +1,41 @@
 # Changelog
+## [Unreleased]
+### Added
+- Shared-instance client support: a local Reticulum program can now attach to
+  a running shared instance — a Python `rnsd` or (future) our own daemon — over
+  the shared-instance loopback socket, sharing its interfaces instead of
+  opening its own. Mirrors the client side of the Python reference
+  `RNS.Interfaces.LocalInterface.LocalClientInterface` and
+  `Reticulum.__start_local_interface`. `Reticulum.connectToSharedInstance()`
+  auto-discovers the endpoint from `~/.reticulum/config`
+  (`shared_instance_port`, `shared_instance_type`, `instance_name`) and connects
+  over standard HDLC framing — byte-for-byte identical to TCP/RNode interfaces,
+  so framing parity with the Python daemon is exact. Sets
+  `isConnectedToSharedInstance` and returns the connected interface, or `null`
+  if `share_instance = No` / nothing is reachable (the background reconnect is
+  cancelled, no leak), so a caller can fall back to a standalone interface.
+  Verified live against a running Python `rnsd`: outbound announces and inbound
+  mesh announces flow through the daemon's interfaces.
+- `LocalClientInterface` (`src/interfaces/local_client.js`): localhost-pinned
+  HDLC-framed client, reusing the base `Interface` reconnect machinery and the
+  shared framer streams, with an optional Unix domain socket / named pipe via
+  `socketPath` for Linux abstract-AF_UNIX parity. Default `reconnectWait` 8s
+  (Python `LocalClientInterface.RECONNECT_WAIT`). Registered as `local-client`.
+  Doubles as the daemon-side per-connection wrapper (adopted `socket`, initiator
+  `false`, never reconnects) for the future `LocalServerInterface`.
+- Reticulum config discovery (`src/core/config.js`): `parseConfigFile`,
+  `resolveConfigDir`, `loadConfig`, `getSharedInstanceEndpoint` read the
+  Python `~/.reticulum/config` (configobj/INI format) with faithful value
+  coercion (`as_bool`/`as_int`) and Python config-dir resolution. Scoped to the
+  `[reticulum]` shared-instance fields for now; general interface synthesis is
+  deferred.
+
+### Changed
+- All examples (`auto_interface`, `lxmf_echobot`, `lxmf_sender`,
+  `nomadnet_fetch`) now prefer the local shared instance via
+  `connectToSharedInstance()` and fall back to their previous standalone
+  interface when no shared instance is reachable.
+
 ## [0.2.0] - 2026-07-18
 ### Added
 - `AutoInterface`: zero-config IPv6-multicast local-network (LAN/Wi-Fi)

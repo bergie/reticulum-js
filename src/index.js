@@ -3,6 +3,13 @@
  * Zero-dependency, EUPL-1.2 compliant protocol stack.
  */
 
+// Reticulum config discovery (shared-instance port/transport, Python `~/.reticulum/config`).
+export {
+  getSharedInstanceEndpoint,
+  loadConfig,
+  parseConfigFile,
+  resolveConfigDir,
+} from "./core/config.js";
 export { Allow, Destination } from "./core/destination.js";
 // --- 2. Cryptography & Identity ---
 // Everything needed to create, load, and sign data as an RNS node.
@@ -30,6 +37,7 @@ export { Reticulum } from "./core/reticulum.js";
 export { AutoInterface } from "./interfaces/auto.js";
 export { HttpPostClientInterface } from "./interfaces/http.js";
 export { HttpPostServerInterface } from "./interfaces/http_server.js";
+export { LocalClientInterface } from "./interfaces/local_client.js";
 // Interface discovery: enumerate available interfaces and their configuration
 // schemas for dynamically-generated setup UIs.
 export {

@@ -78,10 +78,18 @@ async function main() {
     storageAdapter: new FileStorageAdapter("./nomadnet-fetch-identity.key"),
   });
 
-  const tcp = new TCPClientInterface({ host: RNS_HOST, port: RNS_PORT });
-  await tcp.connect();
-  rns.addInterface(tcp, true);
-  console.log(`Connected to ${RNS_HOST}:${RNS_PORT}`);
+  // Prefer the local shared instance (auto-discovered from
+  // ~/.reticulum/config); fall back to the explicit RNS_HOST:RNS_PORT TCP
+  // interface when no shared instance is reachable.
+  const shared = await rns.connectToSharedInstance();
+  if (!shared) {
+    const tcp = new TCPClientInterface({ host: RNS_HOST, port: RNS_PORT });
+    await tcp.connect();
+    rns.addInterface(tcp, true);
+    console.log(`Connected to ${RNS_HOST}:${RNS_PORT}`);
+  } else {
+    console.log("Connected via local shared instance");
+  }
 
   const myIdentity = await Identity.loadOrGenerate(rns.storage);
   console.log(`Our identity hash: ${toHex(myIdentity.identityHash)}`);

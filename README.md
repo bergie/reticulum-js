@@ -49,9 +49,10 @@ npm install reticulum-js
 
 ## Usage
 
-The quickest way to use Reticulum.js is to connect to a Reticulum transport
-node (for example, the local `rnsd` daemon over TCP), set up an identity, and
-exchange [LXMF](https://reticulum.network/manual/lxmf.html) messages:
+The quickest way to use Reticulum.js is to attach to a local shared Reticulum
+instance (for example, the `rnsd` daemon already running on your machine),
+set up an identity, and exchange [LXMF](https://reticulum.network/manual/lxmf.html)
+messages:
 
 ```js
 import {
@@ -64,12 +65,18 @@ import {
   toHex,
 } from "reticulum-js";
 
-// 1. Start the engine and connect to a transport node over TCP
+// 1. Start the engine and attach to a local shared instance (the `rnsd`
+//    daemon is auto-discovered from ~/.reticulum/config, so no interface setup
+//    is needed when one is running). Falls back to a direct TCP interface
+//    when no shared instance is available.
 const rns = new Reticulum();
 
-const tcp = new TCPClientInterface({ host: "127.0.0.1", port: 42424 });
-await tcp.connect();
-rns.addInterface(tcp, true);
+const shared = await rns.connectToSharedInstance();
+if (!shared) {
+  const tcp = new TCPClientInterface({ host: "127.0.0.1", port: 42424 });
+  await tcp.connect();
+  rns.addInterface(tcp, true);
+}
 
 // 2. Create an identity for this peer (persist it between runs in real apps)
 const identity = await Identity.generate();

@@ -9,6 +9,7 @@ import { AutoInterface } from "./auto.js";
 import { Interface } from "./base.js";
 import { HttpPostClientInterface } from "./http.js";
 import { HttpPostServerInterface } from "./http_server.js";
+import { LocalClientInterface } from "./local_client.js";
 import { TCPClientInterface, TCPServerInterface } from "./tcp.js";
 import {
   WebSocketClientInterface,
@@ -37,6 +38,7 @@ const registry = new Map();
 registry.set("auto", AutoInterface);
 registry.set("http-client", HttpPostClientInterface);
 registry.set("http-server", HttpPostServerInterface);
+registry.set("local-client", LocalClientInterface);
 registry.set("tcp-client", TCPClientInterface);
 registry.set("tcp-server", TCPServerInterface);
 registry.set("ws-client", WebSocketClientInterface);
