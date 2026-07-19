@@ -7,6 +7,7 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { Resource } from "../core/resource.js";
+import { LinkStatus } from "../transport/link.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import {
@@ -32,6 +33,16 @@ import {
 } from "./propagation.js";
 import { PropagationNode } from "./propagation_node.js";
 import { generateStamp, WORKBLOCK_EXPAND_ROUNDS_PN } from "./stamper.js";
+
+/**
+ * Upper bound (ms) for awaiting an outgoing Resource transfer to reach
+ * COMPLETE. `Resource.advertise()` only sends the advertisement — the actual
+ * data is pulled by the receiver via RESOURCE_REQ — so callers MUST await the
+ * transfer before reporting success, otherwise the message is lost if the
+ * link comes down (or the process exits) first. The JS Resource has no
+ * sender-side watchdog yet, so this bounds the wait on a dead link.
+ */
+const RESOURCE_TRANSFER_TIMEOUT_MS = 60_000;
 
 /**
  * Handles LXMF routing and message processing.
@@ -456,8 +467,62 @@ export class LXMRouter extends EventTarget {
       bz2: link.bz2,
     });
     await resource.advertise();
+    // advertise() only sends the advertisement; the node pulls the actual
+    // lxmf_data afterwards via RESOURCE_REQ. Wait for the transfer to reach
+    // COMPLETE before reporting success — otherwise the message is never
+    // stored if the link (or the process) goes away first.
+    await this._awaitOutgoingResource(resource, link);
 
     return { transientId, stampCost };
+  }
+
+  /**
+   * Awaits an outgoing Resource transfer reaching COMPLETE.
+   *
+   * `Resource.advertise()` only emits the RESOURCE_ADV; the receiver then
+   * drives the transfer by sending RESOURCE_REQ, and the sender validates a
+   * final RESOURCE_PRF. A caller that returns straight after `advertise()`
+   * (as propagation submit and large DIRECT delivery previously did) reports
+   * success before any message bytes have crossed the wire, so the message is
+   * silently lost when the link is torn down or the process exits before the
+   * receiver pulls the parts.
+   *
+   * Resolves once the transfer is COMPLETE. Rejects if the Resource fails, if
+   * the carrier Link closes first, or if the wait exceeds
+   * {@link RESOURCE_TRANSFER_TIMEOUT_MS} (the JS Resource has no sender-side
+   * watchdog yet, so this bounds the wait on a dead link).
+   *
+   * @param {Resource} resource
+   * @param {import("../transport/link.js").Link} link
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _awaitOutgoingResource(resource, link) {
+    let cleanup = () => {};
+    const completion = resource.whenComplete();
+    const guard = new Promise((_, reject) => {
+      const onStatus = (/** @type {any} */ ev) => {
+        if (
+          ev.detail.status === LinkStatus.CLOSED &&
+          resource.status !== /* ResourceStatus.COMPLETE */ 6
+        ) {
+          reject(new Error("Link closed before the LXMF transfer completed"));
+        }
+      };
+      const timer = setTimeout(() => {
+        reject(new Error("LXMF transfer timed out waiting for completion"));
+      }, RESOURCE_TRANSFER_TIMEOUT_MS);
+      cleanup = () => {
+        clearTimeout(timer);
+        link.removeEventListener("statuschange", onStatus);
+      };
+      link.addEventListener("statuschange", onStatus);
+    });
+    try {
+      await Promise.race([completion.then(() => {}), guard]);
+    } finally {
+      cleanup();
+    }
   }
 
   /**
@@ -990,6 +1055,9 @@ export class LXMRouter extends EventTarget {
             bz2: link.bz2,
           });
           await resource.advertise();
+          // Wait for the full DIRECT body to be transferred before returning;
+          // advertise() alone only signals that a Resource is available.
+          await this._awaitOutgoingResource(resource, link);
           return;
         }
       }
