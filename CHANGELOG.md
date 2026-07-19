@@ -1,5 +1,5 @@
 # Changelog
-## [unreleased]
+## [0.2.0] - 2026-07-18
 ### Added
 - `AutoInterface`: zero-config IPv6-multicast local-network (LAN/Wi-Fi)
   peering, a port of the Python `RNS/Interfaces/AutoInterface.py`. Nodes on
