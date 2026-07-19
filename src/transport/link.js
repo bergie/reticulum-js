@@ -25,6 +25,7 @@ import { Token } from "../crypto/token.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import { Channel, LinkChannelOutlet } from "./channel.js";
 
 /** @enum {number} */
 export const LinkStatus = {
@@ -228,6 +229,15 @@ export class Link extends EventTarget {
   maxResourceSize = undefined;
 
   /**
+   * Lazy `Channel` for reliable typed message exchange over this link
+   * (`RNS/Link.py` `get_channel`). Created on first {@link getChannel} call or
+   * on the first inbound CHANNEL packet; shut down when the link closes.
+   * @type {Channel | null}
+   * @private
+   */
+  _channel = null;
+
+  /**
    * Low-level constructor. Prefer the `Link.initiate` / `Link.accept` factories.
    *
    * @param {object} opts
@@ -331,11 +341,32 @@ export class Link extends EventTarget {
         this._startWatchdog();
       } else if (newStatus === LinkStatus.CLOSED) {
         this._stopWatchdog();
+        // Tear down the Channel first so its outlet timers / proof listener
+        // are cleaned up before the link object becomes inert.
+        this._channel?._shutdown();
         if (this.transport) this.transport.removeLink(this.linkId);
         // §11.5: fail any in-flight REQUESTs so their Promises don't dangle.
         this._rejectPendingRequests("Link closed before RESPONSE arrived");
       }
     }
+  }
+
+  /**
+   * The reliable typed-message `Channel` for this link (`RNS/Link.py`
+   * `get_channel`). Lazily created on first access (or on the first inbound
+   * CHANNEL packet). Returns the same instance for the lifetime of the link.
+   *
+   * Register message classes with `channel.registerMessageType(...)` and
+   * receive with `channel.addMessageHandler(cb)`; send with
+   * `channel.send(message)`.
+   *
+   * @returns {Channel}
+   */
+  getChannel() {
+    if (this._channel === null) {
+      this._channel = new Channel(new LinkChannelOutlet(this));
+    }
+    return this._channel;
   }
 
   /**
@@ -1849,6 +1880,15 @@ export class Link extends EventTarget {
       case ContextType.LINKIDENTIFY:
         await this._handleIdentify(decrypted);
         break;
+
+      case ContextType.CHANNEL: {
+        // Reliable typed-message layer (RNS/Channel.py). Prove before delivery
+        // (mirrors Python: `packet.prove()` then `_channel._receive(plaintext)`),
+        // then hand the plaintext envelope to the channel for ordering/dispatch.
+        if (this.transport) await this._provePacket(packet);
+        this.getChannel()._receive(decrypted.payload);
+        break;
+      }
 
       default:
         log(

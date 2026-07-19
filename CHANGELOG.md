@@ -1,6 +1,29 @@
 # Changelog
 ## [Unreleased]
 ### Added
+- Link `Channel`: reliable, bi-directional, size-constrained typed-message
+  exchange over an active `Link`, a port of the Python reference
+  `RNS/Channel.py`. A `Channel` lets two peers exchange `MessageBase`
+  subclasses (each declaring a unique `MSGTYPE < 0xf000`) for as long as the
+  link is open, with automatic retries, an adaptive send window, and
+  in-order / dedup'd delivery. Each message rides in an `Envelope`
+  (`msgtype ‖ sequence ‖ length ‖ data`, big-endian) inside a Token-encrypted
+  `context = CHANNEL (0x0e)` DATA packet; the receiver re-proves every
+  CHANNEL packet before handing the plaintext to the channel. Obtain a
+  channel with `link.getChannel()`, register types with
+  `channel.registerMessageType(Class)`, receive with
+  `channel.addMessageHandler(cb)`, and send with `channel.send(msg)`. The
+  adaptive-window constants (`WINDOW*`, `RTT*`, `FAST_RATE_THRESHOLD`) match
+  Python verbatim, so pacing/retry behaviour is compatible. Two JS-specific
+  adaptations: Python's ring locks become synchronous critical sections + a
+  send Promise chain, and the per-packet `PacketReceipt` callbacks become a
+  `proof`-event listener + `setTimeout` (our link has no per-packet receipt
+  object); the latter needed an `_earlyDelivered` stash to handle the
+  zero-latency proof race Python avoids via real network latency. Public API
+  (`Channel`, `MessageBase`, `Envelope`, `ChannelException`, `CEType`,
+  `MessageState`, `SystemMessageTypes`, `LinkChannelOutlet`) exported from
+  `src/index.js`. The Web-Stream buffer layer (`StreamDataMessage`) is still
+  pending.
 - KISS stream framing (`src/transport/kiss-framer.js`): `createKissFramerStream`,
   `createKissUnframerStream`, `kissEscape`, `kissUnescape`, and `kissFrame`. The
   unframer is a byte-for-byte port of the Python reference

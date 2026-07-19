@@ -59,6 +59,16 @@ export { LXMRouter } from "./lxmf/router.js";
 export * as LXStamper from "./lxmf/stamper.js";
 // --- 4. Application Protocols (RPC & Streams) ---
 // The primitives for building Yjs sync, rngit, and NomadNet layers.
+export {
+  CEType,
+  Channel,
+  ChannelException,
+  Envelope,
+  LinkChannelOutlet,
+  MessageBase,
+  MessageState,
+  SystemMessageTypes,
+} from "./transport/channel.js";
 export { Link } from "./transport/link.js";
 export {
   base64ToBytes,
