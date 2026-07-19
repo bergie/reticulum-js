@@ -1,5 +1,5 @@
 # Changelog
-## [Unreleased]
+## [0.2.1] - 2026-07-18
 ### Added
 - Shared-instance client support: a local Reticulum program can now attach to
   a running shared instance — a Python `rnsd` or (future) our own daemon — over
