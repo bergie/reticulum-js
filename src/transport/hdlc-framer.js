@@ -2,22 +2,26 @@ import { TransformStream } from "node:stream/web";
 import { LogLevel, log } from "../utils/log.js";
 
 /**
- * @file framer.js
- * @description HDLC-based framing for TCP/WS streams
+ * @file hdlc-framer.js
+ * @description HDLC-based stream framing for RNS packets.
+ *
+ * Used by stream-oriented interfaces (TCP, local Unix socket). Mirrors the
+ * `HDLC` class in the Python reference `RNS/Interfaces/TCPInterface.py`:
+ * `FLAG` (0x7E) / `ESC` (0x7D) byte-stuffing with an `ESC_MASK` of 0x20.
+ * See `PROTOCOL-SPEC.md` §8.2.
  */
-
-/**
- * @enum {string}
- */
-export const FramingMode = {
-  FRAME: "frame", // Packets -> Bytes
-  UNFRAME: "unframe", // Bytes -> Packets
-};
 
 const FLAG = 0x7e;
 const ESC = 0x7d;
+const ESC_MASK = 0x20;
 
 /**
+ * Escapes data using HDLC byte-stuffing.
+ *
+ * Matches the Python reference `HDLC.escape` precedence: `ESC` is escaped
+ * first, then `FLAG`. Because `0x7D ^ 0x20 == 0x5D` and `0x7E ^ 0x20 ==
+ * 0x5E`, escaping `ESC` first cannot introduce a stray `FLAG` (and vice
+ * versa), so a single forward pass is order-safe.
  * @param {Uint8Array} data
  * @returns {Uint8Array}
  */
@@ -27,7 +31,7 @@ export function hdlcEscape(data) {
     const b = data[i];
     if (b === FLAG || b === ESC) {
       escaped.push(ESC);
-      escaped.push(b === FLAG ? 0x5e : 0x5d);
+      escaped.push(b ^ ESC_MASK);
     } else {
       escaped.push(b);
     }
@@ -48,14 +52,13 @@ export function hdlcUnescape(data) {
       if (i + 1 >= data.length) {
         throw new Error("Incomplete escape sequence at end of data");
       }
-      const next = data[i + 1];
-      if (next === 0x5e) {
-        unescaped.push(FLAG);
-      } else if (next === 0x5d) {
-        unescaped.push(ESC);
-      } else {
-        throw new Error(`Invalid escape sequence: 0x7D 0x${next.toString(16)}`);
+      const next = data[i + 1] ^ ESC_MASK;
+      if (next !== FLAG && next !== ESC) {
+        throw new Error(
+          `Invalid escape sequence: 0x7D 0x${data[i + 1].toString(16)}`,
+        );
       }
+      unescaped.push(next);
       i++;
     } else {
       unescaped.push(data[i]);
@@ -68,7 +71,7 @@ export function hdlcUnescape(data) {
  * Creates a TransformStream for HDLC framing (Packets -> Bytes).
  * @returns {TransformStream}
  */
-export function createRNSFramerStream() {
+export function createHdlcFramerStream() {
   return new TransformStream({
     /**
      * @param {import('../core/packet.js').Packet} packet
@@ -83,7 +86,7 @@ export function createRNSFramerStream() {
       frame.set(escaped, 1);
       frame[frame.length - 1] = FLAG;
 
-      log("Framer", `Enqueuing frame: ${frame}`, LogLevel.EXTREME);
+      log("HDLC", `Enqueuing frame: ${frame}`, LogLevel.EXTREME);
       controller.enqueue(frame);
     },
   });
@@ -95,7 +98,7 @@ export function createRNSFramerStream() {
  * @param {number} [ifacSize=0] - Optional size of the IFAC field if present
  * @returns {TransformStream}
  */
-export function createRNSUnframerStream(packetClass, ifacSize = 0) {
+export function createHdlcUnframerStream(packetClass, ifacSize = 0) {
   let buffer = new Uint8Array(0);
 
   return new TransformStream({
@@ -104,11 +107,7 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
      * @param {TransformStreamDefaultController} controller
      */
     transform(chunk, controller) {
-      log(
-        "Framer",
-        `Received ${chunk.length} bytes from TCP socket`,
-        LogLevel.DEBUG,
-      );
+      log("HDLC", `Received ${chunk.length} bytes`, LogLevel.DEBUG);
       const combined = new Uint8Array(buffer.length + chunk.length);
       combined.set(buffer);
       combined.set(chunk, buffer.length);
@@ -124,7 +123,7 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
         // If the first flag is not at the start, the data before it is junk/malformed
         if (firstFlag > 0) {
           log(
-            "Framer",
+            "HDLC",
             `Discarding ${firstFlag} bytes of junk/malformed data before first 0x7E`,
             LogLevel.WARN,
           );
@@ -152,7 +151,7 @@ export function createRNSUnframerStream(packetClass, ifacSize = 0) {
           const packet = packetClass.deserialize(dataToDeserialize);
           controller.enqueue(packet);
         } catch (e) {
-          log("Framer", `Failed to process HDLC frame: ${e}`, LogLevel.ERROR);
+          log("HDLC", `Failed to process frame: ${e}`, LogLevel.ERROR);
         }
 
         // Advance buffer past the second flag

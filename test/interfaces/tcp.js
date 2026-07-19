@@ -11,6 +11,7 @@ import {
   TCPClientInterface,
   TCPServerInterface,
 } from "../../src/interfaces/tcp.js";
+import { kissFrame } from "../../src/transport/kiss-framer.js";
 
 test("TCP interface connection and packet transfer", async () => {
   const port = 12345;
@@ -416,4 +417,101 @@ test("TCP client defaults match the Python reference", () => {
   assert.strictEqual(client.maxReconnectTries, Number.POSITIVE_INFINITY);
   assert.strictEqual(client.connectTimeout, 5);
   assert.strictEqual(client.initiator, true);
+  assert.strictEqual(client.framing, "hdlc", "default framing is HDLC");
+});
+
+// ------------------------------------------------------------------
+// KISS framing (framing: "kiss"), mirroring the Python kiss_framing option
+// ------------------------------------------------------------------
+
+test("TCP client with framing: 'kiss' emits KISS frames on the wire", async () => {
+  const payload = new TextEncoder().encode("KISS over TCP");
+  const packet = new Packet({
+    headerType: HeaderType.HEADER_1,
+    hops: 0,
+    transportType: 0,
+    destinationType: DestType.PLAIN,
+    packetType: PacketType.DATA,
+    contextFlag: false,
+    destinationHash: new Uint8Array(16).fill(0),
+    contextByte: 0,
+    payload,
+  });
+  const expectedFrame = kissFrame(packet.serialize());
+
+  // Raw server captures the exact bytes the client writes and echoes a KISS
+  // frame back so the inbound unframer is exercised too.
+  /** @type {number[]} */
+  const seen = [];
+  const rawServer = net.createServer((socket) => {
+    socket.on("data", (data) => {
+      for (const b of data) seen.push(b);
+      socket.write(expectedFrame);
+    });
+  });
+  await new Promise((resolve) => rawServer.listen(0, "127.0.0.1", resolve));
+  const port = /** @type {import('node:net').AddressInfo} */ (
+    rawServer.address()
+  ).port;
+
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    framing: "kiss",
+    autoReconnect: false,
+  });
+  assert.strictEqual(client.framing, "kiss");
+  await client.connect();
+
+  const inboundPacket = new Promise((resolve) => {
+    client.addEventListener("packet", (event) => resolve(event.detail.packet));
+  });
+
+  const writer = client.writable.getWriter();
+  await writer.write(packet);
+  writer.releaseLock();
+
+  // Outbound: the wire bytes must be a KISS frame (FEND | CMD_DATA | … | FEND),
+  // not an HDLC (0x7E) frame.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.strictEqual(seen[0], 0xc0, "frame starts with FEND");
+  assert.strictEqual(seen[1] & 0x0f, 0x00, "command byte is CMD_DATA");
+  assert.strictEqual(seen[seen.length - 1], 0xc0, "frame ends with FEND");
+  assert.deepStrictEqual(seen, Array.from(expectedFrame));
+
+  // Inbound: the echoed KISS frame decodes back into the same packet.
+  const received = await inboundPacket;
+  assert.ok(received, "KISS-framed echo should decode to a packet");
+  assert.deepStrictEqual(
+    new TextDecoder().decode(received.payload),
+    "KISS over TCP",
+  );
+
+  await client.disconnect();
+  await new Promise((resolve) => rawServer.close(resolve));
+});
+
+test("TCP server propagates framing to spawned client interfaces", async () => {
+  const port = 12399;
+  const server = new TCPServerInterface({ port, framing: "kiss" });
+  assert.strictEqual(server.framing, "kiss");
+
+  const connectionPromise = new Promise((resolve) => {
+    server.addEventListener("connection", (event) => resolve(event.detail));
+  });
+  await server.connect();
+
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    framing: "kiss",
+    autoReconnect: false,
+  });
+  await client.connect();
+
+  const spawned = /** @type {TCPClientInterface} */ (await connectionPromise);
+  assert.strictEqual(spawned.framing, "kiss", "spawned client inherits kiss");
+
+  await client.disconnect();
+  await server.disconnect();
 });

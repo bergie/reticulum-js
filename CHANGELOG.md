@@ -1,4 +1,37 @@
 # Changelog
+## [Unreleased]
+### Added
+- KISS stream framing (`src/transport/kiss-framer.js`): `createKissFramerStream`,
+  `createKissUnframerStream`, `kissEscape`, `kissUnescape`, and `kissFrame`. The
+  unframer is a byte-for-byte port of the Python reference
+  `KISSInterface.readLoop` state machine — it strips the port nibble
+  (`byte & 0x0F`) so any port's data frame maps to `CMD_DATA`, silently consumes
+  non-data command frames, drops frames exceeding `maxMtu`, and resyncs on
+  malformed escapes. Escape precedence is FESC-first, matching Python
+  `KISS.escape`. Foundations for serial/RNode interfaces, and now selectable on
+  TCP and WebSocket (see below).
+- Optional KISS framing on `TCPClientInterface` / `TCPServerInterface`
+  (`framing: "hdlc" | "kiss"`, default `"hdlc"`), mirroring the Python
+  `kiss_framing = yes` TCP option. The server propagates the mode to spawned
+  client interfaces.
+- Optional KISS framing on `WebSocketClientInterface` /
+  `WebSocketServerInterface` (`framing: "raw" | "kiss"`, default `"raw"`), for
+  RNode firmware versions that expose a KISS-framed WebSocket link. In KISS mode
+  each outbound packet is wrapped as `FEND | CMD_DATA | escaped | FEND` per
+  binary message, and inbound message bytes are piped through the streaming KISS
+  unframer so frames split across (or coalesced within) messages still parse.
+
+### Changed
+- Split the transport framer into two explicit modules. The former
+  `src/transport/framer.js` (HDLC-only) is now `src/transport/hdlc-framer.js`,
+  and its factories are renamed `createHdlcFramerStream` /
+  `createHdlcUnframerStream` — the old `createRNSFramerStream` /
+  `createRNSUnframerStream` names were a misnomer, since they were never "RNS
+  framing". `hdlcEscape`/`hdlcUnescape` now use an `ESC_MASK` XOR instead of
+  hardcoded `0x5e`/`0x5d` (bit-exact, clearer parity with Python's
+  `HDLC.escape`). The unused `FramingMode` enum was removed. Consumers
+  (`tcp.js`, `local_client.js`) updated; `LocalClientInterface` stays HDLC.
+
 ## [0.2.1] - 2026-07-18
 ### Added
 - Shared-instance client support: a local Reticulum program can now attach to

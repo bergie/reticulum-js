@@ -9,6 +9,7 @@ import {
   PacketType,
 } from "../../src/core/packet.js";
 import { WebSocketClientInterface } from "../../src/interfaces/websocket.js";
+import { kissFrame } from "../../src/transport/kiss-framer.js";
 
 /**
  * @file websocket.js
@@ -610,4 +611,79 @@ test("WebSocket client defaults match the Python reference", () => {
   assert.strictEqual(client.maxReconnectTries, Number.POSITIVE_INFINITY);
   assert.strictEqual(client.connectTimeout, 5);
   assert.strictEqual(client.initiator, true);
+  assert.strictEqual(client.framing, "raw", "default framing is raw");
+});
+
+// ------------------------------------------------------------------
+// KISS framing (framing: "kiss"), for RNode-style KISS-over-WebSocket peers
+// ------------------------------------------------------------------
+
+test("WebSocket client with framing: 'kiss' wraps each packet in a KISS frame per message", async () => {
+  const port = 13930;
+  /** @type {((b: Uint8Array) => void) | undefined} */
+  let capturedResolve;
+  /** @type {Promise<Uint8Array>} */
+  const receivedPromise = new Promise((resolve) => {
+    capturedResolve = resolve;
+  });
+  const server = await startWebSocketServer(port, (conn) => {
+    conn.onMessage = (bytes) => capturedResolve?.(bytes);
+  });
+
+  const client = new WebSocketClientInterface({
+    url: `ws://127.0.0.1:${port}`,
+    framing: "kiss",
+    name: "ws-kiss",
+  });
+  assert.strictEqual(client.framing, "kiss");
+  await client.connect();
+
+  const packet = buildTestPacket("KISS over WS");
+  const writer = client.writable.getWriter();
+  await writer.write(packet);
+  writer.releaseLock();
+
+  const observed = await receivedPromise;
+  // Each binary message must be a full KISS frame: FEND | CMD_DATA | escaped | FEND.
+  assert.strictEqual(observed[0], 0xc0, "starts with FEND");
+  assert.strictEqual(observed[1] & 0x0f, 0x00, "CMD_DATA command byte");
+  assert.strictEqual(observed[observed.length - 1], 0xc0, "ends with FEND");
+  assert.deepStrictEqual(
+    Array.from(observed),
+    Array.from(kissFrame(packet.serialize())),
+  );
+
+  await client.disconnect();
+  await server.close();
+});
+
+test("WebSocket client with framing: 'kiss' decodes KISS-framed inbound messages", async () => {
+  const port = 13931;
+  const outbound = buildTestPacket("inbound KISS");
+  const frame = kissFrame(outbound.serialize());
+
+  const server = await startWebSocketServer(port, (conn) => {
+    // Push the KISS frame to the client as one binary message.
+    conn.send(frame);
+  });
+
+  const client = new WebSocketClientInterface({
+    url: `ws://127.0.0.1:${port}`,
+    framing: "kiss",
+    autoReconnect: false,
+  });
+  await client.connect();
+
+  const received = await new Promise((resolve) => {
+    client.addEventListener("packet", (event) => resolve(event.detail.packet));
+  });
+
+  assert.ok(received, "KISS-framed message should decode to a packet");
+  assert.deepStrictEqual(
+    new TextDecoder().decode(received.payload),
+    "inbound KISS",
+  );
+
+  await client.disconnect();
+  await server.close();
 });

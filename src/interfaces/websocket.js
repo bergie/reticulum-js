@@ -1,4 +1,8 @@
 import { Packet } from "../core/packet.js";
+import {
+  createKissUnframerStream,
+  kissFrame,
+} from "../transport/kiss-framer.js";
 import { LogLevel, log } from "../utils/log.js";
 import { Interface, reconnectSchemaProperties } from "./base.js";
 
@@ -6,16 +10,20 @@ import { Interface, reconnectSchemaProperties } from "./base.js";
  * @file websocket.js
  * @description Reticulum interface transport over WebSocket (RFC 6455)
  *
- * Unlike a raw TCP or serial connection, a WebSocket is already
- * message-oriented, so each binary message carries exactly one RNS packet in
- * its raw wire format. No HDLC (0x7E) framing or byte-stuffing is applied.
+ * A WebSocket is message-oriented, so the default (`raw`) framing sends each
+ * RNS packet as one binary message in its raw wire format — no HDLC (0x7E)
+ * byte-stuffing is applied. This matches the Python reference WebSocket
+ * client/server interfaces and the upstream `rns.js` client.
  *
- * This matches the Python reference WebSocket client/server interfaces: the
- * server spawns a client interface per accepted connection, and both sides
- * simply read and write raw packets as individual WebSocket binary messages.
- * Neither side forces `compression=None`, so permessage-deflate may be
- * negotiated — the standard `WebSocket` API handles that transparently, so it
- * has no effect on the RNS framing.
+ * For peers that speak KISS over WebSocket (some RNode firmware versions
+ * expose a KISS-framed WebSocket link), set `framing: "kiss"`. Each outbound
+ * packet is then wrapped as `FEND | CMD_DATA | escaped | FEND` inside a single
+ * binary message, and inbound message bytes are fed through the streaming
+ * KISS unframer so frames split across (or coalesced within) messages still
+ * parse correctly. See `PROTOCOL-SPEC.md` §8.1.
+ *
+ * The server spawns a client interface per accepted connection, and the
+ * framing mode is inherited from the server configuration.
  */
 
 /**
@@ -30,14 +38,17 @@ import { Interface, reconnectSchemaProperties } from "./base.js";
 const HEADER_MINSIZE = 19;
 
 /**
- * Decodes a single raw WebSocket message into a Packet, honouring the IFAC
- * flag bit (the high bit of the first header byte).
+ * Decodes a single raw (`framing: "raw"`) WebSocket message into a Packet,
+ * honouring the IFAC flag bit (the high bit of the first header byte).
  *
  * In Python, the IFAC field is prepended/masked by `Transport.outbound` and
  * stripped/unmasked by `Transport.inbound`, so an interface normally just
  * passes raw bytes through. When this interface is not configured with an
  * `ifacSize`, IFAC-tagged packets cannot be authenticated and are dropped —
  * matching both the Python reference and the upstream `rns.js` client.
+ *
+ * Not used when `framing: "kiss"`; in that mode inbound bytes are fed through
+ * the streaming KISS unframer instead.
  * @param {Uint8Array} bytes
  * @param {number} ifacSize
  * @returns {import("../core/packet.js").Packet | null} `null` if the message should be ignored.
@@ -73,6 +84,10 @@ export function packetFromMessage(bytes, ifacSize) {
  *   accepted connection.
  * @property {number} [ifacSize] - Optional IFAC field size, if the remote peer
  *   signs packets with an interface authentication code.
+ * @property {"raw"|"kiss"} [framing] - Wire framing. Defaults to `"raw"`
+ *   (one RNS packet per binary message). Set to `"kiss"` for peers that
+ *   speak KISS over WebSocket (e.g. some RNode firmware versions): each
+ *   packet is wrapped as `FEND | CMD_DATA | escaped | FEND` per message.
  * @property {string} [name] - Interface name.
  * @property {boolean} [autoReconnect] - Reconnect after drops (initiator
  *   only). Defaults to `true`.
@@ -86,11 +101,13 @@ export function packetFromMessage(bytes, ifacSize) {
 /**
  * Reticulum interface that connects to a remote node over a WebSocket.
  *
- * Wraps a `WebSocket` into RNS streams. Each outbound `Packet` is serialized
- * and sent as a single binary message; each inbound binary message is parsed
- * back into a `Packet`. The underlying connection may either be dialed via
- * {@link WebSocketClientInterface.connect} or adopted from an already-open
- * socket (e.g. one accepted by a server).
+ * Wraps a `WebSocket` into RNS streams. In `raw` framing each binary message
+ * is one RNS packet; in `kiss` framing messages carry KISS-framed bytes that
+ * are parsed by the streaming unframer (so split/coalesced frames still
+ * parse). Outbound packets are serialized (and optionally KISS-framed) and
+ * sent as individual binary messages. The underlying connection may either
+ * be dialed via {@link WebSocketClientInterface.connect} or adopted from an
+ * already-open socket (e.g. one accepted by a server).
  * @extends Interface
  */
 export class WebSocketClientInterface extends Interface {
@@ -138,6 +155,15 @@ export class WebSocketClientInterface extends Interface {
             "Target port. Used to build ws://host:port when url is omitted.",
         },
         ...reconnectSchemaProperties(),
+        framing: {
+          type: "string",
+          enum: ["raw", "kiss"],
+          default: "raw",
+          description:
+            "Wire framing. Defaults to raw (one RNS packet per binary " +
+            "message). Set to kiss for peers that speak KISS over WebSocket " +
+            "(e.g. some RNode firmware versions).",
+        },
       },
       required: [],
       additionalProperties: false,
@@ -170,6 +196,8 @@ export class WebSocketClientInterface extends Interface {
       options.name || `ws-client-${this.url.replace(/^wss?:\/\//, "")}`;
     /** @type {number} */
     this.ifacSize = options.ifacSize || 0;
+    /** @type {"raw"|"kiss"} */
+    this.framing = options.framing === "kiss" ? "kiss" : "raw";
     /** @type {any} */
     this._readable = null;
     /** @type {any} */
@@ -315,9 +343,11 @@ export class WebSocketClientInterface extends Interface {
   }
 
   /**
-   * Bridges a `WebSocket` into RNS streams: inbound binary messages are parsed
-   * into packets, and outbound packets are serialized and sent as individual
-   * binary messages.
+   * Bridges a `WebSocket` into RNS streams. In `raw` framing each binary
+   * message is one RNS packet; in `kiss` framing messages carry KISS-framed
+   * bytes that are parsed by the streaming unframer (so split/coalesced
+   * frames still parse). Outbound packets are serialized (and optionally
+   * KISS-framed) and sent as individual binary messages.
    * @param {any} ws
    * @private
    */
@@ -327,14 +357,20 @@ export class WebSocketClientInterface extends Interface {
     // next `send()` re-acquires one bound to the fresh writable.
     this._packetWriter = null;
 
-    // Inbound: WebSocket binary messages -> packets
+    const framing = this.framing;
+    const ifacSize = this.ifacSize;
+
+    // Inbound: WebSocket binary messages -> bytes (kiss) or packets (raw).
+    //
+    // In raw mode each binary message is one RNS packet and is parsed here
+    // directly. In kiss mode the message bytes are emitted raw and piped
+    // through the streaming KISS unframer below, so frames split across (or
+    // coalesced within) messages still parse correctly.
     const incoming = new ReadableStream({
       start: (controller) => {
         ws.addEventListener("message", (/** @type {any} */ event) => {
-          // Match the Python reference `_read_loop`: ignore non-binary
-          // frames and drop anything no larger than the header minimum
-          // (HEADER_MINSIZE). `binaryType` is "arraybuffer", so binary
-          // frames arrive as ArrayBuffer and text frames as strings.
+          // `binaryType` is "arraybuffer", so binary frames arrive as
+          // ArrayBuffer and text frames as strings.
           if (!(event.data instanceof ArrayBuffer)) {
             log(
               "WebSocket",
@@ -343,8 +379,14 @@ export class WebSocketClientInterface extends Interface {
             );
             return;
           }
+          const bytes = new Uint8Array(event.data);
+          if (framing === "kiss") {
+            controller.enqueue(bytes);
+            return;
+          }
+          // raw mode: match the Python reference `_read_loop` and drop
+          // anything no larger than the header minimum (HEADER_MINSIZE).
           try {
-            const bytes = new Uint8Array(event.data);
             if (bytes.length <= HEADER_MINSIZE) {
               log(
                 "WebSocket",
@@ -353,7 +395,7 @@ export class WebSocketClientInterface extends Interface {
               );
               return;
             }
-            const packet = packetFromMessage(bytes, this.ifacSize);
+            const packet = packetFromMessage(bytes, ifacSize);
             if (packet) controller.enqueue(packet);
           } catch (e) {
             log(
@@ -386,16 +428,25 @@ export class WebSocketClientInterface extends Interface {
         }
       },
     });
-    this._readable = incoming;
+
+    this._readable =
+      framing === "kiss"
+        ? incoming.pipeThrough(
+            /** @type {any} */ (createKissUnframerStream(Packet, ifacSize)),
+          )
+        : incoming;
 
     // Outbound: packets -> WebSocket binary messages
     const sink = new WritableStream({
       write: (/** @type {import("../core/packet.js").Packet} */ packet) => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(packet.serialize());
-        } else {
+        if (ws.readyState !== WebSocket.OPEN) {
           throw new Error("WebSocket is not open");
         }
+        ws.send(
+          framing === "kiss"
+            ? kissFrame(packet.serialize())
+            : packet.serialize(),
+        );
       },
       close: () => {
         try {
@@ -461,6 +512,8 @@ export class WebSocketClientInterface extends Interface {
  * @property {string} [listenIp] - Address to bind the server to.
  * @property {number} [listenPort] - Port to bind the server to.
  * @property {number} [ifacSize] - Optional IFAC field size for spawned clients.
+ * @property {"raw"|"kiss"} [framing] - Wire framing inherited by spawned
+ *   client interfaces. Defaults to `"raw"`.
  * @property {string} [name] - Interface name.
  */
 
@@ -505,6 +558,15 @@ export class WebSocketServerInterface extends Interface {
           examples: [4242],
           description: "Port to bind the server to.",
         },
+        framing: {
+          type: "string",
+          enum: ["raw", "kiss"],
+          default: "raw",
+          description:
+            "Wire framing inherited by spawned client interfaces. " +
+            "Defaults to raw; set to kiss for RNode-style KISS-over-WebSocket " +
+            "peers.",
+        },
       },
       required: ["listenPort"],
       additionalProperties: false,
@@ -524,6 +586,8 @@ export class WebSocketServerInterface extends Interface {
     this.listenPort = options.listenPort || 0;
     /** @type {number} */
     this.ifacSize = options.ifacSize || 0;
+    /** @type {"raw"|"kiss"} */
+    this.framing = options.framing === "kiss" ? "kiss" : "raw";
     /** @type {any} */
     this.server = null;
     /** @type {Set<WebSocketClientInterface>} */

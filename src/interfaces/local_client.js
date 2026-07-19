@@ -22,9 +22,9 @@ import net from "node:net";
 import { Readable, Writable } from "node:stream";
 import { Packet } from "../core/packet.js";
 import {
-  createRNSFramerStream,
-  createRNSUnframerStream,
-} from "../transport/framer.js";
+  createHdlcFramerStream,
+  createHdlcUnframerStream,
+} from "../transport/hdlc-framer.js";
 import { LogLevel, log } from "../utils/log.js";
 import { Interface, reconnectSchemaProperties } from "./base.js";
 
@@ -359,10 +359,10 @@ export class LocalClientInterface extends Interface {
       },
     });
     this._readable = Readable.toWeb(nodeReadable).pipeThrough(
-      createRNSUnframerStream(Packet, this.ifacSize),
+      createHdlcUnframerStream(Packet, this.ifacSize),
     );
 
-    const framer = createRNSFramerStream();
+    const framer = createHdlcFramerStream();
 
     framer.readable
       .pipeTo(Writable.toWeb(nodeWritable))

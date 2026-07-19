@@ -57,7 +57,8 @@ export class TransportCore extends EventTarget {
     if (isDefault) this.defaultInterface = iface;
 
     // 1. Hook into the Interface's existing outbound Framer
-    // Since iface.writable is the input to the RNSFramerStream, we just get a writer for it
+    // Since iface.writable is the input to the interface framer stream
+    // (HDLC or KISS), we just get a writer for it.
     const writable = iface.writable;
     if (writable && !iface._packetWriter) {
       iface._packetWriter = writable.getWriter();

@@ -7,11 +7,11 @@ import {
   PacketType,
 } from "../../src/core/packet.js";
 import {
-  createRNSFramerStream,
-  createRNSUnframerStream,
+  createHdlcFramerStream,
+  createHdlcUnframerStream,
   hdlcEscape,
   hdlcUnescape,
-} from "../../src/transport/framer.js";
+} from "../../src/transport/hdlc-framer.js";
 
 // --- 1. Helper Utility ---
 
@@ -20,7 +20,7 @@ import {
  * This is actually for testing the UNFRAMER.
  */
 async function runUnframerTest(chunks) {
-  const unframer = createRNSUnframerStream(Packet);
+  const unframer = createHdlcUnframerStream(Packet);
   const writer = unframer.writable.getWriter();
   const reader = unframer.readable.getReader();
   const results = [];
@@ -48,7 +48,7 @@ async function runUnframerTest(chunks) {
  * Feeds an array of Packet objects into the framer and collects the output.
  */
 async function runFramerTest(packets) {
-  const framer = createRNSFramerStream(Packet);
+  const framer = createHdlcFramerStream(Packet);
   const writer = framer.writable.getWriter();
   const reader = framer.readable.getReader();
   const results = [];

@@ -25,7 +25,8 @@ reticulum-js/
 │   │   ├── destination.js # Routing targets (EventTargets)
 │   │   └── packet.js      # Binary serialization/deserialization
 │   ├── transport/         # Mesh routing and link management
-│   │   ├── framer.js      # TransformStreams for TCP/WS chunk slicing
+│   │   ├── hdlc-framer.js # HDLC stream framing (TCP / loopback default)
+│   │   ├── kiss-framer.js # KISS stream framing (serial/RNode; optional TCP/WS)
 │   │   └── link.js        # Encrypted session establishment (ECIES)
 │   ├── interfaces/        # Environment-agnostic I/O
 │   │   ├── base.js        # Interface interface (Base class)
@@ -145,34 +146,21 @@ All physical connections conform to a standard Interface class, allowing seamles
 
 ### 5.2 Stream Framing (`TransformStream`)
 
-Because TCP and WebSockets are stream-based, raw binary chunks are piped through a `TransformStream` that reassembles partial bytes into complete RNS packets before yielding them to the transport layer.
+Stream-oriented interfaces (TCP, local Unix socket) pipe raw byte chunks
+through a `TransformStream` that reassembles them into complete RNS packets
+before handing them to the transport layer. Two interchangeable framers are
+provided, mirroring the Python reference's `HDLC` and `KISS` classes (see
+`PROTOCOL-SPEC.md` §8):
 
-```javascript
-export class RNSFramerStream extends TransformStream {
-    constructor() {
-        let buffer = new Uint8Array(0);
-        super({
-            transform(chunk, controller) {
-                // Concatenate incoming chunk
-                const combined = new Uint8Array(buffer.length + chunk.length);
-                combined.set(buffer);
-                combined.set(chunk, buffer.length);
-                buffer = combined;
+- **HDLC** (`src/transport/hdlc-framer.js`) — `0x7E`/`0x7D` byte-stuffing.
+  The default for TCP and the local client interface.
+- **KISS** (`src/transport/kiss-framer.js`) — `FEND`/`FESC` byte-stuffing
+  with a `CMD_DATA` command byte. Used by serial/RNode interfaces, and
+  selectable on TCP (`framing: "kiss"`, matching Python's `kiss_framing`)
+  and WebSocket (`framing: "kiss"`, for RNode-style KISS-over-WS peers).
 
-                // Slice and yield complete packets based on header length checks
-                while (buffer.length >= 2) {
-                    const expectedLength = parsePacketLength(buffer); 
-                    if (buffer.length >= expectedLength) {
-                        controller.enqueue(buffer.slice(0, expectedLength));
-                        buffer = buffer.slice(expectedLength);
-                    } else break; 
-                }
-            }
-        });
-    }
-}
-
-```
+Message-oriented transports (WebSocket in its default `raw` mode) send one
+RNS packet per binary message and need no framing transform.
 
 ---
 

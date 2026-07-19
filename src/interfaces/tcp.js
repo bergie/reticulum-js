@@ -2,9 +2,13 @@ import net from "node:net";
 import { Readable, Writable } from "node:stream";
 import { Packet } from "../core/packet.js";
 import {
-  createRNSFramerStream,
-  createRNSUnframerStream,
-} from "../transport/framer.js";
+  createHdlcFramerStream,
+  createHdlcUnframerStream,
+} from "../transport/hdlc-framer.js";
+import {
+  createKissFramerStream,
+  createKissUnframerStream,
+} from "../transport/kiss-framer.js";
 import { LogLevel, log } from "../utils/log.js";
 import { Interface, reconnectSchemaProperties } from "./base.js";
 
@@ -29,6 +33,9 @@ const I2P_PROBE_AFTER_MS = 10000;
  * @property {any} [socket]
  * @property {number} [ifacSize]
  * @property {string} [name]
+ * @property {"hdlc"|"kiss"} [framing] - Wire framing to use. Defaults to
+ *   `"hdlc"` (Python reference default). `"kiss"` mirrors the Python
+ *   `kiss_framing = yes` TCP option.
  * @property {boolean} [autoReconnect] - Reconnect after drops (initiator
  *   only). Defaults to `true`.
  * @property {number} [reconnectWait] - Seconds between attempts. Defaults to 5.
@@ -44,13 +51,15 @@ const I2P_PROBE_AFTER_MS = 10000;
  * @typedef {Object} TCPServerInterfaceOptions
  * @property {number} port
  * @property {number} [ifacSize]
+ * @property {"hdlc"|"kiss"} [framing] - Wire framing for spawned client
+ *   interfaces. Defaults to `"hdlc"`.
  * @property {string} [name]
  */
 
 /**
  * Reticulum interface that connects to a remote node over a TCP socket.
  *
- * Wraps the Node.js `net.Socket` into RNS streams with KISS/HDLC framing.
+ * Wraps the Node.js `net.Socket` into RNS streams with HDLC or KISS framing.
  * Used both for outbound client connections and (via a server) for inbound ones.
  * @extends Interface
  */
@@ -95,6 +104,15 @@ export class TCPClientInterface extends Interface {
             "Use the longer I2P keepalive probe interval for connections " +
             "tunneled through I2P (Python config key: i2p_tunneled).",
         },
+        framing: {
+          type: "string",
+          enum: ["hdlc", "kiss"],
+          default: "hdlc",
+          description:
+            "Wire framing to use on the socket (Python config key: " +
+            "kiss_framing). Defaults to hdlc; set to kiss to match a " +
+            "Python peer configured with kiss_framing = yes.",
+        },
         ...reconnectSchemaProperties(),
       },
       required: ["host", "port"],
@@ -125,6 +143,8 @@ export class TCPClientInterface extends Interface {
     this.port = options.port || 0;
     this.ifacSize = options.ifacSize || 0;
     this.i2pTunneled = options.i2pTunneled === true;
+    /** @type {"hdlc"|"kiss"} */
+    this.framing = options.framing === "kiss" ? "kiss" : "hdlc";
     /** @type {any} */
     this.socket = options.socket || null;
     // Only the initiator (the outbound dialer) reconnects. An adopted socket
@@ -324,10 +344,15 @@ export class TCPClientInterface extends Interface {
       },
     });
     this._readable = Readable.toWeb(nodeReadable).pipeThrough(
-      createRNSUnframerStream(Packet, this.ifacSize),
+      this.framing === "kiss"
+        ? createKissUnframerStream(Packet, this.ifacSize)
+        : createHdlcUnframerStream(Packet, this.ifacSize),
     );
 
-    const framer = createRNSFramerStream();
+    const framer =
+      this.framing === "kiss"
+        ? createKissFramerStream()
+        : createHdlcFramerStream();
 
     framer.readable
       .pipeTo(Writable.toWeb(nodeWritable))
@@ -418,6 +443,14 @@ export class TCPServerInterface extends Interface {
           description:
             "Address to bind the listener to (Python config key: listen_ip).",
         },
+        framing: {
+          type: "string",
+          enum: ["hdlc", "kiss"],
+          default: "hdlc",
+          description:
+            "Wire framing for spawned client interfaces (Python config " +
+            "key: kiss_framing). Defaults to hdlc.",
+        },
       },
       required: ["port"],
       additionalProperties: false,
@@ -433,6 +466,8 @@ export class TCPServerInterface extends Interface {
     this.name = options.name || `tcp-server-${options.port}`;
     this.port = options.port;
     this.ifacSize = options.ifacSize || 0;
+    /** @type {"hdlc"|"kiss"} */
+    this.framing = options.framing === "kiss" ? "kiss" : "hdlc";
     /** @type {any} */
     this.server = null;
     /** @type {Set<TCPClientInterface>} */
@@ -464,6 +499,7 @@ export class TCPServerInterface extends Interface {
         const client = new TCPClientInterface({
           socket,
           ifacSize: this.ifacSize,
+          framing: this.framing,
           name: `tcp-client-from-server-${socket.remoteAddress}:${socket.remotePort}`,
         });
         await client.connect();
