@@ -58,7 +58,7 @@ export class AutoInterfacePeer extends Interface {
      * Defaults to the 10 Mbit/s `AutoInterface.BITRATE_GUESS`.
      * @type {number}
      */
-    this.bitrate = 10_000_000;
+    this.bitrate = 10000000;
     /** @type {any} */
     this._readable = null;
     /** @type {any} */

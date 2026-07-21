@@ -148,7 +148,7 @@ export class TCPClientInterface extends Interface {
      * when spawned by a {@link TCPServerInterface}.
      * @type {number}
      */
-    this.bitrate = 10_000_000;
+    this.bitrate = 10000000;
     this.i2pTunneled = options.i2pTunneled === true;
     /** @type {"hdlc"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "hdlc";
@@ -480,7 +480,7 @@ export class TCPServerInterface extends Interface {
      * `TCPServerInterface.BITRATE_GUESS` (10 Mbit/s) in the Python reference.
      * @type {number}
      */
-    this.bitrate = 10_000_000;
+    this.bitrate = 10000000;
     /** @type {any} */
     this.server = null;
     /** @type {Set<TCPClientInterface>} */

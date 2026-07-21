@@ -202,7 +202,7 @@ export class WebSocketClientInterface extends Interface {
      * `TCPClientInterface.BITRATE_GUESS`.
      * @type {number}
      */
-    this.bitrate = 10_000_000;
+    this.bitrate = 10000000;
     /** @type {"raw"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "raw";
     /** @type {any} */
@@ -600,7 +600,7 @@ export class WebSocketServerInterface extends Interface {
      * (no Python equivalent); see {@link WebSocketClientInterface}.
      * @type {number}
      */
-    this.bitrate = 10_000_000;
+    this.bitrate = 10000000;
     /** @type {any} */
     this.server = null;
     /** @type {Set<WebSocketClientInterface>} */

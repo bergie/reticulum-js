@@ -32,27 +32,27 @@ test("each interface declares a Python-parity nominal bitrate", () => {
     {
       name: "TCPClientInterface",
       iface: new TCPClientInterface({ host: "127.0.0.1", port: 1 }),
-      expected: 10_000_000, // TCPClientInterface.BITRATE_GUESS
+      expected: 10000000, // TCPClientInterface.BITRATE_GUESS
     },
     {
       name: "TCPServerInterface",
       iface: new TCPServerInterface({ port: 0 }),
-      expected: 10_000_000, // TCPServerInterface.BITRATE_GUESS
+      expected: 10000000, // TCPServerInterface.BITRATE_GUESS
     },
     {
       name: "LocalClientInterface",
       iface: new LocalClientInterface({ port: 1 }),
-      expected: 1_000_000_000, // RNS.Interfaces.LocalInterface (1 Gbit/s)
+      expected: 1000000000, // RNS.Interfaces.LocalInterface (1 Gbit/s)
     },
     {
       name: "WebSocketClientInterface",
       iface: new WebSocketClientInterface({ url: "ws://example/" }),
-      expected: 10_000_000, // JS-specific; TCP-backed, same guess as TCP
+      expected: 10000000, // JS-specific; TCP-backed, same guess as TCP
     },
     {
       name: "WebSocketServerInterface",
       iface: new WebSocketServerInterface({ listenPort: 0 }),
-      expected: 10_000_000,
+      expected: 10000000,
     },
     {
       name: "AutoInterfacePeer",
@@ -61,17 +61,17 @@ test("each interface declares a Python-parity nominal bitrate", () => {
         address: "::1",
         ifname: "lo",
       }),
-      expected: 10_000_000, // AutoInterface.BITRATE_GUESS
+      expected: 10000000, // AutoInterface.BITRATE_GUESS
     },
     {
       name: "HttpPostClientInterface",
       iface: new HttpPostClientInterface({ baseUrl: "http://example/" }),
-      expected: 1_000_000, // JS-specific; conservative for base64/JSON HTTP
+      expected: 1000000, // JS-specific; conservative for base64/JSON HTTP
     },
     {
       name: "HttpPostServerInterface",
       iface: new HttpPostServerInterface({ listenPort: 0 }),
-      expected: 1_000_000,
+      expected: 1000000,
     },
     {
       name: "HttpPostPeerInterface",
@@ -79,7 +79,7 @@ test("each interface declares a Python-parity nominal bitrate", () => {
         interfaceId: "iface-deadbeef",
         sessionToken: "sess-x",
       }),
-      expected: 1_000_000,
+      expected: 1000000,
     },
   ];
 
@@ -95,7 +95,7 @@ test("each interface declares a Python-parity nominal bitrate", () => {
 test("TCPServer spawns clients that inherit its bitrate", async () => {
   const server = new TCPServerInterface({ port: 0 });
   // Custom rate to prove inheritance rather than a hardcoded default.
-  server.bitrate = 4_200_000;
+  server.bitrate = 4200000;
   await server.connect();
   const port = /** @type {any} */ (server.server).address().port;
 
@@ -109,7 +109,7 @@ test("TCPServer spawns clients that inherit its bitrate", async () => {
   const spawnedClient = /** @type {TCPClientInterface} */ (await spawned);
   assert.equal(
     spawnedClient.bitrate,
-    4_200_000,
+    4200000,
     "spawned client must inherit the server's bitrate",
   );
 

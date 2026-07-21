@@ -59,7 +59,7 @@ export class HttpPostPeerInterface extends Interface {
      * matching the client default.
      * @type {number}
      */
-    this.bitrate = 1_000_000;
+    this.bitrate = 1000000;
 
     /** @type {Uint8Array[]} packets queued for delivery to the remote client */
     this._outboundQueue = [];
@@ -333,7 +333,7 @@ export class HttpPostServerInterface extends Interface {
      * default.
      * @type {number}
      */
-    this.bitrate = 1_000_000;
+    this.bitrate = 1000000;
     this.idleExchangeIntervalMs = options.idleExchangeIntervalMs ?? 1000;
     this.peerIdleTimeoutMs = options.peerIdleTimeoutMs ?? 60000;
     this.maxBatchPackets = options.maxBatchPackets ?? 64;

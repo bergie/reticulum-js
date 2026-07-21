@@ -464,7 +464,7 @@ export class LocalClientInterface extends Interface {
      * very-high-bandwidth local hop.
      * @type {number}
      */
-    this.bitrate = 1_000_000_000;
+    this.bitrate = 1000000000;
     /** @type {any} */
     this.socket = options.socket || null;
     // Only the initiator (the outbound dialer) reconnects. An adopted socket is

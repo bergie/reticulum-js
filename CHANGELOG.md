@@ -54,10 +54,10 @@
   bitrate (bits/s) as `iface.bitrate`, ported from `self.bitrate` on
   `RNS.Interfaces.Interface` in the Python reference. The base `Interface`
   default is `62500`; per-interface values match Python where one exists
-  (TCP client/server `10_000_000`, `LocalClientInterface` `1_000_000_000`,
-  `AutoInterface`/`AutoInterfacePeer` `10_000_000`) and are set sensibly for
-  the JS-specific interfaces (WebSocket `10_000_000`, HTTP POST
-  client/server/peer `1_000_000`). Server interfaces that spawn client
+  (TCP client/server `10000000`, `LocalClientInterface` `1000000000`,
+  `AutoInterface`/`AutoInterfacePeer` `10000000`) and are set sensibly for
+  the JS-specific interfaces (WebSocket `10000000`, HTTP POST
+  client/server/peer `1000000`). Server interfaces that spawn client
   interfaces (`TCPServerInterface`, `AutoInterface`, `HttpPostServerInterface`)
   now copy their bitrate onto each spawned child, mirroring Python's
   `spawned_interface.bitrate = self.bitrate`.
