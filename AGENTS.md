@@ -47,7 +47,7 @@ https://min-common-api.proposal.wintertc.org/
 
 - ✅ **Always**: write at least smoketests for any new functionality
 - ✅ **Always**: ensure type safety. Always check eith `npm run types` after changes and fix as needed
-- ✅ **Always**: fix formatting with `npm run format` after any changes to source files or tests
+- ✅ **Always**: fix formatting with `npm run format` (in Android/Termux `biome check --use-editorconfig=true --write src test examples`) after any changes to source files or tests
 - ✅ **Always**: compare implementation with how the Python reference implementation works and adapt to be compatible with it
 - ✅ **Always**: Use `git mv` instead of `mv' for renaming files
 - ✅ **Always**: Remove ambiguity and legacy support from APIs you modify. Right now there are no API consumers outside this repo so we can keep things fluid
