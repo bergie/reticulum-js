@@ -661,7 +661,10 @@ export class LocalClientInterface extends Interface {
         socket.write(chunk, encoding, callback);
       },
     });
-    this._readable = Readable.toWeb(nodeReadable).pipeThrough(
+    const webReadable = /** @type {ReadableStream<Uint8Array>} */ (
+      Readable.toWeb(nodeReadable)
+    );
+    this._readable = webReadable.pipeThrough(
       createHdlcUnframerStream(Packet, this.ifacSize),
     );
 

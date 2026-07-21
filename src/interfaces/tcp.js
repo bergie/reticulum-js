@@ -350,7 +350,10 @@ export class TCPClientInterface extends Interface {
         socket.write(chunk, encoding, callback);
       },
     });
-    this._readable = Readable.toWeb(nodeReadable).pipeThrough(
+    const webReadable = /** @type {ReadableStream<Uint8Array>} */ (
+      Readable.toWeb(nodeReadable)
+    );
+    this._readable = webReadable.pipeThrough(
       this.framing === "kiss"
         ? createKissUnframerStream(Packet, this.ifacSize)
         : createHdlcUnframerStream(Packet, this.ifacSize),
