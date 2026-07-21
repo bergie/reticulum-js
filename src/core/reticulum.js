@@ -1,3 +1,4 @@
+import { InterfaceDiscovery } from "../transport/discovery.js";
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
 import { log } from "../utils/log.js";
@@ -14,6 +15,14 @@ export class Reticulum {
    * @param {Object} [config.storageAdapter] - Interface for persisting identities and caches.
    * @param {Object} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
    * @param {boolean} [config.useImplicitProof] - §6.5.2 PROOF form for opportunistic DATA: `true` (default, upstream) emits the 64-byte implicit body; `false` emits the 96-byte explicit body.
+   * @param {boolean} [config.enableDiscovery] - When true, start an
+   *   {@link InterfaceDiscovery} listener on the transport `"announce"` event
+   *   so a leaf can discover connectable transport-node interfaces on the
+   *   `rnstransport.discovery.interface` aspect (Python `discover_interfaces`).
+   *   v1 is surface-only — no auto-connect.
+   * @param {Object} [config.discovery] - Extra options forwarded to the
+   *   {@link InterfaceDiscovery} constructor when `enableDiscovery` is true
+   *   (`requiredValue`, `discoverySources`, `networkIdentity`, `backboneSupport`).
    */
   constructor(config = {}) {
     this.storage = config.storageAdapter || null;
@@ -29,6 +38,21 @@ export class Reticulum {
 
     // Local registered endpoints (e.g., the Yjs sync endpoint, LXMF delivery)
     this.localDestinations = new Map();
+
+    // Interface discovery (work doc #17). Surface-only in v1: parses,
+    // stamp-validates and surfaces `rnstransport.discovery.interface` announces
+    // as `discovery.on("discovered", ...)`. `start()` is async (it precomputes
+    // the aspect name-hash and hydrates from storage) so it is fire-and-forget
+    // here; callers that need it ready can `await rns.discovery?.startPromise`.
+    this.discovery = null;
+    if (config.enableDiscovery) {
+      this.discovery = new InterfaceDiscovery({
+        transport: this.transport,
+        storageAdapter: this.storage,
+        ...config.discovery,
+      });
+      this.discovery.startPromise = this.discovery.start();
+    }
 
     log("Reticulum", "Reticulum Engine initialized.");
   }

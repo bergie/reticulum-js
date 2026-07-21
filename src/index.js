@@ -63,6 +63,34 @@ export {
 
 import "./transport/buffer.js";
 
+// --- Interface discovery (consumer side; work doc #17) ---
+// Listens for `rnstransport.discovery.interface` announces so a leaf can find
+// connectable transport-node interfaces on the mesh.
+export {
+  ACCEPTED_INTERFACE_TYPES,
+  APP_NAME as DISCOVERY_APP_NAME,
+  ASPECT as DISCOVERY_ASPECT,
+  aspectNameHash,
+  buildConfigEntry as buildDiscoveryConfigEntry,
+  buildDiscoveryAppData,
+  DEFAULT_STAMP_VALUE as DISCOVERY_DEFAULT_STAMP_VALUE,
+  DISCOVERABLE_TYPES,
+  FLAG_ENCRYPTED as DISCOVERY_FLAG_ENCRYPTED,
+  FLAG_SIGNED as DISCOVERY_FLAG_SIGNED,
+  generateDiscoveryStamp,
+  InterfaceDiscovery,
+  isHostname,
+  isIpAddress,
+  parseDiscoveryAnnounce,
+  STATUS_AVAILABLE as DISCOVERY_STATUS_AVAILABLE,
+  STATUS_STALE as DISCOVERY_STATUS_STALE,
+  STATUS_UNKNOWN as DISCOVERY_STATUS_UNKNOWN,
+  sanitizeName as sanitizeDiscoveryName,
+  THRESHOLD_REMOVE as DISCOVERY_THRESHOLD_REMOVE,
+  THRESHOLD_STALE as DISCOVERY_THRESHOLD_STALE,
+  THRESHOLD_UNKNOWN as DISCOVERY_THRESHOLD_UNKNOWN,
+  WORKBLOCK_EXPAND_ROUNDS as DISCOVERY_WORKBLOCK_EXPAND_ROUNDS,
+} from "./transport/discovery.js";
 export { Link } from "./transport/link.js";
 export {
   base64ToBytes,

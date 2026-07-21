@@ -407,5 +407,12 @@ test("parses the real ~/.reticulum/config when present", () => {
   }
   const endpoint = getSharedInstanceEndpoint({ configDir: realDir });
   assert.strictEqual(typeof endpoint.shareInstance, "boolean");
-  assert.strictEqual(typeof endpoint.port, "number");
+  // Port is only set for the TCP transport; the abstract-socket transport
+  // exposes `socketPath` instead. Assert whichever applies here.
+  if (endpoint.transport === "tcp") {
+    assert.strictEqual(typeof endpoint.port, "number");
+  } else {
+    assert.strictEqual(endpoint.transport, "unix");
+    assert.strictEqual(typeof endpoint.socketPath, "string");
+  }
 });

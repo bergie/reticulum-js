@@ -1,0 +1,43 @@
+{
+  "interface_type": "TCPServerInterface",
+  "app_data_hex": "008900b2544350536572766572496e7465726661636501c3ccfec410bf3fc6d179a3bc4bad91f9ac038ecc9eccffac4578616d706c65204e6f646503cb4049c0f27bb2fec504cbbfc05bc01a36e2eb05cb404180000000000002b96578616d706c652e7265746963756c756d2e6e6574776f726b06cda5b892298cffdab8d5304ae053a18474f4f788da0cb455fecc89d0a1a21a49c7e8f4",
+  "announced_identity_pub_hex": "3b1a306c0a49ff142b8a25aa02c006b2f92622dece1e592c50479ebd76ce017493fc7a096194f9a863a83d89c44e21d33c4c03599122aecf1fc95a4185c1a006",
+  "announced_identity_hash_hex": "1e076e1b751ed5ce7b69f7e832634354",
+  "transport_id_hex": "bf3fc6d179a3bc4bad91f9ac038ecc9e",
+  "raw_info": {
+    "0": "TCPServerInterface",
+    "1": true,
+    "254": "bf3fc6d179a3bc4bad91f9ac038ecc9e",
+    "255": "Example Node",
+    "3": 51.5074,
+    "4": -0.1278,
+    "5": 35.0,
+    "2": "example.reticulum.network",
+    "6": 42424
+  },
+  "stamp_value": 19,
+  "required_value": 16,
+  "workblock_expand_rounds": 20,
+  "parsed": {
+    "type": "TCPServerInterface",
+    "transport": true,
+    "name": "Example Node",
+    "received": 1784667346.0130136,
+    "stamp": {
+      "__bytes_hex__": "92298cffdab8d5304ae053a18474f4f788da0cb455fecc89d0a1a21a49c7e8f4"
+    },
+    "value": 19,
+    "transport_id": "bf3fc6d179a3bc4bad91f9ac038ecc9e",
+    "network_id": "1e076e1b751ed5ce7b69f7e832634354",
+    "hops": 128,
+    "latitude": 51.5074,
+    "longitude": -0.1278,
+    "height": 35.0,
+    "reachable_on": "example.reticulum.network",
+    "port": 42424,
+    "config_entry": "[[Example Node]]\n  type = BackboneInterface\n  enabled = yes\n  remote = example.reticulum.network\n  target_port = 42424\n  transport_identity = bf3fc6d179a3bc4bad91f9ac038ecc9e",
+    "discovery_hash": {
+      "__bytes_hex__": "9f13ba7fefa07c2b6b215bb011bc6d2c77fc75c09c854dacdf9b767ea3880531"
+    }
+  }
+}

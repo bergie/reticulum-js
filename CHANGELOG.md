@@ -1,4 +1,55 @@
 # Changelog
+## [Unreleased]
+### Added
+- Interface discovery (consumer/discoverer side): a leaf node can now
+  **discover transports it can connect to** by listening for the
+  `rnstransport.discovery.interface` announce aspect, instead of requiring a
+  hardcoded host:port or a local shared instance. A port of the consumer half
+  of the Python reference `RNS/Discovery.py` (`InterfaceAnnounceHandler` + the
+  consumer subset of `InterfaceDiscovery`); the producer `InterfaceAnnouncer`
+  and `BlackholeUpdater` remain a follow-up.
+  - New module `src/transport/discovery.js` exporting:
+    - `InterfaceDiscovery` (EventTarget) — subscribes to the existing transport
+      `"announce"` event and **aspect-filters by the precomputed 10-byte
+      `name_hash`** of `rnstransport.discovery.interface` (no new
+      announce-handler registry), verifies the LXMF stamp, normalizes the
+      record, and dispatches a `"discovered"` event with the parsed `info`
+      (name, type, reachable_on, port, transport_id, hops, stamp value, geo)
+      plus a generated `config_entry`. Surfaced via `rns.discovery`
+      (`rns.discovery.startPromise` awaits readiness).
+    - `parseDiscoveryAnnounce(appData, announcedIdentity, opts)` — splits
+      `flags || payload`, decrypts when `FLAG_ENCRYPTED`, verifies the trailing
+      32-byte LXMF stamp at `expand_rounds = 20` / `requiredValue` (default
+      `16`, the value RNS 1.4.0 raised `DEFAULT_STAMP_VALUE` to; configurable
+      per network), then unpacks and validates the msgpack `info` dict.
+    - `listDiscoveredInterfaces({ onlyAvailable, onlyTransport })` with the
+      stale/unknown/available status model and the 1/3/7-day pruning
+      thresholds.
+    - Optional `discoverySources` authorization (only accept discoveries from
+      the listed network identities).
+    - Producer primitives `generateDiscoveryStamp` / `buildDiscoveryAppData`
+      exposed so callers/tests can mint valid announces.
+    - `sanitizeName`, `isIpAddress`, `isHostname`, `buildConfigEntry` ported
+      byte-for-byte from `RNS/Discovery.py`.
+  - `Reticulum({ enableDiscovery: true })` constructs and auto-starts an
+    `InterfaceDiscovery` on the instance's transport, mirroring Python's
+    `discover_interfaces` config option. A no-op / `null` when the flag is off,
+    so the core stays browser-safe.
+  - Public exports for the discovery API added to `src/index.js`.
+  - **Persistence** is forward-compatible with work doc #16: `InterfaceDiscovery`
+    feature-detects the proposed KV storage interface and persists discovered
+    interfaces (status, `last_heard`, `heard_count`) across restarts; when the
+    adapter lacks it (or there is none), discoveries stay in memory.
+  - **Surface-only v1** — no auto-connect; the `config_entry` is generated for a
+    human operator to add the interface. Announce processing is serialized per
+    instance (a promise chain mirroring Python's `discovery_lock`) so
+    concurrent announces for the same interface can't lose `heard_count`
+    increments.
+  - Verified against the installed RNS reference (1.4.0): a fixture generated
+    from real `InterfaceAnnounceHandler.received_announce` output is parsed
+    byte-for-byte — `config_entry`, `discovery_hash`, `transport_id`,
+    `network_id`, geo, and stamp value all match.
+
 ## [0.3.0] - 2026-07-18
 ### Removed (breaking)
 - Network interfaces are no longer re-exported from the package main entry
