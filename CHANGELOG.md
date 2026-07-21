@@ -1,6 +1,23 @@
 # Changelog
 ## [Unreleased]
 ### Added
+- `WebRTCInterface` (`src/interfaces/webrtc.js`): bridges an open WebRTC
+  `RTCDataChannel` into RNS streams — the "transport upgrade" half of work
+  doc #19. Once a signaling orchestrator has exchanged SDP over a Reticulum
+  Link+Resource and opened a data channel, that channel is wrapped by this
+  interface and registered with the transport as a high-bandwidth (~50 Mbit/s)
+  direct peer link. Message-oriented like the WebSocket interface in raw
+  framing: each binary message carries exactly one RNS packet, no HDLC
+  byte-stuffing. Registered in the interface registry under `"webrtc"`.
+  - Written against the duck-typed `RTCDataChannel` shape (`.send()`,
+    `.binaryType`, `.readyState`, `message`/`open`/`close`/`error` events) so
+    it runs in a browser and is exercisable in Node tests via a mock channel
+    pair (Node has no native WebRTC). Not a reconnecting dialer — a channel
+    close is terminal since re-establishing WebRTC requires re-running
+    signaling.
+  - Only the interface half lands in this change; the signaling orchestrator
+    (custom-destination announce + Link + Resource SDP exchange, then
+    `addInterface`) is a follow-up.
 - Interface discovery (consumer/discoverer side): a leaf node can now
   **discover transports it can connect to** by listening for the
   `rnstransport.discovery.interface` announce aspect, instead of requiring a

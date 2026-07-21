@@ -11,6 +11,7 @@ import { HttpPostClientInterface } from "./http.js";
 import { HttpPostServerInterface } from "./http_server.js";
 import { LocalClientInterface } from "./local_client.js";
 import { TCPClientInterface, TCPServerInterface } from "./tcp.js";
+import { WebRTCInterface } from "./webrtc.js";
 import {
   WebSocketClientInterface,
   WebSocketServerInterface,
@@ -43,6 +44,7 @@ registry.set("tcp-client", TCPClientInterface);
 registry.set("tcp-server", TCPServerInterface);
 registry.set("ws-client", WebSocketClientInterface);
 registry.set("ws-server", WebSocketServerInterface);
+registry.set("webrtc", WebRTCInterface);
 
 /**
  * Lists all registered interfaces with their configuration schemas.
