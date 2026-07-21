@@ -458,6 +458,13 @@ export class LocalClientInterface extends Interface {
     this.port = options.port || 0;
     this.socketPath = options.socketPath || null;
     this.ifacSize = options.ifacSize || 0;
+    /**
+     * Nominal bitrate. Matches `RNS.Interfaces.LocalInterface` (1 Gbit/s) in
+     * the Python reference — the shared-instance Unix/TCP socket is a
+     * very-high-bandwidth local hop.
+     * @type {number}
+     */
+    this.bitrate = 1_000_000_000;
     /** @type {any} */
     this.socket = options.socket || null;
     // Only the initiator (the outbound dialer) reconnects. An adopted socket is

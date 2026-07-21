@@ -196,6 +196,13 @@ export class WebSocketClientInterface extends Interface {
       options.name || `ws-client-${this.url.replace(/^wss?:\/\//, "")}`;
     /** @type {number} */
     this.ifacSize = options.ifacSize || 0;
+    /**
+     * Nominal bitrate. JS-specific (no Python equivalent); WebSocket is
+     * TCP-backed so we assume the same 10 Mbit/s guess as
+     * `TCPClientInterface.BITRATE_GUESS`.
+     * @type {number}
+     */
+    this.bitrate = 10_000_000;
     /** @type {"raw"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "raw";
     /** @type {any} */
@@ -588,6 +595,12 @@ export class WebSocketServerInterface extends Interface {
     this.ifacSize = options.ifacSize || 0;
     /** @type {"raw"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "raw";
+    /**
+     * Nominal bitrate, inherited by spawned client interfaces. JS-specific
+     * (no Python equivalent); see {@link WebSocketClientInterface}.
+     * @type {number}
+     */
+    this.bitrate = 10_000_000;
     /** @type {any} */
     this.server = null;
     /** @type {Set<WebSocketClientInterface>} */

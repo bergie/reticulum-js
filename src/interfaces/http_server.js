@@ -53,6 +53,13 @@ export class HttpPostPeerInterface extends Interface {
     this.sessionToken = options.sessionToken;
     this.name = options.name || `http-peer-${options.interfaceId.slice(0, 8)}`;
     this.ifacSize = options.ifacSize || 0;
+    /**
+     * Nominal bitrate, overwritten by the parent
+     * {@link HttpPostServerInterface} at spawn time. Defaults to 1 Mbit/s
+     * matching the client default.
+     * @type {number}
+     */
+    this.bitrate = 1_000_000;
 
     /** @type {Uint8Array[]} packets queued for delivery to the remote client */
     this._outboundQueue = [];
@@ -319,6 +326,14 @@ export class HttpPostServerInterface extends Interface {
     this.name =
       options.name || `http-server-${this.listenIp}:${this.listenPort}`;
     this.ifacSize = options.ifacSize || 0;
+    /**
+     * Nominal bitrate, inherited by spawned peer interfaces. JS-specific (no
+     * Python equivalent); HTTP exchange is request/response with base64/JSON
+     * framing, so we assume a conservative 1 Mbit/s matching the client
+     * default.
+     * @type {number}
+     */
+    this.bitrate = 1_000_000;
     this.idleExchangeIntervalMs = options.idleExchangeIntervalMs ?? 1000;
     this.peerIdleTimeoutMs = options.peerIdleTimeoutMs ?? 60000;
     this.maxBatchPackets = options.maxBatchPackets ?? 64;
@@ -501,6 +516,8 @@ export class HttpPostServerInterface extends Interface {
       name: typeof json.name === "string" && json.name ? json.name : undefined,
       ifacSize: this.ifacSize,
     });
+    // Inherit the server's nominal bitrate.
+    peer.bitrate = this.bitrate;
     // connect() is synchronous through stream setup, so writable is ready
     // before the `connection` event fires.
     await peer.connect();

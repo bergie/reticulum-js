@@ -142,6 +142,13 @@ export class TCPClientInterface extends Interface {
     this.host = options.host || "";
     this.port = options.port || 0;
     this.ifacSize = options.ifacSize || 0;
+    /**
+     * Nominal bitrate. Matches `TCPClientInterface.BITRATE_GUESS`
+     * (10 Mbit/s) in the Python reference; overwritten by the parent server
+     * when spawned by a {@link TCPServerInterface}.
+     * @type {number}
+     */
+    this.bitrate = 10_000_000;
     this.i2pTunneled = options.i2pTunneled === true;
     /** @type {"hdlc"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "hdlc";
@@ -468,6 +475,12 @@ export class TCPServerInterface extends Interface {
     this.ifacSize = options.ifacSize || 0;
     /** @type {"hdlc"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "hdlc";
+    /**
+     * Nominal bitrate, inherited by spawned client interfaces. Matches
+     * `TCPServerInterface.BITRATE_GUESS` (10 Mbit/s) in the Python reference.
+     * @type {number}
+     */
+    this.bitrate = 10_000_000;
     /** @type {any} */
     this.server = null;
     /** @type {Set<TCPClientInterface>} */
@@ -502,6 +515,8 @@ export class TCPServerInterface extends Interface {
           framing: this.framing,
           name: `tcp-client-from-server-${socket.remoteAddress}:${socket.remotePort}`,
         });
+        // Inherit the server's nominal bitrate (Python spawned-interface parity).
+        client.bitrate = this.bitrate;
         await client.connect();
         this.spawnedInterfaces.add(client);
         this.dispatchEvent(new CustomEvent("connection", { detail: client }));

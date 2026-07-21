@@ -164,6 +164,18 @@ export class Interface extends EventTarget {
   online = false;
 
   /**
+   * Nominal physical bitrate of this interface in bits per second
+   * (`self.bitrate` on `RNS.Interfaces.Interface` in the Python reference,
+   * default 62500). Each interface overrides this with its medium's rate.
+   *
+   * Currently surfaced for parity and observability only — the JS transport
+   * does not yet sort/select interfaces by bitrate, nor derive an MTU or
+   * announce-cap from it. That routing work is tracked separately.
+   * @type {number}
+   */
+  bitrate = 62500;
+
+  /**
    * Whether this interface is currently open/online.
    * @type {boolean}
    */

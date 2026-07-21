@@ -1139,6 +1139,8 @@ export class AutoInterface extends Interface {
       ifname,
       name: `auto-peer-${this.name}/${ifname}/${addr}`,
     });
+    // Inherit the parent's nominal bitrate (Python spawned-interface parity).
+    peer.bitrate = this.bitrate;
     this._spawnPeer(peer);
   }
 

@@ -52,6 +52,13 @@ export class AutoInterfacePeer extends Interface {
     this.address = options.address;
     this.ifname = options.ifname;
     this.name = options.name || `auto-peer-${this.ifname}/${this.address}`;
+    /**
+     * Nominal bitrate, overwritten by the parent {@link AutoInterface} at
+     * spawn time so spawned peers inherit its (possibly configured) rate.
+     * Defaults to the 10 Mbit/s `AutoInterface.BITRATE_GUESS`.
+     * @type {number}
+     */
+    this.bitrate = 10_000_000;
     /** @type {any} */
     this._readable = null;
     /** @type {any} */

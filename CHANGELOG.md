@@ -50,6 +50,21 @@
     byte-for-byte — `config_entry`, `discovery_hash`, `transport_id`,
     `network_id`, geo, and stamp value all match.
 
+- Interface `bitrate`: every interface now declares a nominal physical
+  bitrate (bits/s) as `iface.bitrate`, ported from `self.bitrate` on
+  `RNS.Interfaces.Interface` in the Python reference. The base `Interface`
+  default is `62500`; per-interface values match Python where one exists
+  (TCP client/server `10_000_000`, `LocalClientInterface` `1_000_000_000`,
+  `AutoInterface`/`AutoInterfacePeer` `10_000_000`) and are set sensibly for
+  the JS-specific interfaces (WebSocket `10_000_000`, HTTP POST
+  client/server/peer `1_000_000`). Server interfaces that spawn client
+  interfaces (`TCPServerInterface`, `AutoInterface`, `HttpPostServerInterface`)
+  now copy their bitrate onto each spawned child, mirroring Python's
+  `spawned_interface.bitrate = self.bitrate`.
+  - **Parity/observability only for now:** the JS transport does not yet sort
+    or select interfaces by bitrate, derive an MTU, or throttle announces from
+    it. That bitrate-based routing work is tracked as a separate proposal.
+
 ## [0.3.0] - 2026-07-18
 ### Removed (breaking)
 - Network interfaces are no longer re-exported from the package main entry
