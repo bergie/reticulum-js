@@ -8,6 +8,41 @@ The architecture is strictly bound to native ES6 modules, `Uint8Array`, `DataVie
 
 This implementation is optimized to operate as a "leaf node" transport layer. Functionality needed for building Reticulum Transport nodes in JavaScript may be added later.
 
+### 1.1 Dependency & import boundaries
+
+The public entry point (`src/index.js`) and every module in its **static
+import graph** must remain browser-safe and free of runtime dependencies
+beyond the [WinterTC Minimum Common API](https://min-common-api.proposal.wintertc.org/).
+
+- **No Node.js imports reachable from `index.js`.** Files imported
+  transitively via static `import` from `src/index.js` — the core
+  (`src/core`, `src/crypto`, `src/transport`) — **must not** import Node.js
+  dependencies, including the `node:` core libraries (`node:net`,
+  `node:http`, `node:dgram`, `node:fs`, …). This is what guarantees a browser
+  bundler (webpack, tsdown/rolldown, vite, esbuild, rollup) never pulls
+  Node-only code into a browser build, with zero per-tool configuration.
+  (The only `node:` import outside `src/interfaces/` today is
+  `src/utils/netinfo.js` → `node:os`, and it is imported exclusively by the
+  AutoInterface — never by `index.js`.)
+
+- **Functionality needing third-party or Node-only libraries must either:**
+  1. be wired in via **dependency injection**, so the core has no static
+     `import` of the dependency and the caller supplies the concrete
+     implementation — exactly how bz2 compression is handled
+     (`new Reticulum({ compressionProvider })` is threaded down to
+     `Resource`/`Link` as `options.bz2`; `@digitaldefiance/bzip2-wasm` is a
+     devDependency only); **or**
+  2. be **published as a separate package** that imports from `reticulum-js`
+     and injects its concrete runtime (dependency direction is one-way:
+     companion → core, never core → companion). This is the chosen home for
+     Node-only runtimes that carry native dependencies — e.g. Node.js WebRTC
+     and the Node.js WebSocket Server (work doc #19).
+
+Interfaces built on `node:` libraries (e.g. `src/interfaces/tcp.js`,
+`src/interfaces/local_client.js`) are therefore **not** imported by
+`src/index.js`; Node consumers import the module path directly, and browser
+consumers simply do not.
+
 ---
 
 ## 2. Core Directory Structure
