@@ -5,17 +5,17 @@
  *   (e.g. for dynamically-generated setup UIs).
  */
 
-import { AutoInterface } from "./auto.js";
-import { Interface } from "./base.js";
-import { HttpPostClientInterface } from "./http.js";
-import { HttpPostServerInterface } from "./http_server.js";
-import { LocalClientInterface } from "./local_client.js";
-import { TCPClientInterface, TCPServerInterface } from "./tcp.js";
-import { WebRTCInterface } from "./webrtc.js";
+import { Interface } from "reticulum-js/src/interfaces/base.js";
+import { HttpPostClientInterface } from "reticulum-js/src/interfaces/http.js";
+import { WebRTCInterface } from "reticulum-js/src/interfaces/webrtc.js";
 import {
   WebSocketClientInterface,
   WebSocketServerInterface,
-} from "./websocket.js";
+} from "reticulum-js/src/interfaces/websocket.js";
+import { AutoInterface } from "./auto.js";
+import { HttpPostServerInterface } from "./http_server.js";
+import { LocalClientInterface } from "./local_client.js";
+import { TCPClientInterface, TCPServerInterface } from "./tcp.js";
 
 /**
  * A RNS interface class: constructable into an {@link Interface} and exposing a

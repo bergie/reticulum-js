@@ -5,8 +5,8 @@ import {
   HeaderType,
   Packet,
   PacketType,
-} from "../../src/core/packet.js";
-import { HttpPostClientInterface } from "../../src/interfaces/http.js";
+} from "reticulum-js/src/core/packet.js";
+import { HttpPostClientInterface } from "reticulum-js/src/interfaces/http.js";
 import {
   HttpPostPeerInterface,
   HttpPostServerInterface,

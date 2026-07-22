@@ -6,12 +6,12 @@ import {
   HeaderType,
   Packet,
   PacketType,
-} from "../../src/core/packet.js";
+} from "reticulum-js/src/core/packet.js";
+import { kissFrame } from "reticulum-js/src/transport/kiss-framer.js";
 import {
   TCPClientInterface,
   TCPServerInterface,
 } from "../../src/interfaces/tcp.js";
-import { kissFrame } from "../../src/transport/kiss-framer.js";
 
 test("TCP interface connection and packet transfer", async () => {
   const port = 12345;

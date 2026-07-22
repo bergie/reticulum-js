@@ -1,9 +1,12 @@
 import { randomBytes } from "node:crypto";
 import http from "node:http";
-import { Packet } from "../core/packet.js";
-import { base64ToBytes, bytesToBase64 } from "../utils/encoding.js";
-import { LogLevel, log } from "../utils/log.js";
-import { Interface } from "./base.js";
+import { Packet } from "reticulum-js/src/core/packet.js";
+import { Interface } from "reticulum-js/src/interfaces/base.js";
+import {
+  base64ToBytes,
+  bytesToBase64,
+} from "reticulum-js/src/utils/encoding.js";
+import { LogLevel, log } from "reticulum-js/src/utils/log.js";
 
 /**
  * @file http_server.js
@@ -113,7 +116,9 @@ export class HttpPostPeerInterface extends Interface {
       },
     });
     this._writable = new WritableStream({
-      write: (/** @type {import("../core/packet.js").Packet} */ packet) => {
+      write: (
+        /** @type {import("reticulum-js/src/core/packet.js").Packet} */ packet,
+      ) => {
         this._outboundQueue.push(packet.serialize());
       },
     });

@@ -1,16 +1,19 @@
 import net from "node:net";
 import { Readable, Writable } from "node:stream";
-import { Packet } from "../core/packet.js";
+import { Packet } from "reticulum-js/src/core/packet.js";
+import {
+  Interface,
+  reconnectSchemaProperties,
+} from "reticulum-js/src/interfaces/base.js";
 import {
   createHdlcFramerStream,
   createHdlcUnframerStream,
-} from "../transport/hdlc-framer.js";
+} from "reticulum-js/src/transport/hdlc-framer.js";
 import {
   createKissFramerStream,
   createKissUnframerStream,
-} from "../transport/kiss-framer.js";
-import { LogLevel, log } from "../utils/log.js";
-import { Interface, reconnectSchemaProperties } from "./base.js";
+} from "reticulum-js/src/transport/kiss-framer.js";
+import { LogLevel, log } from "reticulum-js/src/utils/log.js";
 
 /**
  * Initial TCP keepalive probe delay, in milliseconds. Mirrors the Python

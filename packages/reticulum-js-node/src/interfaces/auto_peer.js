@@ -13,10 +13,10 @@
  * deserialized, de-duplicated against the parent's shared deque, and dispatched
  * as `"packet"` events.
  */
-import { Identity } from "../core/identity.js";
-import { Packet } from "../core/packet.js";
-import { LogLevel, log } from "../utils/log.js";
-import { Interface } from "./base.js";
+import { Identity } from "reticulum-js/src/core/identity.js";
+import { Packet } from "reticulum-js/src/core/packet.js";
+import { Interface } from "reticulum-js/src/interfaces/base.js";
+import { LogLevel, log } from "reticulum-js/src/utils/log.js";
 
 /**
  * @typedef {Object} AutoInterfacePeerOptions

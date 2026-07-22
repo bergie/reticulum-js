@@ -6,7 +6,6 @@ import {
   Packet,
   PacketType,
 } from "../../src/core/packet.js";
-import { getInterface } from "../../src/interfaces/registry.js";
 import { WebRTCInterface } from "../../src/interfaces/webrtc.js";
 
 /**
@@ -103,10 +102,6 @@ function createChannelPair() {
   b._peer = a;
   return [a, b];
 }
-
-test('WebRTCInterface is registered as "webrtc"', () => {
-  assert.equal(getInterface("webrtc"), WebRTCInterface);
-});
 
 test("WebRTCInterface requires an RTCDataChannel", () => {
   assert.throws(

@@ -40,8 +40,9 @@
  * that form on macOS/Linux; the older `::%<ifindex>` form is rejected.
  */
 import dgram from "node:dgram";
-import { Identity } from "../core/identity.js";
-import { LogLevel, log } from "../utils/log.js";
+import { Identity } from "reticulum-js/src/core/identity.js";
+import { Interface } from "reticulum-js/src/interfaces/base.js";
+import { LogLevel, log } from "reticulum-js/src/utils/log.js";
 import {
   AF_INET6,
   descopeLinkLocal,
@@ -49,7 +50,6 @@ import {
   listInterfaces,
 } from "../utils/netinfo.js";
 import { AutoInterfacePeer } from "./auto_peer.js";
-import { Interface } from "./base.js";
 
 /**
  * SHA-256 length in bytes: the discovery token is the full hash, and the first
@@ -364,7 +364,7 @@ export class AutoInterface extends Interface {
      * Transport that owns this interface, set via {@link attachTransport}. When
      * present, spawned peers are auto-registered with it; otherwise the caller
      * registers them via the `"connection"` event.
-     * @type {import("../transport/transport.js").TransportCore | null}
+     * @type {import("reticulum-js/src/transport/transport.js").TransportCore | null}
      */
     this.transport = null;
 
@@ -422,7 +422,7 @@ export class AutoInterface extends Interface {
    * peers can be auto-registered (Open Q1 of work doc #12). Also registers any
    * peers spawned before the transport was attached, so the
    * `addInterface`/`connect` call order doesn't matter.
-   * @param {import("../transport/transport.js").TransportCore} transport
+   * @param {import("reticulum-js/src/transport/transport.js").TransportCore} transport
    */
   attachTransport(transport) {
     this.transport = transport;

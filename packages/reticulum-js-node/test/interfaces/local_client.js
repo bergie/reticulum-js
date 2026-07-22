@@ -9,7 +9,7 @@ import {
   HeaderType,
   Packet,
   PacketType,
-} from "../../src/core/packet.js";
+} from "reticulum-js/src/core/packet.js";
 import {
   asBool,
   asInt,

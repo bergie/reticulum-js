@@ -1,7 +1,11 @@
 import assert from "node:assert";
 import { test } from "node:test";
+import { Interface } from "reticulum-js/src/interfaces/base.js";
+import {
+  WebSocketClientInterface,
+  WebSocketServerInterface,
+} from "reticulum-js/src/interfaces/websocket.js";
 import { AutoInterface } from "../../src/interfaces/auto.js";
-import { Interface } from "../../src/interfaces/base.js";
 import {
   getInterface,
   getSchema,
@@ -12,10 +16,6 @@ import {
   TCPClientInterface,
   TCPServerInterface,
 } from "../../src/interfaces/tcp.js";
-import {
-  WebSocketClientInterface,
-  WebSocketServerInterface,
-} from "../../src/interfaces/websocket.js";
 
 /** @param {object} schema */
 function assertValidSchema(schema) {

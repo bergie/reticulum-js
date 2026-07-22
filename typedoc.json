@@ -1,8 +1,11 @@
 {
   "$schema": "https://typedoc.org/schema.json",
   "name": "reticulum-js",
-  "tsconfig": "packages/reticulum-js/tsconfig.json",
-  "entryPoints": ["packages/reticulum-js/src/index.js", "packages/reticulum-js/src/interfaces/*.js"],
+  "entryPointStrategy": "packages",
+  "entryPoints": [
+    "packages/reticulum-js",
+    "packages/reticulum-js-node"
+  ],
   "lang": "en",
   "customCss": "./assets/reticulum-js.css",
   "customFooterHtml": "<code>rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js</code>",

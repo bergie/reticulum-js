@@ -1,0 +1,30 @@
+{
+  "name": "reticulum-js-node",
+  "version": "0.3.0",
+  "description": "Node.js-only Reticulum interfaces (TCP, AutoInterface, LocalClient, HTTP exchange server) and the interface registry, for reticulum-js",
+  "keywords": [
+    "reticulum",
+    "rns",
+    "mesh",
+    "node"
+  ],
+  "license": "EUPL-1.2",
+  "author": "Henri Bergius <henri.bergia@iki.fi>",
+  "homepage": "https://reticulum.js.org/",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "types/src/index.d.ts",
+  "files": [
+    "src",
+    "types"
+  ],
+  "dependencies": {
+    "reticulum-js": "^0.3.0"
+  },
+  "scripts": {
+    "test": "node --test --test-force-exit --test-timeout 5000 test/*.js test/**/*.js",
+    "lint": "npx @biomejs/biome check --use-editorconfig=true src/",
+    "types": "tsc",
+    "preversion": "npm run types"
+  }
+}

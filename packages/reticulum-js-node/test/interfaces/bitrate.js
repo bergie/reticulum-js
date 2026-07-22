@@ -1,8 +1,12 @@
 import assert from "node:assert";
 import { test } from "node:test";
+import { Interface } from "reticulum-js/src/interfaces/base.js";
+import { HttpPostClientInterface } from "reticulum-js/src/interfaces/http.js";
+import {
+  WebSocketClientInterface,
+  WebSocketServerInterface,
+} from "reticulum-js/src/interfaces/websocket.js";
 import { AutoInterfacePeer } from "../../src/interfaces/auto_peer.js";
-import { Interface } from "../../src/interfaces/base.js";
-import { HttpPostClientInterface } from "../../src/interfaces/http.js";
 import {
   HttpPostPeerInterface,
   HttpPostServerInterface,
@@ -12,10 +16,6 @@ import {
   TCPClientInterface,
   TCPServerInterface,
 } from "../../src/interfaces/tcp.js";
-import {
-  WebSocketClientInterface,
-  WebSocketServerInterface,
-} from "../../src/interfaces/websocket.js";
 
 // Bitrate values mirror the Python reference (`self.bitrate` on
 // `RNS.Interfaces.Interface` and each subclass). See work doc #19.

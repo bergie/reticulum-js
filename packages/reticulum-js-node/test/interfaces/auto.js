@@ -6,15 +6,15 @@ import {
   HeaderType,
   Packet,
   PacketType,
-} from "../../src/core/packet.js";
+} from "reticulum-js/src/core/packet.js";
+import { TransportCore } from "reticulum-js/src/transport/transport.js";
+import { toHex } from "reticulum-js/src/utils/encoding.js";
 import {
   AutoInterface,
   computeDiscoveryAddress,
   computeDiscoveryToken,
 } from "../../src/interfaces/auto.js";
 import { AutoInterfacePeer } from "../../src/interfaces/auto_peer.js";
-import { TransportCore } from "../../src/transport/transport.js";
-import { toHex } from "../../src/utils/encoding.js";
 import {
   AF_INET6,
   listAddresses,
