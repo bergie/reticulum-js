@@ -57,6 +57,35 @@
   - Only the interface half lands in this change; the signaling orchestrator
     (custom-destination announce + Link + Resource SDP exchange, then
     `addInterface`) is a follow-up.
+- WebRTC transport signaling orchestrator (`src/webrtc/signaling.js`,
+  `WebRTCSignaling`): completes the WebRTC transport upgrade started by
+  `WebRTCInterface`. Runs the two-stage lifecycle from work doc #19 — (1)
+  discovery via a shared `"rns.webrtc"` SINGLE destination announcing a
+  one-byte capability flag (`0x01`) as `app_data`, surfaced as `"peer"`
+  events after name-hash aspect filtering; (2) SDP exchange over an encrypted
+  Reticulum Link where the offer/answer travel as Reticulum Resources
+  (auto-fragmented across the 500-byte MTU) inside a 1-byte-type framing
+  envelope (`0x01` offer / `0x02` answer / `0x03` reserved for future trickle
+  ICE) + UTF-8 SDP. Once the `RTCDataChannel` opens it is wrapped in a
+  `WebRTCInterface` and registered with the transport; the signaling Link is
+  then torn down. First cut is non-trickle (waits for
+  `iceGatheringState === "complete"` and ships the full local description).
+  - **Dependency-injection-first:** the `RTCPeerConnection` factory is injected
+    (`createPeerConnection` option) and auto-detects the browser global when
+    omitted, so the core stays browser-safe/WinterTC-pure and the full
+    negotiation state machine is mock-testable in Node (Node has no native
+    WebRTC; the future companion package injects a runtime — see work doc #19
+    update #3). `rtcConfig` passes through STUN/TURN.
+  - `test/webrtc/signaling.js`: unit tests plus a true end-to-end case — two
+    real `Reticulum` instances bridged by a loopback interface pair, a mock
+    `RTCPeerConnection` pair injected via the seam, running the real link
+    handshake + Resource transfer, with a packet round-tripping through the
+    established channel.
+  - Public exports added to `src/index.js` (`WebRTCSignaling` and the
+    capability/SDP constants as `WEBRTC_*`).
+  - Cross-language spec in `documents/WebRTC Transport.md` so Python/Node/other
+    ports can interoperate (this transport has no Python reference; the JS
+    implementation defines the wire format).
 - Interface discovery (consumer/discoverer side): a leaf node can now
   **discover transports it can connect to** by listening for the
   `rnstransport.discovery.interface` announce aspect, instead of requiring a
@@ -117,9 +146,27 @@
   interfaces (`TCPServerInterface`, `AutoInterface`, `HttpPostServerInterface`)
   now copy their bitrate onto each spawned child, mirroring Python's
   `spawned_interface.bitrate = self.bitrate`.
-  - **Parity/observability only for now:** the JS transport does not yet sort
-    or select interfaces by bitrate, derive an MTU, or throttle announces from
-    it. That bitrate-based routing work is tracked as a separate proposal.
+  - The `bitrate` value is now put to use for interface ordering — see
+    `TransportCore.prioritizeInterfaces()` below. Per-bitrate link timeouts,
+    MTU derivation, and announce rate limiting remain a follow-up.
+- Interface prioritization by bitrate (`TransportCore.prioritizeInterfaces()`,
+  work doc #20 Phase 1): the interface set is now kept ordered
+  highest-bitrate-first, a direct port of the Python reference's
+  `Transport.prioritize_interfaces()`
+  (`Transport.interfaces.sort(key=lambda i: i.bitrate, reverse=True)`,
+  try/except-wrapped). Re-sorted eagerly on `addInterface`/`removeInterface`
+  (JS has no per-interface jobs loop). Because routing is path-table driven
+  (same as Python), the sort governs iteration order — `broadcast()` and any
+  "first available" walk now visit higher-bitrate interfaces first — rather
+  than changing which interface carries a given routed packet. Interfaces with
+  a missing/non-numeric/zero bitrate sort last instead of throwing (Python's
+  comparator would raise mid-sort and be swallowed by its try/except, leaving
+  the list unsorted). `Reticulum.MINIMUM_BITRATE = 5` added for parity with
+  `RNS.Reticulum.MINIMUM_BITRATE` (config-time validation only, as in Python —
+  it does not skip interfaces in routing). Smoketested in
+  `test/transport/prioritize.test.js`. The genuine per-bitrate behaviours
+  (link timeouts `~1/bitrate`, announce rate limiting, MTU derivation) are
+  Phase 2/3.
 
 ## [0.3.0] - 2026-07-18
 ### Removed (breaking)

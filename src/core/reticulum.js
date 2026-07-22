@@ -10,6 +10,14 @@ import { Packet } from "./packet.js";
  */
 export class Reticulum {
   /**
+   * Minimum acceptable interface bitrate in bits/s
+   * (`RNS.Reticulum.MINIMUM_BITRATE` in the Python reference). A configured
+   * bitrate below this is ignored so the interface keeps its default — used
+   * for config-time validation only. It does **not** cause interfaces to be
+   * skipped in routing; the Python reference doesn't either.
+   */
+  static MINIMUM_BITRATE = 5;
+  /**
    * Initializes the Reticulum engine.
    * @param {Object} config - Configuration options for the node.
    * @param {Object} [config.storageAdapter] - Interface for persisting identities and caches.

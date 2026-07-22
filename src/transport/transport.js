@@ -86,6 +86,11 @@ export class TransportCore extends EventTarget {
       iface.attachTransport(this);
     }
 
+    // Keep interfaces ordered by bitrate (Python `Transport.prioritize_interfaces`,
+    // invoked on transport start + the per-interface jobs loop). JS has no jobs
+    // loop, so we re-sort eagerly on every add/remove — same steady state.
+    this.prioritizeInterfaces();
+
     log("Transport", `[+] Transport bound to interface: ${iface.name}`);
   }
 
@@ -100,7 +105,50 @@ export class TransportCore extends EventTarget {
     this.interfaces.delete(iface);
     this.routingTable.dropInterface(iface);
     if (this.defaultInterface === iface) this.defaultInterface = null;
+    // Re-sort after removal so iteration order stays bitrate-prioritized.
+    this.prioritizeInterfaces();
     log("Transport", `[-] Interface removed: ${iface.name}`, LogLevel.WARNING);
+  }
+
+  /**
+   * Re-sorts the interface set by nominal bitrate, highest first, mirroring
+   * the Python reference's `Transport.prioritize_interfaces()`
+   * (`Transport.interfaces.sort(key=lambda i: i.bitrate, reverse=True)`,
+   * wrapped in try/except).
+   *
+   * Because outbound routing is path-table driven (a packet goes out the
+   * interface its path was learned through), this sort does **not** change
+   * *which* interface carries a given routed packet — same as Python. It
+   * governs **iteration order**: PLAIN/GROUP broadcasts and any "first
+   * available" walk now visit higher-bitrate interfaces first. The genuine
+   * per-bitrate behaviours (link timeouts, announce rate limiting) build on
+   * this and are tracked as Phase 2 of work doc #20.
+   *
+   * Interfaces with a missing/non-numeric/zero bitrate sort last instead of
+   * raising (Python's comparator would throw mid-sort and be swallowed by
+   * its try/except, leaving the list unsorted; we degrade more gracefully).
+   */
+  prioritizeInterfaces() {
+    try {
+      const ranked = [...this.interfaces].sort((a, b) => {
+        const ba =
+          typeof a?.bitrate === "number" && a.bitrate > 0
+            ? a.bitrate
+            : -Infinity;
+        const bb =
+          typeof b?.bitrate === "number" && b.bitrate > 0
+            ? b.bitrate
+            : -Infinity;
+        return bb - ba; // descending, matching `reverse=True`
+      });
+      this.interfaces = new Set(ranked);
+    } catch (/** @type {any} */ e) {
+      log(
+        "Transport",
+        `Could not prioritize interfaces according to bitrate. The contained exception was: ${e}`,
+        LogLevel.ERROR,
+      );
+    }
   }
 
   /**

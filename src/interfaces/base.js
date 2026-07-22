@@ -168,9 +168,12 @@ export class Interface extends EventTarget {
    * (`self.bitrate` on `RNS.Interfaces.Interface` in the Python reference,
    * default 62500). Each interface overrides this with its medium's rate.
    *
-   * Currently surfaced for parity and observability only — the JS transport
-   * does not yet sort/select interfaces by bitrate, nor derive an MTU or
-   * announce-cap from it. That routing work is tracked separately.
+   * Used by `TransportCore.prioritizeInterfaces()` to order the interface set
+   * highest-bitrate-first (mirrors the Python reference's
+   * `Transport.prioritize_interfaces`); the per-bitrate link-timeout and
+   * announce-rate-limit behaviours that also build on it are tracked as
+   * Phase 2 of work doc #20. Configured bitrates below
+   * {@link Reticulum.MINIMUM_BITRATE} are ignored (matching Python).
    * @type {number}
    */
   bitrate = 62500;
