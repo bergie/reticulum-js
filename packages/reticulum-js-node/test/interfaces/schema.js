@@ -1,10 +1,7 @@
 import assert from "node:assert";
 import { test } from "node:test";
 import { Interface } from "reticulum-js/src/interfaces/base.js";
-import {
-  WebSocketClientInterface,
-  WebSocketServerInterface,
-} from "reticulum-js/src/interfaces/websocket.js";
+import { WebSocketClientInterface } from "reticulum-js/src/interfaces/websocket.js";
 import { AutoInterface } from "../../src/interfaces/auto.js";
 import {
   getInterface,
@@ -39,7 +36,6 @@ test("subclasses inherit name and ifacSize from the base schema", () => {
     TCPClientInterface,
     TCPServerInterface,
     WebSocketClientInterface,
-    WebSocketServerInterface,
   ]) {
     const schema = cls.getConfigurationSchema();
     // Inherited structurally from the base schema (not redefined locally).
@@ -109,21 +105,12 @@ test("WebSocketClientInterface schema documents its options", () => {
   assert.deepStrictEqual(schema.required, []);
 });
 
-test("WebSocketServerInterface schema documents its options", () => {
-  const schema = WebSocketServerInterface.getConfigurationSchema();
-  assertValidSchema(schema);
-  assert.ok(schema.properties.listenIp);
-  assert.ok(schema.properties.listenPort);
-  assert.deepStrictEqual(schema.required, ["listenPort"]);
-});
-
 test("every declared option has a description", () => {
   for (const cls of [
     AutoInterface,
     TCPClientInterface,
     TCPServerInterface,
     WebSocketClientInterface,
-    WebSocketServerInterface,
   ]) {
     const schema = cls.getConfigurationSchema();
     for (const [key, prop] of Object.entries(schema.properties)) {
@@ -163,11 +150,8 @@ test("reconnect schema defaults mirror the Python reference", () => {
 test("server interfaces do not expose reconnect options", () => {
   // Reconnect is an initiator-only concern; server interfaces must not list it.
   const tcpServer = TCPServerInterface.getConfigurationSchema().properties;
-  const wsServer = WebSocketServerInterface.getConfigurationSchema().properties;
   assert.ok(!tcpServer.autoReconnect);
   assert.ok(!tcpServer.reconnectWait);
-  assert.ok(!wsServer.autoReconnect);
-  assert.ok(!wsServer.reconnectWait);
 });
 
 test("schema defaults track the constructor fallbacks", () => {
@@ -176,11 +160,6 @@ test("schema defaults track the constructor fallbacks", () => {
     WebSocketClientInterface.getConfigurationSchema().properties.host.default,
     "localhost",
   );
-  assert.strictEqual(
-    WebSocketServerInterface.getConfigurationSchema().properties.listenIp
-      .default,
-    "0.0.0.0",
-  );
 });
 
 test("port options carry illustrative examples", () => {
@@ -188,7 +167,6 @@ test("port options carry illustrative examples", () => {
     TCPClientInterface,
     TCPServerInterface,
     WebSocketClientInterface,
-    WebSocketServerInterface,
   ]) {
     const portProp =
       cls.getConfigurationSchema().properties.port ??
@@ -219,7 +197,6 @@ test("registry lists all built-in interfaces", () => {
   assert.ok(ids.includes("tcp-client"));
   assert.ok(ids.includes("tcp-server"));
   assert.ok(ids.includes("ws-client"));
-  assert.ok(ids.includes("ws-server"));
 });
 
 test("registry entries expose id, name, schema and interfaceClass", () => {

@@ -4,7 +4,9 @@
   "entryPointStrategy": "packages",
   "entryPoints": [
     "packages/reticulum-js",
-    "packages/reticulum-js-node"
+    "packages/reticulum-js-node",
+    "packages/reticulum-js-webrtc-node",
+    "packages/reticulum-js-websocket-server-node"
   ],
   "lang": "en",
   "customCss": "./assets/reticulum-js.css",

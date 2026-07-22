@@ -2,10 +2,7 @@ import assert from "node:assert";
 import { test } from "node:test";
 import { Interface } from "reticulum-js/src/interfaces/base.js";
 import { HttpPostClientInterface } from "reticulum-js/src/interfaces/http.js";
-import {
-  WebSocketClientInterface,
-  WebSocketServerInterface,
-} from "reticulum-js/src/interfaces/websocket.js";
+import { WebSocketClientInterface } from "reticulum-js/src/interfaces/websocket.js";
 import { AutoInterfacePeer } from "../../src/interfaces/auto_peer.js";
 import {
   HttpPostPeerInterface,
@@ -48,11 +45,6 @@ test("each interface declares a Python-parity nominal bitrate", () => {
       name: "WebSocketClientInterface",
       iface: new WebSocketClientInterface({ url: "ws://example/" }),
       expected: 10000000, // JS-specific; TCP-backed, same guess as TCP
-    },
-    {
-      name: "WebSocketServerInterface",
-      iface: new WebSocketServerInterface({ listenPort: 0 }),
-      expected: 10000000,
     },
     {
       name: "AutoInterfacePeer",

@@ -8,10 +8,7 @@
 import { Interface } from "reticulum-js/src/interfaces/base.js";
 import { HttpPostClientInterface } from "reticulum-js/src/interfaces/http.js";
 import { WebRTCInterface } from "reticulum-js/src/interfaces/webrtc.js";
-import {
-  WebSocketClientInterface,
-  WebSocketServerInterface,
-} from "reticulum-js/src/interfaces/websocket.js";
+import { WebSocketClientInterface } from "reticulum-js/src/interfaces/websocket.js";
 import { AutoInterface } from "./auto.js";
 import { HttpPostServerInterface } from "./http_server.js";
 import { LocalClientInterface } from "./local_client.js";
@@ -43,7 +40,6 @@ registry.set("local-client", LocalClientInterface);
 registry.set("tcp-client", TCPClientInterface);
 registry.set("tcp-server", TCPServerInterface);
 registry.set("ws-client", WebSocketClientInterface);
-registry.set("ws-server", WebSocketServerInterface);
 registry.set("webrtc", WebRTCInterface);
 
 /**

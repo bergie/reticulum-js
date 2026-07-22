@@ -4,6 +4,7 @@
     "target": "esnext",
     "types": ["node"],
     "checkJs": true,
+    "skipLibCheck": true,
     "emitDeclarationOnly": true,
     "declaration": true,
     "allowJs": true
