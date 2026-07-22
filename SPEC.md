@@ -10,20 +10,23 @@ This implementation is optimized to operate as a "leaf node" transport layer. Fu
 
 ### 1.1 Dependency & import boundaries
 
-The public entry point (`src/index.js`) and every module in its **static
-import graph** must remain browser-safe and free of runtime dependencies
-beyond the [WinterTC Minimum Common API](https://min-common-api.proposal.wintertc.org/).
+The codebase is an npm-workspaces monorepo (see §2). Only the **core
+package** (`packages/reticulum-js`) must stay browser-safe: its public entry
+point (`src/index.js`) and every module in its **static import graph** must
+remain free of runtime dependencies beyond the
+[WinterTC Minimum Common API](https://min-common-api.proposal.wintertc.org/).
+Paths written as `src/...` in this section are relative to the core package.
 
-- **No Node.js imports reachable from `index.js`.** Files imported
-  transitively via static `import` from `src/index.js` — the core
-  (`src/core`, `src/crypto`, `src/transport`) — **must not** import Node.js
+- **No Node.js imports reachable from the core `index.js`.** Files imported
+  transitively via static `import` from `src/index.js` — `src/core`,
+  `src/crypto`, `src/transport`, `src/lxmf`, `src/webrtc`, and the
+  browser-safe entries under `src/interfaces` — **must not** import Node.js
   dependencies, including the `node:` core libraries (`node:net`,
   `node:http`, `node:dgram`, `node:fs`, …). This is what guarantees a browser
   bundler (webpack, tsdown/rolldown, vite, esbuild, rollup) never pulls
   Node-only code into a browser build, with zero per-tool configuration.
-  (The only `node:` import outside `src/interfaces/` today is
-  `src/utils/netinfo.js` → `node:os`, and it is imported exclusively by the
-  AutoInterface — never by `index.js`.)
+  Node-builtin interfaces and `src/utils/netinfo.js` (`node:os`) live in the
+  `reticulum-js-node` companion.)
 
 - **Functionality needing third-party or Node-only libraries must either:**
   1. be wired in via **dependency injection**, so the core has no static
@@ -34,14 +37,17 @@ beyond the [WinterTC Minimum Common API](https://min-common-api.proposal.wintert
      devDependency only); **or**
   2. be **published as a separate package** that imports from `reticulum-js`
      and injects its concrete runtime (dependency direction is one-way:
-     companion → core, never core → companion). This is the chosen home for
-     Node-only runtimes that carry native dependencies — e.g. Node.js WebRTC
-     and the Node.js WebSocket Server (work doc #19).
+     companion → core, never core → companion). The companions are
+     `reticulum-js-node` (Node-builtin interfaces — TCP, AutoInterface,
+     LocalClient, HTTP POST server — plus the interface registry),
+     `reticulum-js-webrtc-node` (a werift-backed `createPeerConnection`
+     factory for the core's WebRTC transport), and
+     `reticulum-js-websocket-server-node` (a ws-backed WebSocket **server**).
 
-Interfaces built on `node:` libraries (e.g. `src/interfaces/tcp.js`,
-`src/interfaces/local_client.js`) are therefore **not** imported by
-`src/index.js`; Node consumers import the module path directly, and browser
-consumers simply do not.
+Interfaces built on `node:` libraries (e.g. `tcp.js`, `local_client.js`)
+therefore **do not live in the core package at all** — Node consumers import
+them from the `reticulum-js-node` companion, and browser consumers simply do
+not use them.
 
 ### 1.2 Logging
 
@@ -90,31 +96,40 @@ number), and the `NOTICE` default. The exported `setLogLevel()` /
 
 ---
 
-## 2. Core Directory Structure
+## 2. Package Structure
 
-The system utilizes native ES Modules and a domain-driven structure, isolating cryptographic operations from network transport and application logic.
+The project is an npm-workspaces monorepo: a zero-dependency, browser-safe **core** package plus small **companion** packages that add Node-only or external-dependency interfaces. The core uses native ES Modules with a domain-driven structure, isolating cryptographic operations from network transport and application logic.
 
 ```text
-reticulum-js/
-├── src/
-│   ├── crypto/            # Pure Web Crypto API wrappers
-│   │   ├── keys.js        # X25519 / Ed25519 generation and parsing
-│   │   └── ciphers.js     # AES-128-CBC, HKDF derivation
-│   ├── core/              # Reticulum domain logic
-│   │   ├── identity.js    # Identity creation, signing, and verification
-│   │   ├── destination.js # Routing targets (EventTargets)
-│   │   └── packet.js      # Binary serialization/deserialization
-│   ├── transport/         # Mesh routing and link management
-│   │   ├── hdlc-framer.js # HDLC stream framing (TCP / loopback default)
-│   │   ├── kiss-framer.js # KISS stream framing (serial/RNode; optional TCP/WS)
-│   │   └── link.js        # Encrypted session establishment (ECIES)
-│   ├── interfaces/        # Environment-agnostic I/O
-│   │   ├── base.js        # Interface interface (Base class)
-│   │   ├── tcp.js         # Node.js / Deno direct sockets
-│   │   └── websocket.js   # Browser-to-Node / Node-to-Node
-└── index.js               # Public API exports
-
+reticulum-js/                                 # private monorepo root (npm workspaces)
+├── packages/
+│   ├── reticulum-js/                         # CORE — zero-dep, browser-safe
+│   │   └── src/
+│   │       ├── crypto/                       # Web Crypto wrappers (keys, ciphers, token, hmac, pkcs7)
+│   │       ├── core/                         # domain logic (identity, destination, packet, resource, …)
+│   │       ├── transport/                    # mesh routing + link mgmt (link, channel, buffer,
+│   │       │                                 #   hdlc/kiss-framer, discovery, transport, router)
+│   │       ├── lxmf/                         # LXMF messaging (message, router, propagation, …)
+│   │       ├── webrtc/                       # WebRTC transport signaling (DI-first)
+│   │       ├── interfaces/                   # browser-safe I/O ONLY
+│   │       │   ├── base.js                   # Interface base class
+│   │       │   ├── http.js                   # HttpPostClientInterface (fetch)
+│   │       │   ├── websocket.js              # WebSocketClientInterface
+│   │       │   └── webrtc.js                 # WebRTCInterface (wraps an RTCDataChannel)
+│   │       ├── utils/                        # encoding, log, msgpack
+│   │       └── index.js                      # public API exports
+│   ├── reticulum-js-node/                    # Node-builtin interfaces + registry
+│   │   └── src/
+│   │       ├── interfaces/                   # auto, tcp, local_client, http_server, registry
+│   │       ├── utils/                        # netinfo (node:os)
+│   │       └── index.js
+│   ├── reticulum-js-webrtc-node/             # werift-backed createPeerConnection
+│   └── reticulum-js-websocket-server-node/   # ws-backed WebSocketServerInterface
+└── …
 ```
+
+Dependency direction is one-way: every companion depends on `reticulum-js`;
+the core never depends on a companion.
 
 ---
 
@@ -184,7 +199,7 @@ function buildHeaderByteZero(ifacFlag, headerType, contextFlag, packetType) {
     byte0 |= (ifacFlag & 0x01) << 7;
     byte0 |= (headerType & 0x01) << 6;
     byte0 |= (contextFlag & 0x01) << 5;
-    byte0 |= (packetType & 0x0F); 
+    byte0 |= (packetType & 0x0F);
     return byte0;
 }
 
@@ -266,7 +281,7 @@ const myAppDest = new Destination(myIdentity, Destination.IN, Destination.SINGLE
 
 myAppDest.addEventListener('link', (event) => {
     const activeLink = event.detail.link;
-    
+
     // Pipe the decrypted, ordered RNS stream directly into your app
     activeLink.readable
         .pipeTo(WritableStreamFromMyApp);
