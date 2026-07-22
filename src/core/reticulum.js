@@ -1,7 +1,7 @@
 import { InterfaceDiscovery } from "../transport/discovery.js";
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
-import { log } from "../utils/log.js";
+import { log, setLogLevel } from "../utils/log.js";
 import { Packet } from "./packet.js";
 
 /**
@@ -23,8 +23,18 @@ export class Reticulum {
    * @param {Object} [config.discovery] - Extra options forwarded to the
    *   {@link InterfaceDiscovery} constructor when `enableDiscovery` is true
    *   (`requiredValue`, `discoverySources`, `networkIdentity`, `backboneSupport`).
+   * @param {number | string} [config.logLevel] - Initial log threshold. Accepts
+   *   a {@link LogLevel} value or a level name (`"DEBUG"`, `"NOTICE"`, …).
+   *   Takes precedence over the `RETICULUM_LOG_LEVEL` environment variable.
+   *   See `src/utils/log.js`.
    */
   constructor(config = {}) {
+    // Apply the requested log level before any subsystem logs, so the env var
+    // default can be overridden per-instance by the embedding application.
+    if (config.logLevel !== undefined && config.logLevel !== null) {
+      setLogLevel(config.logLevel);
+    }
+
     this.storage = config.storageAdapter || null;
     this.compressionProvider = config.compressionProvider || null;
 

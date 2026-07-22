@@ -199,7 +199,7 @@ export function createKissUnframerStream(
           log(
             "KISS",
             `Frame exceeded maxMtu (${maxMtu}); discarding`,
-            LogLevel.WARN,
+            LogLevel.WARNING,
           );
           inFrame = false;
           inEscape = false;
@@ -224,7 +224,7 @@ export function createKissUnframerStream(
             log(
               "KISS",
               `Invalid escape sequence: 0xDB 0x${byte.toString(16)}`,
-              LogLevel.WARN,
+              LogLevel.WARNING,
             );
             inFrame = false;
             inEscape = false;

@@ -200,7 +200,7 @@ export class HttpPostClientInterface extends Interface {
     log(
       "HttpExchange",
       `Registered with ${this.baseUrl}; polling every ${this._pollIntervalMs}ms`,
-      LogLevel.LOG,
+      LogLevel.NOTICE,
     );
     // Kick off the poll loop (fire-and-forget; errors are handled inside).
     this._poll();
@@ -247,7 +247,7 @@ export class HttpPostClientInterface extends Interface {
     log(
       "HttpExchange",
       `Registering "${this.name}" with ${this.baseUrl}...`,
-      LogLevel.LOG,
+      LogLevel.NOTICE,
     );
     const resp = await this._post("/v1/interfaces/register", {
       name: this.name,
@@ -370,12 +370,16 @@ export class HttpPostClientInterface extends Interface {
     try {
       await this._doExchange();
     } catch (/** @type {any} */ err) {
-      log("HttpExchange", `Exchange failed: ${err.message}`, LogLevel.WARN);
+      log("HttpExchange", `Exchange failed: ${err.message}`, LogLevel.WARNING);
       if (
         err.status === 401 ||
         /Invalid interface credentials/i.test(err.message)
       ) {
-        log("HttpExchange", "Re-registering after auth failure", LogLevel.LOG);
+        log(
+          "HttpExchange",
+          "Re-registering after auth failure",
+          LogLevel.NOTICE,
+        );
         this._interfaceId = null;
         this._sessionToken = null;
         try {
@@ -435,7 +439,7 @@ export class HttpPostClientInterface extends Interface {
         log(
           "HttpExchange",
           `Failed to parse incoming packet: ${e.message}`,
-          LogLevel.WARN,
+          LogLevel.WARNING,
         );
       }
     }

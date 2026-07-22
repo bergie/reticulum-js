@@ -701,7 +701,7 @@ export class Destination extends EventTarget {
         try {
           await this._provePacket(packet);
         } catch (err) {
-          log("Destination", `Failed to emit PROOF: ${err}`, LogLevel.WARN);
+          log("Destination", `Failed to emit PROOF: ${err}`, LogLevel.WARNING);
         }
       }
     }

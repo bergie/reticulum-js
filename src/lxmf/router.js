@@ -300,7 +300,7 @@ export class LXMRouter extends EventTarget {
       log(
         "LXMF",
         `Not peering with ${toHex(destinationHash)}: peering cost ${config.peeringCost} > max ${MAX_PEERING_COST}`,
-        LogLevel.LOG,
+        LogLevel.NOTICE,
       );
       this.unpeer(destinationHash);
       return null;
@@ -325,7 +325,7 @@ export class LXMRouter extends EventTarget {
     peer.metadata = config.metadata ?? null;
     // Invalidate any stale peering key so a cost change regenerates it.
     if (!peer.peeringKeyReady()) peer.peeringKey = null;
-    log("LXMF", `Peered with ${toHex(destinationHash)}`, LogLevel.LOG);
+    log("LXMF", `Peered with ${toHex(destinationHash)}`, LogLevel.NOTICE);
     return peer;
   }
 
@@ -336,7 +336,11 @@ export class LXMRouter extends EventTarget {
   unpeer(destinationHash) {
     const removed = this.peers.delete(toHex(destinationHash));
     if (removed)
-      log("LXMF", `Broke peering with ${toHex(destinationHash)}`, LogLevel.LOG);
+      log(
+        "LXMF",
+        `Broke peering with ${toHex(destinationHash)}`,
+        LogLevel.NOTICE,
+      );
   }
 
   /**

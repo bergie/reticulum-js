@@ -159,7 +159,7 @@ export class HttpPostPeerInterface extends Interface {
         log(
           "HttpExchange",
           `Peer failed to parse incoming packet: ${e.message}`,
-          LogLevel.WARN,
+          LogLevel.WARNING,
         );
       }
     }
@@ -415,7 +415,7 @@ export class HttpPostServerInterface extends Interface {
     log(
       "HttpExchange",
       `HTTP server listening on ${this.listenIp}:${this.listenPort}`,
-      LogLevel.LOG,
+      LogLevel.NOTICE,
     );
   }
 
@@ -526,7 +526,7 @@ export class HttpPostServerInterface extends Interface {
     log(
       "HttpExchange",
       `Registered peer ${interfaceId.slice(0, 8)}... ("${peer.name}")`,
-      LogLevel.LOG,
+      LogLevel.NOTICE,
     );
     this.dispatchEvent(new CustomEvent("connection", { detail: peer }));
     res.writeHead(200, { "Content-Type": "application/json" });
@@ -593,7 +593,7 @@ export class HttpPostServerInterface extends Interface {
         log(
           "HttpExchange",
           `Reaping idle peer ${peer.interfaceId.slice(0, 8)}...`,
-          LogLevel.LOG,
+          LogLevel.NOTICE,
         );
         this.peersById.delete(peer.interfaceId);
         this.spawnedInterfaces.delete(peer);

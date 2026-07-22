@@ -156,7 +156,7 @@ export class AutoInterfacePeer extends Interface {
       log(
         "AutoInterface",
         `${this} failed to parse incoming packet: ${e.message}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return;
     }

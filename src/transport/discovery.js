@@ -875,7 +875,7 @@ export class InterfaceDiscovery extends EventTarget {
       this._onAnnounce(/** @type {CustomEvent} */ (event));
     };
     this.transport.addEventListener("announce", this._announceListener);
-    log("Discovery", "Interface discovery listener started", LogLevel.LOG);
+    log("Discovery", "Interface discovery listener started", LogLevel.NOTICE);
   }
 
   /**
@@ -889,7 +889,7 @@ export class InterfaceDiscovery extends EventTarget {
       this.transport.removeEventListener("announce", this._announceListener);
       this._announceListener = null;
     }
-    log("Discovery", "Interface discovery listener stopped", LogLevel.LOG);
+    log("Discovery", "Interface discovery listener stopped", LogLevel.NOTICE);
   }
 
   /**
@@ -1054,7 +1054,7 @@ export class InterfaceDiscovery extends EventTarget {
           log(
             "Discovery",
             `Error loading discovered interface ${key}: ${e}`,
-            LogLevel.WARN,
+            LogLevel.WARNING,
           );
         }
       }
@@ -1062,7 +1062,7 @@ export class InterfaceDiscovery extends EventTarget {
       log(
         "Discovery",
         `Error hydrating discovered interfaces: ${e}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
     }
   }
@@ -1101,7 +1101,7 @@ export class InterfaceDiscovery extends EventTarget {
       log(
         "Discovery",
         `Error deleting discovered interface ${key}: ${e}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
     }
   }

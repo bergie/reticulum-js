@@ -100,7 +100,7 @@ export class TransportCore extends EventTarget {
     this.interfaces.delete(iface);
     this.routingTable.dropInterface(iface);
     if (this.defaultInterface === iface) this.defaultInterface = null;
-    log("Transport", `[-] Interface removed: ${iface.name}`, LogLevel.WARN);
+    log("Transport", `[-] Interface removed: ${iface.name}`, LogLevel.WARNING);
   }
 
   /**
@@ -382,7 +382,7 @@ export class TransportCore extends EventTarget {
       log(
         "Transport",
         `PROOF validation failed for ${toHex(packet.destinationHash)}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
     }
   }

@@ -1,6 +1,45 @@
 # Changelog
 ## [Unreleased]
+### Changed (breaking)
+- `LogLevel` (`src/utils/log.js`) is realigned with the Python reference
+  `RNS.LOG_*` enum (`RNS/__init__.py:65-74`): names, ordering and numeric
+  values now match Python exactly. Work doc #21.
+  - New scheme: `NONE=-1`, `CRITICAL=0`, `ERROR=1`, `WARNING=2`, `NOTICE=3`,
+    `INFO=4`, `VERBOSE=5`, `DEBUG=6`, `PATHING=7`, `EXTREME=8`. (Previously
+    `NONE=0…EXTREME=6`, offset by one and gappy.)
+  - `VERBOSE` and `DEBUG` were previously **inverted** relative to Python
+    (`DEBUG` used to be *less* verbose than `VERBOSE`); they now match, with
+    `VERBOSE` (5) < `DEBUG` (6). Code that compared levels by raw value rather
+    than by name needs review.
+  - `LogLevel.LOG` → `LogLevel.NOTICE` and `LogLevel.WARN` →
+    `LogLevel.WARNING`, renamed at all call sites (no aliases). Neither name
+    exists in Python. New levels `CRITICAL`, `NOTICE`, `INFO`, `PATHING` added
+    to mirror Python.
+  - The default threshold is now `NOTICE` (Python's `LOG_NOTICE`) rather than
+    the old `LOG`. Same numeric position (3), so default *verbosity* is
+    unchanged: `ERROR`/`WARNING`/`NOTICE` show, `INFO` and above stay hidden.
+  - `log()`'s default message level stays `DEBUG` (now value 6), so the ~140
+    bare `log("Mod", msg)` call sites remain hidden unless the operator raises
+    the threshold to `DEBUG`.
+
 ### Added
+- Controllable log level: the threshold is no longer hard-coded (was a
+  module-private `const` with a `// TODO: Read from env`). Work doc #21.
+  - `RETICULUM_LOG_LEVEL` environment variable, read once at module load,
+    accepts a level name (`"DEBUG"`) or a number (`6`). Read defensively via
+    `globalThis.process.env` / `globalThis.Deno.env`, so the core stays
+    dependency-free and browser-safe; browsers have no env and fall back to
+    the default.
+  - `Reticulum({ logLevel })` constructor option (`src/core/reticulum.js`)
+    sets the threshold at construction, mirroring Python's `loglevel=`. Takes
+    precedence over the env var; accepts a name or a number.
+  - New public exports from the main entry (`src/index.js`):
+    `LogLevel`, `setLogLevel(level)`, `getLogLevel()`,
+    `parseLogLevel(value, fallback)` (clamps numeric input to
+    `[CRITICAL, EXTREME]` like Python; unknown names fall back), and the
+    `LOG_LEVEL_ENV` constant (`"RETICULUM_LOG_LEVEL"`).
+  - Precedence (highest first): `Reticulum({ logLevel })` →
+    `RETICULUM_LOG_LEVEL` → default `NOTICE`. Smoketest in `test/utils/log.test.js`.
 - `WebRTCInterface` (`src/interfaces/webrtc.js`): bridges an open WebRTC
   `RTCDataChannel` into RNS streams — the "transport upgrade" half of work
   doc #19. Once a signaling orchestrator has exchanged SDP over a Reticulum

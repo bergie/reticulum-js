@@ -434,14 +434,18 @@ export class Resource extends EventTarget {
    */
   async validateProof(body) {
     if (body.length !== 64) {
-      log("Resource", `Bad RESOURCE_PRF length ${body.length}`, LogLevel.WARN);
+      log(
+        "Resource",
+        `Bad RESOURCE_PRF length ${body.length}`,
+        LogLevel.WARNING,
+      );
       return;
     }
     const fullProof = body.subarray(32, 64);
     if (
       !bytesEqual(fullProof, /** @type {Uint8Array} */ (this.expectedProof))
     ) {
-      log("Resource", "RESOURCE_PRF full_proof mismatch", LogLevel.WARN);
+      log("Resource", "RESOURCE_PRF full_proof mismatch", LogLevel.WARNING);
       this.status = ResourceStatus.FAILED;
       this._setFailed("Resource proof mismatch");
       return;
@@ -469,7 +473,7 @@ export class Resource extends EventTarget {
     const fromIdx = this.hashmap.findIndex((mh) => bytesEqual(mh, lastMapHash));
     if (fromIdx < 0 || (fromIdx + 1) % this.hashmapMaxLen !== 0) {
       // §10.7: a non-boundary index is a sequencing error → cancel.
-      log("Resource", "HMU sequencing error; cancelling", LogLevel.WARN);
+      log("Resource", "HMU sequencing error; cancelling", LogLevel.WARNING);
       await this.cancel();
       return;
     }
@@ -549,7 +553,7 @@ export class Resource extends EventTarget {
       log(
         "Resource",
         `Rejecting advertisement: size t=${adv.t} d=${adv.d} over cap ${maxSize}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       await Resource._sendReject(link, adv.h);
       return null;
@@ -838,7 +842,11 @@ export class Resource extends EventTarget {
       try {
         await this.link.send(packet);
       } catch (err) {
-        log("Resource", `Failed to send RESOURCE_ICL: ${err}`, LogLevel.WARN);
+        log(
+          "Resource",
+          `Failed to send RESOURCE_ICL: ${err}`,
+          LogLevel.WARNING,
+        );
       }
     }
     this.status = ResourceStatus.FAILED;

@@ -405,7 +405,7 @@ export class LocalClientInterface extends Interface {
       log(
         "LocalClient",
         `Shared instance not reachable: ${/** @type {any} */ (e).message}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return null;
     }

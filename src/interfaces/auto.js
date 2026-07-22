@@ -505,7 +505,7 @@ export class AutoInterface extends Interface {
       log(
         "AutoInterface",
         `${this} could not autoconfigure; no connectivity`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
     }
 
@@ -680,7 +680,7 @@ export class AutoInterface extends Interface {
       log(
         "AutoInterface",
         `${this} no data socket for ${ifname}; dropping outbound to ${addr}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return;
     }
@@ -867,7 +867,7 @@ export class AutoInterface extends Interface {
         log(
           "AutoInterface",
           `${this} data-socket rebind on ${ifname} failed: ${e.message}`,
-          LogLevel.WARN,
+          LogLevel.WARNING,
         ),
       );
       this.carrierChanged = true;
@@ -917,7 +917,7 @@ export class AutoInterface extends Interface {
         log(
           "AutoInterface",
           `${this} multicast echo timeout on ${ifname}; carrier lost`,
-          LogLevel.WARN,
+          LogLevel.WARNING,
         );
       }
       this.timedOutInterfaces[ifname] = true;
@@ -927,7 +927,7 @@ export class AutoInterface extends Interface {
         log(
           "AutoInterface",
           `${this} carrier recovered on ${ifname}`,
-          LogLevel.WARN,
+          LogLevel.WARNING,
         );
       }
       this.timedOutInterfaces[ifname] = false;
@@ -1022,7 +1022,7 @@ export class AutoInterface extends Interface {
     log(
       "AutoInterface",
       `${this} announce failed: ${e.message}`,
-      LogLevel.WARN,
+      LogLevel.WARNING,
     );
   }
 
@@ -1115,7 +1115,7 @@ export class AutoInterface extends Interface {
         log(
           "AutoInterface",
           `${this} multicast echo on unexpected interface ${ifname}`,
-          LogLevel.WARN,
+          LogLevel.WARNING,
         );
       }
       return;

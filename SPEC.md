@@ -43,6 +43,51 @@ Interfaces built on `node:` libraries (e.g. `src/interfaces/tcp.js`,
 `src/index.js`; Node consumers import the module path directly, and browser
 consumers simply do not.
 
+### 1.2 Logging
+
+All diagnostic output goes through `log(module, message, level)` in
+`src/utils/log.js` (never `console.*` directly). The `LogLevel` enum is
+aligned with the Python reference `RNS.LOG_*` (`RNS/__init__.py:65-74`), so
+the names, ordering and numeric values match Python exactly. **Always
+reference a level by its `LogLevel` name, never by a raw number** — numbers
+are a convenience for the `RETICULUM_LOG_LEVEL` env var / `setLogLevel`, not
+for call sites.
+
+The active threshold defaults to `NOTICE` (Python's `LOG_NOTICE`). A message
+prints when `level <= threshold`. This makes the choice of level primarily a
+*visibility* decision, so pick the level by what an operator should see by
+default:
+
+| Level | Use for |
+|-------|---------|
+| `CRITICAL` | unrecoverable failures that abort a subsystem |
+| `ERROR` | operation failed, but the node continues |
+| `WARNING` | degraded/recoverable condition (e.g. bad PRF, HMU sequencing error) |
+| `NOTICE` | **default-visible** operational events: engine init, interface attached/removed, destination registered, link established, peer discovered |
+| `INFO` | one notch above default — useful progress that is off by default |
+| `VERBOSE` | detailed step-by-step flow for tracing a single operation |
+| `DEBUG` | per-method diagnostic detail |
+| `PATHING` | path/route resolution and announce processing detail |
+| `EXTREME` | per-packet / per-byte dumps (full frame hex, raw ciphertext) |
+
+Two consequences call-site authors must keep in mind:
+
+- **`log(module, message)` defaults to `DEBUG`** — i.e. *hidden* by default.
+  Anything that should appear at the default verbosity (the `NOTICE` row
+  above) **must** pass an explicit `LogLevel.NOTICE` (or lower). Bare calls are
+  treated as debug noise.
+- **Message bodies must be cheap to build.** `log()` always evaluates its
+  arguments (including any template-string interpolation) *before* the
+  threshold check discards them. For `EXTREME`/`PATHING` dumps that are
+  expensive to format (large `toHex()` of whole frames), gate the work on the
+  threshold — e.g. `if (getLogLevel() >= LogLevel.EXTREME) log("Mod", hexDump(), LogLevel.EXTREME)` — so a production node pays nothing for them.
+
+Operators control the threshold in three ways, with precedence (highest
+first): the `Reticulum({ logLevel })` constructor option, the
+`RETICULUM_LOG_LEVEL` environment variable (read once at module load, name or
+number), and the `NOTICE` default. The exported `setLogLevel()` /
+`getLogLevel()` adjust it at runtime; both accept a name or number.
+
 ---
 
 ## 2. Core Directory Structure

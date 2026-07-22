@@ -124,7 +124,7 @@ export function createHdlcUnframerStream(packetClass, ifacSize = 0) {
           log(
             "HDLC",
             `Discarding ${firstFlag} bytes of junk/malformed data before first 0x7E`,
-            LogLevel.WARN,
+            LogLevel.WARNING,
           );
           // In a real stream, we might want to log this or handle it.
           // For now, we just discard it.

@@ -969,7 +969,11 @@ export class Link extends EventTarget {
 
     const verified = await this._verifyLinkProof(signature, packetHash);
     if (!verified) {
-      log("Link", `Link proof signature invalid for ${hashHex}`, LogLevel.WARN);
+      log(
+        "Link",
+        `Link proof signature invalid for ${hashHex}`,
+        LogLevel.WARNING,
+      );
       return;
     }
 
@@ -1325,16 +1329,16 @@ export class Link extends EventTarget {
         /** @type {Uint8Array} */ (decrypted.payload),
       );
     } catch (err) {
-      log("Link", `Dropping malformed REQUEST: ${err}`, LogLevel.WARN);
+      log("Link", `Dropping malformed REQUEST: ${err}`, LogLevel.WARNING);
       return;
     }
     if (!Array.isArray(decoded) || decoded.length < 3) {
-      log("Link", `Dropping REQUEST with bad envelope shape`, LogLevel.WARN);
+      log("Link", `Dropping REQUEST with bad envelope shape`, LogLevel.WARNING);
       return;
     }
     const [requestTime, pathHash, data] = decoded;
     if (!(pathHash instanceof Uint8Array) || pathHash.length !== 16) {
-      log("Link", `Dropping REQUEST with bad path_hash`, LogLevel.WARN);
+      log("Link", `Dropping REQUEST with bad path_hash`, LogLevel.WARNING);
       return;
     }
     await this._dispatchRequest(pathHash, data, requestId, requestTime);
@@ -1354,14 +1358,18 @@ export class Link extends EventTarget {
     try {
       decoded = MicroMsgPack.decode(/** @type {Uint8Array} */ (resource.data));
     } catch (err) {
-      log("Link", `Dropping malformed Resource REQUEST: ${err}`, LogLevel.WARN);
+      log(
+        "Link",
+        `Dropping malformed Resource REQUEST: ${err}`,
+        LogLevel.WARNING,
+      );
       return;
     }
     if (!Array.isArray(decoded) || decoded.length < 3) {
       log(
         "Link",
         `Dropping Resource REQUEST with bad envelope shape`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return;
     }
@@ -1370,7 +1378,7 @@ export class Link extends EventTarget {
       log(
         "Link",
         `Dropping Resource REQUEST with bad path_hash`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return;
     }
@@ -1489,16 +1497,20 @@ export class Link extends EventTarget {
         /** @type {Uint8Array} */ (decrypted.payload),
       );
     } catch (err) {
-      log("Link", `Dropping malformed RESPONSE: ${err}`, LogLevel.WARN);
+      log("Link", `Dropping malformed RESPONSE: ${err}`, LogLevel.WARNING);
       return;
     }
     if (!Array.isArray(decoded) || decoded.length < 2) {
-      log("Link", `Dropping RESPONSE with bad envelope shape`, LogLevel.WARN);
+      log(
+        "Link",
+        `Dropping RESPONSE with bad envelope shape`,
+        LogLevel.WARNING,
+      );
       return;
     }
     const [requestId, response] = decoded;
     if (!(requestId instanceof Uint8Array) || requestId.length !== 16) {
-      log("Link", `Dropping RESPONSE with bad request_id`, LogLevel.WARN);
+      log("Link", `Dropping RESPONSE with bad request_id`, LogLevel.WARNING);
       return;
     }
     await this._resolveResponse(requestId, response);
@@ -1520,7 +1532,7 @@ export class Link extends EventTarget {
       log(
         "Link",
         `Dropping malformed Resource RESPONSE: ${err}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return;
     }
@@ -1528,7 +1540,7 @@ export class Link extends EventTarget {
       log(
         "Link",
         `Dropping Resource RESPONSE with bad envelope shape`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return;
     }
@@ -1537,7 +1549,7 @@ export class Link extends EventTarget {
       log(
         "Link",
         `Dropping Resource RESPONSE with bad request_id`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return;
     }
@@ -1894,7 +1906,7 @@ export class Link extends EventTarget {
         log(
           "Link",
           `Ignored packet with unknown context: 0x${decrypted.contextByte.toString(16)}`,
-          LogLevel.WARN,
+          LogLevel.WARNING,
         );
     }
   }

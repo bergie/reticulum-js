@@ -92,7 +92,7 @@ export class Identity extends EventTarget {
       log(
         "Identity",
         "No storage adapter provided. Generating ephemeral identity.",
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return await Identity.generate();
     }
@@ -110,7 +110,7 @@ export class Identity extends EventTarget {
       log(
         "Identity",
         `Failed to load identity from storage, generating new one: ${e}`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
     }
 
@@ -540,7 +540,7 @@ export class Identity extends EventTarget {
       log(
         "Identity",
         `Announce body too short (${data.length} bytes; need ${sigEnd} for context_flag=${contextFlag ? 1 : 0})`,
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return null;
     }
@@ -590,7 +590,7 @@ export class Identity extends EventTarget {
       log(
         "Identity",
         "Announce signature verification failed — rejecting",
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return null;
     }
@@ -610,7 +610,7 @@ export class Identity extends EventTarget {
       log(
         "Identity",
         "Announce destination_hash mismatch — rejecting",
-        LogLevel.WARN,
+        LogLevel.WARNING,
       );
       return null;
     }
