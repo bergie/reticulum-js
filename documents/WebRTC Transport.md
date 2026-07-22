@@ -1,9 +1,8 @@
 # WebRTC Transport
 
-**Status:** Implemented (JS), cross-language specification.
-**Canonical JS implementation:** [`src/webrtc/signaling.js`](../src/webrtc/signaling.js),
-[`src/interfaces/webrtc.js`](../src/interfaces/webrtc.js).
-**Work document:** [#19 — WebRTC interface](https://github.com/bergie/reticulum-js)
+**Status:** Implemented (JS), cross-language specification.<br />
+**Canonical JS implementation:** [`packages/reticulum-js/src/webrtc/signaling.js`](../packages/reticulum-js/src/webrtc/signaling.js),<br />
+[`packages/reticulum-js/src/interfaces/webrtc.js`](../packages/reticulum-js/src/interfaces/webrtc.js).<br />
 (tracking).
 
 This document specifies the **WebRTC transport upgrade** for Reticulum: a
