@@ -9,8 +9,7 @@ import {
   Reticulum,
   toHex,
 } from "reticulum-js";
-import { LocalClientInterface } from "reticulum-js/src/interfaces/local_client.js";
-import { TCPClientInterface } from "reticulum-js/src/interfaces/tcp.js";
+import { LocalClientInterface, TCPClientInterface } from "reticulum-js-node";
 
 // The LXMF destination hash this script will try to talk to.
 // Override at runtime with the `LXMF_TARGET` environment variable.

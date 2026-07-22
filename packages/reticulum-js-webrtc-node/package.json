@@ -18,7 +18,8 @@
   "types": "types/src/index.d.ts",
   "files": [
     "src",
-    "types"
+    "types",
+    "CHANGELOG.md"
   ],
   "dependencies": {
     "reticulum-js": "^0.3.0",

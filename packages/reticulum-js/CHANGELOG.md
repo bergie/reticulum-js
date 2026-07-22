@@ -21,6 +21,19 @@
   - `log()`'s default message level stays `DEBUG` (now value 6), so the ~140
     bare `log("Mod", msg)` call sites remain hidden unless the operator raises
     the threshold to `DEBUG`.
+- Monorepo split (work doc #22): the Node.js-only interfaces —
+  `TCPClientInterface`/`TCPServerInterface` (`tcp`), `AutoInterface`
+  (`auto`), `LocalClientInterface` (`local-client`),
+  `HttpPostServerInterface` (`http-server`) — and the interface registry
+  (`listInterfaces`/`getInterface`/`getSchema`/`registerInterface`) moved to
+  the new [`reticulum-js-node`](../reticulum-js-node) companion package.
+  Import them from `reticulum-js-node` instead of
+  `reticulum-js/src/interfaces/...`. The core package is now browser-safe
+  (zero `node:` imports). The `WebSocketServerInterface` stub was removed
+  from `src/interfaces/websocket.js` (it is inherently Node-only); the real
+  server lives in
+  [`reticulum-js-websocket-server-node`](../reticulum-js-websocket-server-node).
+  (`WebSocketClientInterface` stays in core.)
 
 ### Added
 - Controllable log level: the threshold is no longer hard-coded (was a
@@ -74,7 +87,7 @@
     (`createPeerConnection` option) and auto-detects the browser global when
     omitted, so the core stays browser-safe/WinterTC-pure and the full
     negotiation state machine is mock-testable in Node (Node has no native
-    WebRTC; the future companion package injects a runtime — see work doc #19
+    WebRTC; the `reticulum-js-webrtc-node` companion package injects a runtime — see work doc #19
     update #3). `rtcConfig` passes through STUN/TURN.
   - `test/webrtc/signaling.js`: unit tests plus a true end-to-end case — two
     real `Reticulum` instances bridged by a loopback interface pair, a mock

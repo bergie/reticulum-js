@@ -22,8 +22,7 @@ import {
   Reticulum,
   toHex,
 } from "reticulum-js";
-import { LocalClientInterface } from "reticulum-js/src/interfaces/local_client.js";
-import { TCPClientInterface } from "reticulum-js/src/interfaces/tcp.js";
+import { LocalClientInterface, TCPClientInterface } from "reticulum-js-node";
 
 // The NomadNet node to fetch from: a 16-byte destination hash (32 hex chars).
 const TARGET_HASH_HEX =

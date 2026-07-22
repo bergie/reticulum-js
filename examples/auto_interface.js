@@ -1,8 +1,12 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { Destination, Identity, Reticulum, toHex } from "reticulum-js";
-import { DestType } from "reticulum-js/src/core/packet.js";
-import { AutoInterface } from "reticulum-js/src/interfaces/auto.js";
-import { LocalClientInterface } from "reticulum-js/src/interfaces/local_client.js";
+import {
+  Destination,
+  DestType,
+  Identity,
+  Reticulum,
+  toHex,
+} from "reticulum-js";
+import { AutoInterface, LocalClientInterface } from "reticulum-js-node";
 
 // A minimal file-backed storage adapter so the node keeps the same Identity
 // (and therefore the same destination hash) across restarts.
