@@ -38,7 +38,7 @@ See the [core package README](packages/reticulum-js/README.md) for building bloc
 ## Documentation
 
 - **API docs:** [reticulum.js.org](https://reticulum.js.org/)
-- **Protocol specs:** [SPEC.md](SPEC.md) and [PROTOCOL-SPEC.md](PROTOCOL-SPEC.md)
+- **Specs:** [SPEC.md](SPEC.md)
 - **Reticulum manual:** [reticulum.network/manual](https://reticulum.network/manual/)
 
 ## License
