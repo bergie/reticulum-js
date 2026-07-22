@@ -305,7 +305,14 @@ test("HTTP client re-registers after a 401 auth failure", async () => {
   await writer.write(buildTestPacket("after revoke"));
   writer.releaseLock();
 
-  await waitFor(() => client._interfaceId !== originalId, { timeout: 3000 });
+  // Wait for re-registration to actually complete — not just for
+  // `_interfaceId` to differ from the original, which also becomes true the
+  // instant the client nulls its stale credentials (before `_register()`
+  // resolves). Gating on `isRegistered` rules out that false positive.
+  await waitFor(
+    () => client.isRegistered && client._interfaceId !== originalId,
+    { timeout: 3000 },
+  );
   assert.notEqual(client._interfaceId, originalId);
   assert.ok(client.isRegistered, "client should be registered again");
 
