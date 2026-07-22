@@ -7,7 +7,7 @@
  *   every local step and then hands off the (interactive, mesh) publish:
  *
  *     1. pre-flight  — clean tree, tag v<version> not taken, packages lockstep
- *     2. checks      — npm run types / npm test / npm run test:scripts
+ *     2. checks      — npm run types / npm test
  *                      (skip with --skip-checks)
  *     3. version     — bump every packages/<pkg>/package.json to <version> and
  *                      rewrite the internal "reticulum-js": "^old" dep refs in
@@ -19,7 +19,8 @@
  *                      release-notes editor
  *     6. lockfile    — npm install --package-lock-only (best-effort)
  *     7. commit/tag  — one "release v<version>" commit + tag v<version>
- *     8. pack        — npm pack --workspaces --pack-destination dist
+ *     8. pack        — npm run types (always; types/ is gitignored) then
+ *                      npm pack --workspaces --pack-destination dist
  *     9. publish     — copies the compiled release notes to the clipboard and
  *                      runs `rngit release <repo> create v<ver>:dist` (which
  *                      opens an editor — just paste). --no-publish defers it.
@@ -239,7 +240,7 @@ export function runRelease({
   // 2. checks
   if (!dryRun && !skipChecks) {
     console.log("Checks:");
-    for (const c of ["npm run types", "npm test", "npm run test:scripts"]) {
+    for (const c of ["npm run types", "npm test"]) {
       console.log(`  $ ${c}`);
       run(c, { cwd: root, stdio: "inherit" });
     }
@@ -326,6 +327,12 @@ export function runRelease({
     }
     console.log();
   } else {
+    // types/ is gitignored and not committed — always regenerate it before
+    // packing so the tarballs ship current declarations even when the checks
+    // above were skipped.
+    console.log("Generating type declarations...");
+    run("npm run types", { cwd: root, stdio: "inherit" });
+    console.log();
     console.log("Packing tarballs -> dist/...");
     rmSync(dist, { recursive: true, force: true });
     mkdirSync(dist, { recursive: true });

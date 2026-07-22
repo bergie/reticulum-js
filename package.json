@@ -5,7 +5,7 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && npm run test:scripts",
     "test:scripts": "node --test scripts/*.test.mjs",
     "lint": "npm run lint --workspaces --if-present",
     "types": "npm run types --workspaces --if-present",
