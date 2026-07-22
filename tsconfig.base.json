@@ -1,20 +1,11 @@
 {
   "compilerOptions": {
-    "rootDir": ".",
-    "outDir": "./types/",
     "module": "nodenext",
     "target": "esnext",
-    "types": [
-      "node"
-    ],
+    "types": ["node"],
     "checkJs": true,
     "emitDeclarationOnly": true,
     "declaration": true,
     "allowJs": true
-  },
-  "include": [
-    "src/*.ts",
-    "src/**/*.js",
-    "src/**/**/*.js"
-  ]
+  }
 }

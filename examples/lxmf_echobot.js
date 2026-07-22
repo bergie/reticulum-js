@@ -6,9 +6,9 @@ import {
   LXMRouter,
   Reticulum,
   toHex,
-} from "../src/index.js";
-import { LocalClientInterface } from "../src/interfaces/local_client.js";
-import { TCPClientInterface } from "../src/interfaces/tcp.js";
+} from "reticulum-js";
+import { LocalClientInterface } from "reticulum-js/src/interfaces/local_client.js";
+import { TCPClientInterface } from "reticulum-js/src/interfaces/tcp.js";
 
 // A simple Node.js file storage adapter for the bot's private key
 class FileStorageAdapter {

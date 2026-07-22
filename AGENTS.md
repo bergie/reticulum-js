@@ -32,7 +32,7 @@ Every API interface needs to have TypeScript definitions in JsDoc format. Run `n
 
 ## Tests
 
-We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should recide in corresponding file under `test` folder, so that for instance tests for Identity (implementation `src/core/identity.js` are in `test/core/identity.js`.
+We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should recide in corresponding file under `test` folder, so that for instance tests for Identity (implementation `packages/reticulum-js/src/core/identity.js` are in `packages/reticulum-js/test/core/identity.js`.
 
 All tests should be verified against the Python reference implementation to make sure we are testing Reticulum compatibility instead of just quirks of our local implementation.
 
@@ -47,11 +47,11 @@ https://min-common-api.proposal.wintertc.org/
 
 - ✅ **Always**: write at least smoketests for any new functionality
 - ✅ **Always**: ensure type safety. Always check eith `npm run types` after changes and fix as needed
-- ✅ **Always**: fix formatting with `npm run format` (in Android/Termux `biome check --use-editorconfig=true --write src test examples`) after any changes to source files or tests
+- ✅ **Always**: fix formatting with `npm run format` (in Android/Termux `biome check --use-editorconfig=true --write packages/*/src packages/*/test examples`) after any changes to source files or tests
 - ✅ **Always**: compare implementation with how the Python reference implementation works and adapt to be compatible with it
 - ✅ **Always**: Use `git mv` instead of `mv' for renaming files
 - ✅ **Always**: Remove ambiguity and legacy support from APIs you modify. Right now there are no API consumers outside this repo so we can keep things fluid
-- ✅ **Always**: Use the logging helper from `src/utils/log.js` instead of `console.log` (and `.warn/.error`)
+- ✅ **Always**: Use the logging helper from `packages/reticulum-js/src/utils/log.js` instead of `console.log` (and `.warn/.error`)
 - ✅ **Always**: Keep the work document associated with current task up-to-date
 - ⚠️ **Ask first**: adding dependencies
 - ⚠️ **Ask first**: modify CI config

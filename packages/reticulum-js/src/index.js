@@ -105,9 +105,9 @@ export {
 // also be set declaratively via `Reticulum({ logLevel })` or the
 // `RETICULUM_LOG_LEVEL` env var; these let an app read/change it at runtime.
 export {
+  getLogLevel,
   LOG_LEVEL_ENV,
   LogLevel,
-  getLogLevel,
   parseLogLevel,
   setLogLevel,
 } from "./utils/log.js";
