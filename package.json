@@ -6,9 +6,10 @@
   ],
   "scripts": {
     "test": "npm run test --workspaces --if-present",
+    "test:scripts": "node --test scripts/*.test.mjs",
     "lint": "npm run lint --workspaces --if-present",
     "types": "npm run types --workspaces --if-present",
-    "format": "npx @biomejs/biome check --use-editorconfig=true --write packages/*/src packages/*/test examples",
+    "format": "npx @biomejs/biome check --use-editorconfig=true --write packages/*/src packages/*/test examples scripts",
     "docs": "typedoc"
   },
   "devDependencies": {
