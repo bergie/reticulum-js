@@ -13,6 +13,11 @@
   "license": "EUPL-1.2",
   "author": "Henri Bergius <henri.bergia@iki.fi>",
   "homepage": "https://reticulum.js.org/",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/bergie/reticulum-js.git"
+  },
+  "rngit": "rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js",
   "type": "module",
   "main": "src/index.js",
   "types": "types/src/index.d.ts",

@@ -3,6 +3,7 @@ node_modules/
 Reticulum/
 docs/
 dist/
+RELEASE_NOTES.md
 PROTOCOL-SPEC.md
 *.key
 *.tgz
