@@ -100,6 +100,33 @@ export {
   fromHex,
   toHex,
 } from "./utils/encoding.js";
+// --- Logging control (work doc #21) ---
+// Browser-safe (only defensive globalThis + console.log). The threshold can
+// also be set declaratively via `Reticulum({ logLevel })` or the
+// `RETICULUM_LOG_LEVEL` env var; these let an app read/change it at runtime.
+export {
+  LOG_LEVEL_ENV,
+  LogLevel,
+  getLogLevel,
+  parseLogLevel,
+  setLogLevel,
+} from "./utils/log.js";
 // --- 6. Utilities ---
 // Exposed purely for convenience if the caller needs them, but not strictly required.
 export { MicroMsgPack as MsgPack } from "./utils/msgpack.js";
+// --- WebRTC transport upgrade (work doc #19) ---
+// Browser-safe signaling orchestrator. Dependency-injection-first: pass a
+// `createPeerConnection` factory (Node.js needs the companion package; the
+// browser global is auto-detected). The `WebRTCInterface` itself lives in
+// `src/interfaces/webrtc.js` and is created programmatically by this
+// orchestrator once a data channel opens.
+export {
+  CAPABILITY_FLAG as WEBRTC_CAPABILITY_FLAG,
+  CHANNEL_LABEL as WEBRTC_CHANNEL_LABEL,
+  DEFAULT_DESTINATION_NAME as WEBRTC_DEFAULT_DESTINATION_NAME,
+  MAX_SDP_SIZE as WEBRTC_MAX_SDP_SIZE,
+  SDP_TYPE_ANSWER as WEBRTC_SDP_TYPE_ANSWER,
+  SDP_TYPE_CANDIDATE as WEBRTC_SDP_TYPE_CANDIDATE,
+  SDP_TYPE_OFFER as WEBRTC_SDP_TYPE_OFFER,
+  WebRTCSignaling,
+} from "./webrtc/signaling.js";
