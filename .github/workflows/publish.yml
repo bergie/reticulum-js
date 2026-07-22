@@ -1,0 +1,65 @@
+name: Publish to npm
+
+# Additional convenience distribution to the npm registry.
+# The CANONICAL release is the rngit release (signed tarballs over the mesh);
+# this workflow merely mirrors the same tagged versions to npmjs.com so the
+# broader JS ecosystem can `npm install` them. It runs only when a `v*` tag
+# reaches the `github` remote.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# Never run two publishes for the same tag at once; never cancel one mid-flight.
+concurrency:
+  group: npm-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x"
+          cache: npm
+          # Writing registry-url makes setup-node author ~/.npmrc for publish,
+          # using the NODE_AUTH_TOKEN env var on the publish step.
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      # Lockstep: the tag (minus the leading v) must equal the package versions.
+      # Stops a stray/mistyped tag from publishing unintended versions.
+      - name: Verify the tag matches the package version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          CORE=$(node -p "require('./packages/reticulum-js/package.json').version")
+          echo "Tag: $TAG   core version: $CORE"
+          if [ "$TAG" != "$CORE" ]; then
+            echo "::error::Tag 'v$TAG' does not match packages version '$CORE'"
+            exit 1
+          fi
+
+      # types/ is git-ignored/generated, not committed — generate it for the
+      # tarballs (this also type-checks).
+      - name: Generate type declarations
+        run: npm run types
+
+      - name: Run tests
+        run: npm test
+
+      # Publishes every workspace (core first, alphabetical). Root is private
+      # and is never published. Companions' "reticulum-js": "^<ver>" dep ref
+      # resolves at install time, so order does not block the publish.
+      - name: Publish all workspaces
+        run: npm publish --workspaces --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

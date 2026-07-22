@@ -339,12 +339,16 @@ export function runRelease({
   // 9. publish (interactive: `rngit release create` opens an editor for notes)
   if (dryRun || noPublish) {
     console.log("── Publish (run manually) ──");
-    console.log(`  rngit release ${repo} create ${tag}:dist`);
+    console.log(
+      `  rngit release ${repo} create ${tag}:dist   # canonical (mesh)`,
+    );
     console.log(
       `  paste ${notesPath} (or the clipboard) into the release-notes editor`,
     );
+    console.log(`  then push the commit/tag to both git remotes:`);
+    console.log(`    git push origin main --tags    # rngit git source`);
     console.log(
-      `  then:  git push origin main --tags   (adjust remote/branch)`,
+      `    git push github main --tags    # GitHub mirror -> npm publish CI`,
     );
     return;
   }
@@ -366,8 +370,13 @@ export function runRelease({
     stdio: "inherit",
   });
   console.log();
-  console.log("Published. To sync the commit/tag:");
-  console.log("  git push origin main --tags   (adjust remote/branch)");
+  console.log(
+    "rngit release published. Now sync the commit/tag to both git remotes:",
+  );
+  console.log("  git push origin main --tags    # rngit git source");
+  console.log(
+    "  git push github main --tags    # GitHub mirror -> npm publish CI",
+  );
 }
 
 function printHelp() {
