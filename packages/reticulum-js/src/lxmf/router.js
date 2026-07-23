@@ -911,6 +911,10 @@ export class LXMRouter extends EventTarget {
       );
     }
 
+    // §16: a validated inbound message means we've communicated with the
+    // sender — remember their identity/ratchet/path across restarts.
+    this.rns.persistor?.markContacted(message.sourceHash);
+
     // 4. Dispatch to the UI layer
     this._dispatchMessage(message, linkId);
   }

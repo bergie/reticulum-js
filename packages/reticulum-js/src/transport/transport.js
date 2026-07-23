@@ -38,6 +38,15 @@ export class TransportCore extends EventTarget {
     this.routingTable = new RoutingTable();
     this.defaultInterface = null;
 
+    /**
+     * Selective persistence coordinator (#16). Set by `Reticulum` after it
+     * constructs the adapter-backed Persistor; stays null when persistence is
+     * disabled. `sendPacket` notifies it whenever we transmit to a real
+     * (non-link) destination so the peer is remembered across restarts.
+     * @type {import("../storage/persistor.js").Persistor|null}
+     */
+    this.persistor = null;
+
     // §7.2.2: path-request dedup tags (unique_tag = dest_hash || tag). A leaf
     // keeps a small bounded ring so a flood of retransmits for the same target
     // doesn't trigger redundant path-response announces.
@@ -628,7 +637,10 @@ export class TransportCore extends EventTarget {
 
     if (route) {
       // §Transport.outbound (~l.1126): send on the interface the path was
-      // learned through, injecting transport headers when >1 hop away.
+      // learned through, injecting transport headers when >1 hop away. A
+      // hydrated (#16) path entry carries no live interface reference, so fall
+      // back to the default interface until a fresh announce re-associates it.
+      const iface = route.interface ?? this.defaultInterface;
       if (route.hops > 1 && packet.headerType === HeaderType.HEADER_1) {
         const injected = new Packet({
           headerType: HeaderType.HEADER_2,
@@ -642,10 +654,10 @@ export class TransportCore extends EventTarget {
           payload: packet.payload,
           transportId: route.nextHop,
         });
-        await this._transmit(route.interface, injected);
+        await this._transmit(iface, injected);
       } else {
         // Direct (1 hop) or already in transport: transmit unchanged.
-        await this._transmit(route.interface, packet);
+        await this._transmit(iface, packet);
       }
       route.timestamp = Date.now();
     } else if (this.defaultInterface && this.defaultInterface._packetWriter) {
@@ -653,6 +665,14 @@ export class TransportCore extends EventTarget {
       await this.defaultInterface._packetWriter.write(packet);
     } else {
       throw new Error(`No route to host: ${destHex}`);
+    }
+
+    // §16 persistence: a routable send to a real (non-link) destination means
+    // we're communicating with it — remember its identity/ratchet/path across
+    // restarts. Link DATA is addressed to link_id (held in activeLinks), so its
+    // peer is already covered by the originating LINKREQUEST send.
+    if (routable && !this.activeLinks.has(destHex)) {
+      this.persistor?.markContacted(packet.destinationHash);
     }
 
     // §6.5: track a PacketReceipt for opportunistic CTX_NONE DATA so the

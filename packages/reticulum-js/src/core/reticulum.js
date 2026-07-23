@@ -1,3 +1,4 @@
+import { Persistor } from "../storage/persistor.js";
 import { InterfaceDiscovery } from "../transport/discovery.js";
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
@@ -20,7 +21,7 @@ export class Reticulum {
   /**
    * Initializes the Reticulum engine.
    * @param {Object} config - Configuration options for the node.
-   * @param {Object} [config.storageAdapter] - Interface for persisting identities and caches.
+   * @param {import("../storage/storage.js").StorageAdapter} [config.storageAdapter] - Interface for persisting identities and caches.
    * @param {Object} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
    * @param {boolean} [config.useImplicitProof] - §6.5.2 PROOF form for opportunistic DATA: `true` (default, upstream) emits the 64-byte implicit body; `false` emits the 96-byte explicit body.
    * @param {boolean} [config.enableDiscovery] - When true, start an
@@ -56,6 +57,20 @@ export class Reticulum {
 
     // Local registered endpoints (e.g., the Yjs sync endpoint, LXMF delivery)
     this.localDestinations = new Map();
+
+    // --- Selective persistence (work doc #16) ---
+    // Hydrate the peers/ratchets/paths we communicate with (or favorite) from
+    // the storage adapter, and remember new ones going forward. No-op without
+    // an adapter. Hydration is async and fire-and-forget (interfaces are
+    // attached after construction); callers that need it complete can `await
+    // rns.persistorLoadPromise`. On graceful shutdown, `await
+    // rns.persistor.flush()` so the final debounced batch isn't lost.
+    this.persistor = new Persistor({
+      adapter: this.storage,
+      routingTable: this.transport.routingTable,
+    });
+    this.transport.persistor = this.persistor;
+    this.persistorLoadPromise = this.persistor.load();
 
     // Interface discovery (work doc #17). Surface-only in v1: parses,
     // stamp-validates and surfaces `rnstransport.discovery.interface` announces

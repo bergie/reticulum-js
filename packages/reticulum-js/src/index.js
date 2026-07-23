@@ -41,9 +41,12 @@ export { Message as LXMessage } from "./lxmf/message.js";
 export { LXMRouter } from "./lxmf/router.js";
 export * as LXStamper from "./lxmf/stamper.js";
 // --- Persistence (work doc #16) ---
-// Platform-neutral storage contract + reference in-memory backend. Real
-// backends live in companion packages (`FileStorageAdapter` in
-// `reticulum-js-node`, a user-supplied IndexedDB adapter in the browser).
+// Selective persistence coordinator; a platform-neutral storage contract; and
+// a reference in-memory backend. Real backends live in companion packages
+// (`FileStorageAdapter` in `reticulum-js-node`, a user-supplied IndexedDB
+// adapter in the browser). `Reticulum` constructs a `Persistor` automatically
+// from `storageAdapter`; clients call `rns.persistor.store(hash)` for favorites.
+export { Persistor } from "./storage/persistor.js";
 export { MemoryStorageAdapter, StorageNamespace } from "./storage/storage.js";
 // Web Stream byte-stream adapters over a Channel (RNS/Buffer.py). Importing
 // this also wires channel.openReadable / openWritable / openDuplex.
