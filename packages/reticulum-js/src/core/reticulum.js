@@ -2,7 +2,7 @@ import { Persistor } from "../storage/persistor.js";
 import { InterfaceDiscovery } from "../transport/discovery.js";
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
-import { log, setLogLevel } from "../utils/log.js";
+import { LogLevel, log, setLogLevel } from "../utils/log.js";
 import { Packet } from "./packet.js";
 
 /**

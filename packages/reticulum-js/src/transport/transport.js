@@ -54,6 +54,17 @@ export class TransportCore extends EventTarget {
     this.discoveryPrTags = [];
     /** @type {number} */
     this.maxPrTags = 256;
+
+    // §Transport.packet_hashlist: inbound packet-hash dedup ring (two-set
+    // double-buffered, culled at hashlistMaxsize/2, mirroring Python). A leaf
+    // keeps a small ring; announces are exempt (their random_blob replay
+    // protection lives in the RoutingTable). In-memory only for now (#16
+    // stretch — persisting it has marginal value across a restart).
+    /** @type {Set<string>} */
+    this.packetHashlist = new Set();
+    /** @type {Set<string>} */
+    this.packetHashlistPrev = new Set();
+    this.hashlistMaxsize = 50000;
   }
 
   /**
@@ -239,6 +250,19 @@ export class TransportCore extends EventTarget {
     if (packet.packetType === PacketType.ANNOUNCE) {
       await this._handleAnnounce(packet, receivingInterface);
       return; // STOP! Do not pass to any other logic.
+    }
+
+    // §Transport.packet_filter: drop a non-announce packet whose hash we've
+    // already seen (announces are exempt — replay protection is the
+    // RoutingTable random_blob check). Bypass contexts that legitimately recur
+    // or carry their own sequencing (resource/channel/keepalive flows).
+    if (await this._isDuplicate(packet)) {
+      log(
+        "Transport",
+        `Dropped duplicate packet for ${destHex}`,
+        LogLevel.DEBUG,
+      );
+      return;
     }
 
     // §6.5: a regular PROOF (packet_type=PROOF, context=NONE) is addressed to
@@ -731,5 +755,41 @@ export class TransportCore extends EventTarget {
    */
   nextHop(destinationHash) {
     return this.routingTable.getRoute(destinationHash)?.nextHop ?? null;
+  }
+
+  /**
+   * Returns true when an inbound non-announce packet is a duplicate we've
+   * already seen (Transport.packet_filter / packet_hashlist, two-set dedup
+   * ring). Bypasses contexts that legitimately recur or are dedup'd elsewhere
+   * (KEEPALIVE, the RESOURCE / RESOURCE_REQ / RESOURCE_PRF / CACHE_REQUEST /
+   * CHANNEL flows). A fresh hash is remembered, and the ring rotates (prev ←
+   * current) once {@link packetHashlist} exceeds {@link hashlistMaxsize}/2.
+   * @param {Packet} packet
+   * @returns {Promise<boolean>} `true` = drop as duplicate.
+   * @private
+   */
+  async _isDuplicate(packet) {
+    switch (packet.contextByte) {
+      case ContextType.KEEPALIVE:
+      case ContextType.RESOURCE:
+      case ContextType.RESOURCE_REQ:
+      case ContextType.RESOURCE_PRF:
+      case ContextType.CACHE_REQUEST:
+      case ContextType.CHANNEL:
+        return false;
+    }
+    const hashHex = toHex(await packet.getHash());
+    if (
+      this.packetHashlist.has(hashHex) ||
+      this.packetHashlistPrev.has(hashHex)
+    ) {
+      return true;
+    }
+    this.packetHashlist.add(hashHex);
+    if (this.packetHashlist.size > this.hashlistMaxsize / 2) {
+      this.packetHashlistPrev = this.packetHashlist;
+      this.packetHashlist = new Set();
+    }
+    return false;
   }
 }

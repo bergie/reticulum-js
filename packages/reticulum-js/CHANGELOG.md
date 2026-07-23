@@ -66,6 +66,23 @@
   - New public exports: `Persistor`, `MemoryStorageAdapter`,
     `StorageNamespace`. Tests in `test/storage/` (storage contract, Persistor
     policy + round-trips, and the `Reticulum`/`TransportCore` wiring).
+- Inbound packet-hash dedup (`TransportCore.packetHashlist`, work doc #16
+  stretch): a non-announce packet whose hash has already been seen is now
+  dropped, porting Python's `Transport.packet_filter` / `packet_hashlist`. A
+  two-set ring (`packetHashlist` + `packetHashlistPrev`) rotates once it exceeds
+  `hashlistMaxsize/2` (default `50000` — leaf-appropriate vs Python's
+  transport-node `1e6`). Contexts that legitimately recur or carry their own
+  sequencing bypass it (`KEEPALIVE`, `RESOURCE`, `RESOURCE_REQ`,
+  `RESOURCE_PRF`, `CACHE_REQUEST`, `CHANNEL`); announces are exempt (their
+  replay protection is the RoutingTable `random_blob` check). Fixes duplicate
+  delivery from identical retransmissions. In-memory only for now (persisting
+  the ring has marginal value across a restart). Tests in
+  `test/transport/dedup.test.js`.
+- `Reticulum.stop()`: graceful shutdown — stops interface discovery,
+  disconnects every attached interface (best-effort; a failing `disconnect()` is
+  logged, not thrown), and flushes the persistence layer so the final debounced
+  batch isn't lost. Idempotent. Links/channels are owned by the application and
+  terminate when their interfaces close.
 - Controllable log level: the threshold is no longer hard-coded (was a
   module-private `const` with a `// TODO: Read from env`). Work doc #21.
   - `RETICULUM_LOG_LEVEL` environment variable, read once at module load,
