@@ -823,6 +823,16 @@ export class LXMRouter extends EventTarget {
                   peerIdentity.publicKey,
                 );
 
+                // #16: a LINKIDENTIFY is an authenticated contact — the peer
+                // proved ownership of this identity over a live link. Persist
+                // the just-remembered identity so its signature can be verified
+                // across a restart (recall() reads from the same map the
+                // Persistor flushes). markContacted schedules a debounced
+                // flush, coalescing repeated identifies.
+                this.rns.persistor?.markContacted(
+                  peerDeliveryDest.destinationHash,
+                );
+
                 this.pendingLinks.delete(linkHex);
                 this.processPendingMessages(link.linkId);
               } catch (e) {

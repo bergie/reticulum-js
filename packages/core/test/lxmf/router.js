@@ -6,6 +6,11 @@ import { Identity } from "../../src/core/identity.js";
 import { DestType, PacketType } from "../../src/core/packet.js";
 import { Message } from "../../src/lxmf/message.js";
 import { LXMRouter } from "../../src/lxmf/router.js";
+import { Persistor } from "../../src/storage/persistor.js";
+import {
+  MemoryStorageAdapter,
+  StorageNamespace,
+} from "../../src/storage/storage.js";
 import { toHex } from "../../src/utils/encoding.js";
 
 test("LXMRouter", async (t) => {
@@ -399,6 +404,94 @@ test("LXMRouter", async (t) => {
         "active",
         "send",
       ]);
+    },
+  );
+
+  await t.test(
+    "LINKIDENTIFY persists the learned identity so it survives a restart (#16)",
+    async () => {
+      // Isolate the static map the router's Destination.remember writes to.
+      // The Persistor defaults to that same map, so it sees the entry; and the
+      // test doesn't leak state into other tests.
+      const realKnownDestinations = Destination.knownDestinations;
+      Destination.knownDestinations = new Map();
+      try {
+        const adapter = new MemoryStorageAdapter();
+        const persistor = new Persistor({ adapter, debounceMs: 0 });
+        const rnsWithPersistor = { ...interfaceLayer, persistor };
+
+        const router = new LXMRouter(identity, rnsWithPersistor);
+        await router.init();
+
+        const senderIdentity = await Identity.generate();
+
+        // Accept an incoming link, then fire LINKIDENTIFY on it.
+        const link = Object.assign(new EventTarget(), {
+          linkId: new Uint8Array(16).fill(0xee),
+        });
+        const originalRespond = router.deliveryDest.respondToLinkRequest;
+        router.deliveryDest.respondToLinkRequest = async () => link;
+        try {
+          router.deliveryDest.dispatchEvent(
+            new CustomEvent("link_request", {
+              detail: {
+                packet: {
+                  packetType: PacketType.LINKREQUEST,
+                  payload: new Uint8Array(64),
+                },
+                transport: { sendPacket: async () => {} },
+                senderHash: senderIdentity.identityHash,
+                appData: new Uint8Array(0),
+              },
+            }),
+          );
+          await new Promise((r) => setTimeout(r, 50));
+
+          link.dispatchEvent(
+            new CustomEvent("identify", {
+              detail: { identity: senderIdentity, link: link.linkId },
+            }),
+          );
+          await new Promise((r) => setTimeout(r, 50));
+
+          // The peer's lxmf.delivery destination hash is the persistence key.
+          const peerDeliveryDest = await Destination.OUT(
+            "lxmf.delivery",
+            DestType.SINGLE,
+            senderIdentity,
+            rnsWithPersistor,
+          );
+          const peerDestHex = toHex(peerDeliveryDest.destinationHash);
+
+          assert.ok(
+            persistor.persistedDestinations.has(peerDestHex),
+            "identify marks the peer's delivery destination for persistence",
+          );
+
+          await persistor.flush();
+          assert.ok(
+            (
+              await adapter.keys(StorageNamespace.IDENTITIES)
+            ).includes(peerDestHex),
+            "identity written to storage after flush",
+          );
+
+          // Simulate a restart: a fresh instance hydrates from the adapter
+          // into a clean map, then recalls the identity by destination hash.
+          Destination.knownDestinations = new Map();
+          const reloaded = new Persistor({ adapter, debounceMs: 0 });
+          await reloaded.load();
+          const recalled = await Destination.recall(
+            peerDeliveryDest.destinationHash,
+          );
+          assert.ok(recalled, "identity recallable after a simulated restart");
+          assert.deepStrictEqual(recalled.publicKey, senderIdentity.publicKey);
+        } finally {
+          router.deliveryDest.respondToLinkRequest = originalRespond;
+        }
+      } finally {
+        Destination.knownDestinations = realKnownDestinations;
+      }
     },
   );
 });
