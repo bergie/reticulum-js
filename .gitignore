@@ -10,3 +10,5 @@ PROTOCOL-SPEC.md
 *.tgz
 *.rsm
 *.d.ts
+sender-storage/
+echobot-storage/
