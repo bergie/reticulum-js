@@ -42,7 +42,7 @@ async function startEchoBot() {
   console.log(`Bot Identity Hash: ${toHex(botIdentity.identityHash)}`);
 
   // Read our version string for the announce display name (§4.3 app_data).
-  const { default: data } = await import("../package.json", {
+  const { default: data } = await import("../packages/core/package.json", {
     with: { type: "json" },
   });
 
@@ -110,6 +110,9 @@ async function startEchoBot() {
       console.log(`    Title: ${message.title}`);
     }
     console.log(`    Body:  ${message.content}`);
+    if (link) {
+      console.log(`      Link: ${toHex(link)}`);
+    }
 
     // Construct and Send the Echo Reply
     try {
