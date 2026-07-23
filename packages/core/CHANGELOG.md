@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.4.1] - 2026-07-23
 ### Fixed
 - Persist identity learned via `LINKIDENTIFY` (work doc #16): the LXMF router's
   link `identify` handler now calls

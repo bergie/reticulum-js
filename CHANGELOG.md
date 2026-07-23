@@ -12,6 +12,18 @@
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.4.1] - 2026-07-23
+### Fixed
+- **core**: Persist identity learned via `LINKIDENTIFY` (work doc #16): the LXMF router's
+  link `identify` handler now calls
+  `rns.persistor.markContacted(peerDeliveryDest.destinationHash)` after
+  `Destination.recall(...)`, so a peer that authenticated itself over a link is
+  remembered across a restart. Previously the identity was held in memory only,
+  so after a restart `recall(message.sourceHash)` returned null — message
+  signatures couldn't be verified and the sender couldn't be identified. Uses
+  the same debounced "communicated-with" signal as the transport layer's
+  routable-send path.
+
 ## [0.4.0] - 2026-07-23
 ### Changed (breaking)
 - **core**: Scoped rename + JSR distribution (work doc #24): the package is renamed

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-23
+
 ## [0.4.0] - 2026-07-23
 ### Added
 - New package (work doc #22): supplies the `createPeerConnection` factory

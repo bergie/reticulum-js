@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-23
+
 ## [0.4.0] - 2026-07-23
 ### Added
 - New package, carved out of [`@reticulum/core`](../core) (work doc #22):

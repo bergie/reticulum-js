@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/webrtc-node",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Node.js WebRTC support for reticulum-js — provides a createPeerConnection factory backed by werift",
   "keywords": [
     "reticulum",
@@ -27,7 +27,7 @@
     "CHANGELOG.md"
   ],
   "dependencies": {
-    "@reticulum/core": "^0.4.0",
+    "@reticulum/core": "^0.4.1",
     "werift": "^0.23.0"
   },
   "scripts": {
