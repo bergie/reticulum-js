@@ -36,6 +36,36 @@
   (`WebSocketClientInterface` stays in core.)
 
 ### Added
+- Selective persistence layer (work doc #16): learned peers, ratchet rings
+  and path entries now survive a restart when a `StorageAdapter` is supplied
+  to `Reticulum({ storageAdapter })`. The contract is backend-agnostic and the
+  core stays zero-dependency / browser-safe; the Node.js reference
+  `FileStorageAdapter` ships in
+  [`reticulum-js-node`](../reticulum-js-node).
+  - New `src/storage/` module: the `StorageAdapter` typedef (async KV —
+    `loadKey`/`saveKey` for the identity blob; namespaced `get`/`set`/`delete`/
+    `keys` for everything else, the same shape `InterfaceDiscovery` already
+    feature-detected), `StorageNamespace` (`identities`/`ratchets`/`paths`),
+    and `MemoryStorageAdapter` (reference in-memory backend).
+  - `Persistor` (`src/storage/persistor.js`) owns the *policy*: only
+    destinations we **communicate with** (`markContacted`, called by
+    `TransportCore.sendPacket` on outbound routable sends and by
+    `LXMRouter._processIncomingMessage` for validated inbound senders) **or
+    explicitly favorite** (`rns.persistor.store(hash, { announce })`) are
+    persisted. Values are msgpack; the `known_destinations` tuple
+    (`[time, packet_hash, public_key, app_data, 0]`) matches Python
+    (`RNS/Identity.py:107`) so a blob is interchangeable. Writes are debounced;
+    `store()` and `rns.persistor.flush()` flush immediately — call the latter
+    on graceful shutdown. `load()` hydrates at startup
+    (`rns.persistorLoadPromise`).
+  - `Reticulum` constructs the `Persistor` from `storageAdapter` and hands it
+    to `this.transport.persistor`; `config.storageAdapter` is now typed as
+    `StorageAdapter`. `TransportCore.sendPacket` falls back to the default
+    interface for hydrated path entries (which carry no live `interface` ref)
+    instead of throwing.
+  - New public exports: `Persistor`, `MemoryStorageAdapter`,
+    `StorageNamespace`. Tests in `test/storage/` (storage contract, Persistor
+    policy + round-trips, and the `Reticulum`/`TransportCore` wiring).
 - Controllable log level: the threshold is no longer hard-coded (was a
   module-private `const` with a `// TODO: Read from env`). Work doc #21.
   - `RETICULUM_LOG_LEVEL` environment variable, read once at module load,

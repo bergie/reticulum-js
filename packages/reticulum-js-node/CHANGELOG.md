@@ -11,3 +11,11 @@
   (`listInterfaces`/`getInterface`/`getSchema`/`registerInterface`, which also
   aggregates the browser-safe interfaces from `reticulum-js`). Depends on
   `reticulum-js`.
+- `FileStorageAdapter` (`src/storage/file.js`, work doc #16): the Node.js
+  reference `StorageAdapter`, exported from the package index. Constructed with
+  a client-chosen root folder — `new FileStorageAdapter(directory)` — under
+  which it writes `<dir>/identity.key` and `<dir>/<namespace>/<key>.bin`. Uses
+  `node:fs/promises` (non-blocking); reads return `null`/`[]` on missing
+  records, `delete` is idempotent, and a guard rejects path-traversing keys /
+  namespaces. `examples/*` now import it instead of each carrying an inline
+  loadKey/saveKey-only copy.
