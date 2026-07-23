@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 # Never run two publishes for the same tag at once; never cancel one mid-flight.
 concurrency:
@@ -41,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME#v}"
-          CORE=$(node -p "require('./packages/reticulum-js/package.json').version")
+          CORE=$(node -p "require('./packages/core/package.json').version")
           echo "Tag: $TAG   core version: $CORE"
           if [ "$TAG" != "$CORE" ]; then
             echo "::error::Tag 'v$TAG' does not match packages version '$CORE'"
