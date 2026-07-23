@@ -21,9 +21,12 @@
  *     7. commit/tag  — one "release v<version>" commit + tag v<version>
  *     8. pack        — npm run types (always; types/ is gitignored) then
  *                      npm pack --workspaces --pack-destination dist
- *     9. publish     — copies the compiled release notes to the clipboard and
+ *     9. push        — git push origin main --tags (rngit refuses to create a
+ *                      release for a tag that isn't in its git source repo yet)
+ *     10. publish    — copies the compiled release notes to the clipboard and
  *                      runs `rngit release <repo> create v<ver>:dist` (which
  *                      opens an editor — just paste). --no-publish defers it.
+ *                      GitHub is mirrored automatically by a 3rd-party process.
  *
  *   --dry-run performs no mutations; it prints the plan and previews each
  *   tarball's contents via `npm pack --dry-run`.
@@ -343,22 +346,26 @@ export function runRelease({
     console.log();
   }
 
-  // 9. publish (interactive: `rngit release create` opens an editor for notes)
+  // 9. push the commit + tag to the rngit git source (origin). rngit refuses
+  //    to create a release for a tag that isn't in the repo yet, so this must
+  //    happen *before* `rngit release create`.
   if (dryRun || noPublish) {
     console.log("── Publish (run manually) ──");
+    console.log(
+      `  git push origin main --tags      # push tag to rngit git source first`,
+    );
     console.log(
       `  rngit release ${repo} create ${tag}:dist   # canonical (mesh)`,
     );
     console.log(
       `  paste ${notesPath} (or the clipboard) into the release-notes editor`,
     );
-    console.log(`  then push the commit/tag to both git remotes:`);
-    console.log(`    git push origin main --tags    # rngit git source`);
-    console.log(
-      `    git push github main --tags    # GitHub mirror -> npm publish CI`,
-    );
     return;
   }
+
+  console.log("Pushing release commit + tag to origin (rngit git source)...");
+  run("git push origin main --tags", { cwd: root, stdio: "inherit" });
+  console.log();
 
   const copied = copyToClipboard(cl.compiledSection);
   if (copied) {
@@ -378,11 +385,7 @@ export function runRelease({
   });
   console.log();
   console.log(
-    "rngit release published. Now sync the commit/tag to both git remotes:",
-  );
-  console.log("  git push origin main --tags    # rngit git source");
-  console.log(
-    "  git push github main --tags    # GitHub mirror -> npm publish CI",
+    "rngit release published. GitHub is mirrored automatically by a 3rd-party process.",
   );
 }
 
