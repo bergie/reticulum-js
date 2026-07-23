@@ -65,3 +65,6 @@ jobs:
       - name: Publish @reticulum/core to JSR
         working-directory: packages/core
         run: npx -y jsr publish
+      - name: Publish @reticulum/node to JSR
+        working-directory: packages/node
+        run: npx -y jsr publish
