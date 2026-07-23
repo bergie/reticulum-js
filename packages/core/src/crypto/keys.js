@@ -14,10 +14,9 @@
  * @returns {Promise<KeyPair>}
  */
 export async function generateEd25519KeyPair() {
-  return await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
-    "sign",
-    "verify",
-  ]);
+  return /** @type {Promise<KeyPair>} */ (
+    crypto.subtle.generateKey({ name: "Ed25519" }, true, ["sign", "verify"])
+  );
 }
 
 /**
@@ -25,10 +24,12 @@ export async function generateEd25519KeyPair() {
  * @returns {Promise<KeyPair>}
  */
 export async function generateX25519KeyPair() {
-  return await crypto.subtle.generateKey({ name: "X25519" }, true, [
-    "deriveKey",
-    "deriveBits",
-  ]);
+  return /** @type {Promise<KeyPair>} */ (
+    crypto.subtle.generateKey({ name: "X25519" }, true, [
+      "deriveKey",
+      "deriveBits",
+    ])
+  );
 }
 
 /**
