@@ -118,21 +118,11 @@ import the one you need directly by subpath. The browser-safe client
 interfaces live in this package; Node-only interfaces live in the
 [`@reticulum/node`](../node/README.md) companion.
 
-**Browser-safe (this package):**
-
 ```js
 import { HttpPostClientInterface } from "@reticulum/core/src/interfaces/http.js";
 import { WebSocketClientInterface } from "@reticulum/core/src/interfaces/websocket.js";
 import { WebRTCInterface } from "@reticulum/core/src/interfaces/webrtc.js";
 ```
-
-| Interface subpath (`src/interfaces/...`) | Browser-safe | Runtime deps |
-| --- | --- | --- |
-| `base.js` (`Interface`) | ✅ | none |
-| `http.js` (`HttpPostClientInterface`) | ✅ | none (uses `fetch`) |
-| `websocket.js` (`WebSocketClientInterface`) | ✅ | none (Web APIs) |
-| `webrtc.js` (`WebRTCInterface`) | ✅ | inject a `createPeerConnection` factory (see [`@reticulum/webrtc-node`](../webrtc-node/README.md) for Node) |
-
 **Node-only (in [`@reticulum/node`](../node/README.md)):**
 
 ```js
