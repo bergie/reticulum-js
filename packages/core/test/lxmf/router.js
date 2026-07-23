@@ -470,9 +470,9 @@ test("LXMRouter", async (t) => {
 
           await persistor.flush();
           assert.ok(
-            (
-              await adapter.keys(StorageNamespace.IDENTITIES)
-            ).includes(peerDestHex),
+            (await adapter.keys(StorageNamespace.IDENTITIES)).includes(
+              peerDestHex,
+            ),
             "identity written to storage after flush",
           );
 

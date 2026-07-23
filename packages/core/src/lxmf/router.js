@@ -823,16 +823,6 @@ export class LXMRouter extends EventTarget {
                   peerIdentity.publicKey,
                 );
 
-                // #16: a LINKIDENTIFY is an authenticated contact — the peer
-                // proved ownership of this identity over a live link. Persist
-                // the just-remembered identity so its signature can be verified
-                // across a restart (recall() reads from the same map the
-                // Persistor flushes). markContacted schedules a debounced
-                // flush, coalescing repeated identifies.
-                this.rns.persistor?.markContacted(
-                  peerDeliveryDest.destinationHash,
-                );
-
                 this.pendingLinks.delete(linkHex);
                 this.processPendingMessages(link.linkId);
               } catch (e) {
@@ -871,6 +861,17 @@ export class LXMRouter extends EventTarget {
           },
         }),
       );
+      // A just-validated announce may have made a previously-unknown sender's
+      // identity available, so re-process any messages parked waiting for it
+      // (first-contact opportunistic delivery). Harmless when nothing is
+      // parked; not awaited so announce handling never blocks the transport.
+      this.processAllPendingMessages().catch((/** @type {any} */ e) => {
+        log(
+          "LXMF",
+          `Re-processing parked messages failed: ${e}`,
+          LogLevel.DEBUG,
+        );
+      });
     });
   }
 
@@ -897,15 +898,29 @@ export class LXMRouter extends EventTarget {
     const senderIdentity = await Destination.recall(message.sourceHash);
 
     if (!senderIdentity) {
+      // Park the message until the sender's identity is learned: for link
+      // delivery that happens on LINKIDENTIFY; for opportunistic delivery
+      // (linkId == null) it happens when the sender's announce — solicited
+      // by the path request below — arrives and triggers
+      // processAllPendingMessages.
+      const alreadyParked = this.pendingMessages.has(linkId);
+      this.pendingMessages.set(linkId, wireData);
       log(
         "LXMF",
-        `Identity unknown for ${toHex(message.sourceHash)}. Requesting...`,
+        `Identity unknown for ${toHex(message.sourceHash)}; requesting path`,
       );
-
-      // Park the message until the link identifies (or the pending-link
-      // timeout fires), which is when we can learn the sender's identity.
-      this.pendingMessages.set(linkId, wireData);
-
+      // Solicit the sender's identity/path (SPEC §7.2) the first time we park
+      // for it, so a first-contact opportunistic message isn't stuck forever
+      // waiting for an announce the peer may not emit on its own. Re-requests
+      // are suppressed by `alreadyParked` to avoid flooding on every re-process
+      // triggered by unrelated announces.
+      if (!alreadyParked) {
+        try {
+          await this.rns?.transport?.requestPath(message.sourceHash);
+        } catch (/** @type {any} */ e) {
+          log("LXMF", `Failed to request path: ${e}`, LogLevel.WARNING);
+        }
+      }
       return;
     }
 
@@ -963,10 +978,12 @@ export class LXMRouter extends EventTarget {
   /**
    * Call this when a new Identity is cached (e.g., in your IDENTIFY handler).
    * It checks if any parked messages are now ready for processing.
-   * @param {Uint8Array} linkId
+   *
+   * Pass `null` to re-process an opportunistic (linkless) parked message.
+   * @param {Uint8Array|null} linkId
    */
   async processPendingMessages(linkId) {
-    const hashHex = toHex(linkId);
+    const hashHex = linkId ? toHex(linkId) : "opportunistic";
     const expectedDestHash = this.deliveryDest?.destinationHash;
     if (!expectedDestHash) {
       return;
@@ -978,6 +995,41 @@ export class LXMRouter extends EventTarget {
       );
       const wireData = this.pendingMessages.get(linkId);
       await this._processIncomingMessage(wireData, linkId, expectedDestHash);
+    }
+  }
+
+  /**
+   * Re-processes every parked message whose sender identity may now be known
+   * (typically called after a just-validated announce made a previously-
+   * unknown identity available — first-contact opportunistic delivery).
+   *
+   * Each entry is fed back through {@link _processIncomingMessage}: if the
+   * identity is still unknown it is re-parked (without re-requesting the
+   * path, guarded by `alreadyParked`), otherwise it is verified and
+   * dispatched. Safe and cheap to call when nothing is parked.
+   *
+   * @returns {Promise<void>}
+   */
+  async processAllPendingMessages() {
+    const expectedDestHash = this.deliveryDest?.destinationHash;
+    if (!expectedDestHash || this.pendingMessages.size === 0) {
+      return;
+    }
+    // Snapshot the keys: _processIncomingMessage mutates the map (deletes on
+    // success, re-sets on a still-unknown identity), so iterating the live
+    // map could skip or revisit entries.
+    for (const linkId of [...this.pendingMessages.keys()]) {
+      const wireData = this.pendingMessages.get(linkId);
+      if (!wireData) continue;
+      try {
+        await this._processIncomingMessage(wireData, linkId, expectedDestHash);
+      } catch (/** @type {any} */ e) {
+        log(
+          "LXMF",
+          `Re-processing parked message failed: ${e}`,
+          LogLevel.DEBUG,
+        );
+      }
     }
   }
 
