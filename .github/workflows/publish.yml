@@ -68,3 +68,9 @@ jobs:
       - name: Publish @reticulum/node to JSR
         working-directory: packages/node
         run: npx -y jsr publish
+      - name: Publish @reticulum/webrtc-node to JSR
+        working-directory: packages/webrtc-node
+        run: npx -y jsr publish
+      - name: Publish @reticulum/websocket-server-node to JSR
+        working-directory: packages/websocket-server-node
+        run: npx -y jsr publish
