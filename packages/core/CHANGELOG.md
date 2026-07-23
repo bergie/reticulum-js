@@ -1,5 +1,8 @@
 # Changelog
+
 ## [Unreleased]
+
+## [0.4.0] - 2026-07-23
 ### Changed (breaking)
 - Scoped rename + JSR distribution (work doc #24): the package is renamed
   `reticulum-js` → **`@reticulum/core`** and moved to `packages/core/`. Update

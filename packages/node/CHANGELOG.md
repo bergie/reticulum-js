@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-07-23
 ### Added
 - New package, carved out of [`@reticulum/core`](../core) (work doc #22):
   the Node.js-only Reticulum interfaces and the interface registry, so the

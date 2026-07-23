@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-07-23
 ### Added
 - New package (work doc #22): real `WebSocketServerInterface` backed by
   [ws](https://github.com/websockets/ws), replacing the stub removed from the
