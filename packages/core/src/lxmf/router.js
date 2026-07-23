@@ -823,6 +823,15 @@ export class LXMRouter extends EventTarget {
                   peerIdentity.publicKey,
                 );
 
+                // §16: a peer that sent LINKIDENTIFY has communicated with
+                // us over this link — mark their delivery destination for
+                // persistence so the learned identity survives a restart.
+                // Without this, an identity learned only via an inbound
+                // link (no announce heard) is forgotten on relaunch.
+                this.rns.persistor?.markContacted(
+                  peerDeliveryDest.destinationHash,
+                );
+
                 this.pendingLinks.delete(linkHex);
                 this.processPendingMessages(link.linkId);
               } catch (e) {
