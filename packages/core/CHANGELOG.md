@@ -1,6 +1,11 @@
 # Changelog
 ## [Unreleased]
 ### Changed (breaking)
+- Scoped rename + JSR distribution (work doc #24): the package is renamed
+  `reticulum-js` → **`@reticulum/core`** and moved to `packages/core/`. Update
+  imports `"reticulum-js"` → `"@reticulum/core"` (and deep imports
+  `"reticulum-js/src/..."` → `"@reticulum/core/src/..."`). The legacy
+  `reticulum-js` npm package is deprecated in favour of `@reticulum/core`.
 - `LogLevel` (`src/utils/log.js`) is realigned with the Python reference
   `RNS.LOG_*` enum (`RNS/__init__.py:65-74`): names, ordering and numeric
   values now match Python exactly. Work doc #21.
@@ -26,22 +31,26 @@
   (`auto`), `LocalClientInterface` (`local-client`),
   `HttpPostServerInterface` (`http-server`) — and the interface registry
   (`listInterfaces`/`getInterface`/`getSchema`/`registerInterface`) moved to
-  the new [`reticulum-js-node`](../reticulum-js-node) companion package.
-  Import them from `reticulum-js-node` instead of
-  `reticulum-js/src/interfaces/...`. The core package is now browser-safe
+  the new [`@reticulum/node`](../node) companion package.
+  Import them from `@reticulum/node` instead of
+  `@reticulum/core/src/interfaces/...`. The core package is now browser-safe
   (zero `node:` imports). The `WebSocketServerInterface` stub was removed
   from `src/interfaces/websocket.js` (it is inherently Node-only); the real
   server lives in
-  [`reticulum-js-websocket-server-node`](../reticulum-js-websocket-server-node).
+  [`@reticulum/websocket-server-node`](../websocket-server-node).
   (`WebSocketClientInterface` stays in core.)
 
 ### Added
+- JSR publishing (work doc #24): a `jsr.json` makes the browser-safe core
+  natively consumable from Deno and the browser via [JSR](https://jsr.io)
+  (`@reticulum/core`); CI mirrors each tagged release to JSR using GitHub OIDC.
+  Companions remain npm-only.
 - Selective persistence layer (work doc #16): learned peers, ratchet rings
   and path entries now survive a restart when a `StorageAdapter` is supplied
   to `Reticulum({ storageAdapter })`. The contract is backend-agnostic and the
   core stays zero-dependency / browser-safe; the Node.js reference
   `FileStorageAdapter` ships in
-  [`reticulum-js-node`](../reticulum-js-node).
+  [`@reticulum/node`](../node).
   - New `src/storage/` module: the `StorageAdapter` typedef (async KV —
     `loadKey`/`saveKey` for the identity blob; namespaced `get`/`set`/`delete`/
     `keys` for everything else, the same shape `InterfaceDiscovery` already
@@ -134,7 +143,7 @@
     (`createPeerConnection` option) and auto-detects the browser global when
     omitted, so the core stays browser-safe/WinterTC-pure and the full
     negotiation state machine is mock-testable in Node (Node has no native
-    WebRTC; the `reticulum-js-webrtc-node` companion package injects a runtime — see work doc #19
+    WebRTC; the `@reticulum/webrtc-node` companion package injects a runtime — see work doc #19
     update #3). `rtcConfig` passes through STUN/TURN.
   - `test/webrtc/signaling.js`: unit tests plus a true end-to-end case — two
     real `Reticulum` instances bridged by a loopback interface pair, a mock

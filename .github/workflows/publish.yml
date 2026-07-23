@@ -60,7 +60,8 @@ jobs:
       # Publishes every workspace (core first, alphabetical). Root is private
       # and is never published. Companions' "reticulum-js": "^<ver>" dep ref
       # resolves at install time, so order does not block the publish.
-      - name: Publish all workspaces
+      - name: Publish all to NPM
         run: npm publish --workspaces --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish @reticulum/core to JSR
+        working-directory: packages/core
+        run: npx -y jsr publish

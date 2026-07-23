@@ -1,0 +1,17 @@
+{
+  "name": "@reticulum/webrtc-node",
+  "version": "0.3.0",
+  "license": "EUPL-1.2",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "publish": {
+    "include": [
+      "src/",
+      "README.md",
+      "CHANGELOG.md",
+      "package.json",
+      "jsr.json"
+    ]
+  }
+}

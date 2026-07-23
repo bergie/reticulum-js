@@ -1,0 +1,28 @@
+{
+  "name": "@reticulum/core",
+  "version": "0.3.0",
+  "license": "EUPL-1.2",
+  "exports": {
+    ".": "./src/index.js",
+    "./src/core/identity.js": "./src/core/identity.js",
+    "./src/core/packet.js": "./src/core/packet.js",
+    "./src/interfaces/base.js": "./src/interfaces/base.js",
+    "./src/interfaces/http.js": "./src/interfaces/http.js",
+    "./src/interfaces/webrtc.js": "./src/interfaces/webrtc.js",
+    "./src/interfaces/websocket.js": "./src/interfaces/websocket.js",
+    "./src/transport/hdlc-framer.js": "./src/transport/hdlc-framer.js",
+    "./src/transport/kiss-framer.js": "./src/transport/kiss-framer.js",
+    "./src/transport/transport.js": "./src/transport/transport.js",
+    "./src/utils/encoding.js": "./src/utils/encoding.js",
+    "./src/utils/log.js": "./src/utils/log.js"
+  },
+  "publish": {
+    "include": [
+      "src/",
+      "README.md",
+      "CHANGELOG.md",
+      "package.json",
+      "jsr.json"
+    ]
+  }
+}
