@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -9,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { applyVersionBump, packageMetas } from "./release.mjs";
+import { applyVersionBump, gitOriginUrl, packageMetas } from "./release.mjs";
 
 test("applyVersionBump bumps version and rewrites internal dep refs", () => {
   const before = {
@@ -84,6 +85,33 @@ test("packageMetas picks up jsr.json next to package.json", () => {
     const bare = metas.find((m) => m.name === "bare");
     assert.equal(bare.jsrPath, null);
     assert.equal(bare.jsrJson, null);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("gitOriginUrl reads the origin remote url", () => {
+  const root = mkdtempSync(join(tmpdir(), "release-git-"));
+  try {
+    execSync("git init -q", { cwd: root });
+    execSync(
+      "git remote add origin rns://abcd1234deadbeef/public/reticulum-js",
+      { cwd: root },
+    );
+    assert.equal(
+      gitOriginUrl(root),
+      "rns://abcd1234deadbeef/public/reticulum-js",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("gitOriginUrl returns null when there is no origin remote", () => {
+  const root = mkdtempSync(join(tmpdir(), "release-git-"));
+  try {
+    execSync("git init -q", { cwd: root });
+    assert.equal(gitOriginUrl(root), null);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

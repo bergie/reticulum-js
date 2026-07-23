@@ -146,6 +146,18 @@ function tagExists(root, tag) {
 }
 
 /**
+ * The rngit source repo to publish to is the git "origin" remote — not the
+ * public mirror advertised in packages/core/package.json#rngit (that is where
+ * releases get *mirrored*, not where they are published from).
+ * @param {string} root
+ * @returns {string | null}
+ */
+export function gitOriginUrl(root) {
+  const out = tryRun("git remote get-url origin", { cwd: root });
+  return out === null ? null : out.trim();
+}
+
+/**
  * Run `npm pack --dry-run` in a package dir and return the list of files that
  * would be packed (the "Tarball Contents" block).
  * @param {string} pkgDir
@@ -234,10 +246,10 @@ export function runRelease({
     );
   }
 
-  repo = repo || metas.find((m) => m.name === "core")?.json.rngit;
+  repo = repo || gitOriginUrl(root);
   if (!repo) {
     throw new Error(
-      `No rngit repo configured (pass --repo, or add "rngit" to packages/core/package.json)`,
+      `No rngit repo configured (pass --repo, or add a git "origin" remote pointing at the rngit source repo)`,
     );
   }
 
@@ -420,7 +432,7 @@ function printHelp() {
   --skip-checks       do not run types/tests before releasing
   --no-publish        stop after packing; print the rngit command instead of
                       running it (default: publish interactively)
-  --repo <rns-url>    override the rngit repo (default: packages/core .rngit)
+  --repo <rns-url>    override the rngit repo (default: git "origin" remote URL)
   --dry-run           plan only; no writes, no commit, no pack (previews tarballs)
   --root <dir>        monorepo root (default: parent of this script)
 `,
