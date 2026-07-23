@@ -1,8 +1,8 @@
 # WebRTC Transport
 
 **Status:** Implemented (JS), cross-language specification.<br />
-**Canonical JS implementation:** [`packages/reticulum-js/src/webrtc/signaling.js`](../packages/reticulum-js/src/webrtc/signaling.js),<br />
-[`packages/reticulum-js/src/interfaces/webrtc.js`](../packages/reticulum-js/src/interfaces/webrtc.js).<br />
+**Canonical JS implementation:** [`packages/core/src/webrtc/signaling.js`](../packages/core/src/webrtc/signaling.js),<br />
+[`packages/core/src/interfaces/webrtc.js`](../packages/core/src/interfaces/webrtc.js).<br />
 (tracking).
 
 This document specifies the **WebRTC transport upgrade** for Reticulum: a

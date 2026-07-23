@@ -20,12 +20,12 @@ import {
   Identity,
   Reticulum,
   toHex,
-} from "reticulum-js";
+} from "@reticulum/core";
 import {
   FileStorageAdapter,
   LocalClientInterface,
   TCPClientInterface,
-} from "reticulum-js-node";
+} from "@reticulum/node";
 
 // The NomadNet node to fetch from: a 16-byte destination hash (32 hex chars).
 const TARGET_HASH_HEX =
@@ -39,10 +39,10 @@ const RNS_PORT = Number(process.env.RNS_PORT ?? 42424);
 /**
  * Waits until the identity for a destination hash has been learned (from an
  * announce or a path response). A Link needs the peer's public key for ECDH.
- * @param {import("reticulum-js/src/core/reticulum.js").Reticulum} rns
+ * @param {import("@reticulum/core/src/core/reticulum.js").Reticulum} rns
  * @param {Uint8Array} destinationHash
  * @param {number} timeoutMs
- * @returns {Promise<import("reticulum-js/src/core/identity.js").Identity|null>}
+ * @returns {Promise<import("@reticulum/core/src/core/identity.js").Identity|null>}
  */
 async function waitForKnownIdentity(rns, destinationHash, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;

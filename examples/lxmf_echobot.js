@@ -5,12 +5,12 @@ import {
   LXMRouter,
   Reticulum,
   toHex,
-} from "reticulum-js";
+} from "@reticulum/core";
 import {
   FileStorageAdapter,
   LocalClientInterface,
   TCPClientInterface,
-} from "reticulum-js-node";
+} from "@reticulum/node";
 
 async function startEchoBot() {
   console.log("Starting LXMF Echo Bot...");

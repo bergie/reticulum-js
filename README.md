@@ -10,12 +10,12 @@ This repository is an npm-workspaces monorepo: a browser-safe **core** package p
 
 | Package | What it provides | Runtime deps |
 | --- | --- | --- |
-| [`reticulum-js`](packages/reticulum-js/README.md) | The core: Reticulum engine, Identity, LXMF, Links, Resources, Channels, and the browser-safe client interfaces (HTTP, WebSocket, WebRTC) | none (zero-dependency, browser-safe) |
-| [`reticulum-js-node`](packages/reticulum-js-node/README.md) | Node.js interfaces (TCP, AutoInterface, LocalClient/shared-instance, HTTP POST server) and the interface registry | Node builtins only |
-| [`reticulum-js-webrtc-node`](packages/reticulum-js-webrtc-node/README.md) | `createPeerConnection` factory backed by werift, for the core's WebRTC transport on Node | `werift` |
-| [`reticulum-js-websocket-server-node`](packages/reticulum-js-websocket-server-node/README.md) | Inbound WebSocket **server** interface, backed by ws | `ws` |
+| [`@reticulum/core`](packages/core/README.md) | The core: Reticulum engine, Identity, LXMF, Links, Resources, Channels, and the browser-safe client interfaces (HTTP, WebSocket, WebRTC) | none (zero-dependency, browser-safe) |
+| [`@reticulum/node`](packages/node/README.md) | Node.js interfaces (TCP, AutoInterface, LocalClient/shared-instance, HTTP POST server) and the interface registry | Node builtins only |
+| [`@reticulum/webrtc-node`](packages/webrtc-node/README.md) | `createPeerConnection` factory backed by werift, for the core's WebRTC transport on Node | `werift` |
+| [`@reticulum/websocket-server-node`](packages/websocket-server-node/README.md) | Inbound WebSocket **server** interface, backed by ws | `ws` |
 
-Start with [`reticulum-js`](packages/reticulum-js/README.md) — the companions just add interfaces the browser-safe core can't ship.
+Start with [`@reticulum/core`](packages/core/README.md) — the companions just add interfaces the browser-safe core can't ship.
 
 ## Design principles
 
@@ -33,7 +33,7 @@ Early stages, but we are able to send and receive LXMF messages, and make NomadN
 
 At this point the aim is for JavaScript applications to be able to be _leaf nodes_ in a Reticulum mesh, meaning that they will not route traffic for others. Full capability of acting as a _transport node_ would be great to have and is on the roadmap.
 
-See the [core package README](packages/reticulum-js/README.md) for building blocks, installation, and a usage example.
+See the [core package README](packages/core/README.md) for building blocks, installation, and a usage example.
 
 ## Documentation
 

@@ -10,7 +10,7 @@
  *     2. checks      — npm run types / npm test
  *                      (skip with --skip-checks)
  *     3. version     — bump every packages/<pkg>/package.json to <version> and
- *                      rewrite the internal "reticulum-js": "^old" dep refs in
+ *                      rewrite the internal "@reticulum/core": "^old" dep refs in
  *                      the companions to "^<version>"
  *     4. changelog   — compile-changelog: stamp each package's [Unreleased] ->
  *                      [<version>] and compile a root CHANGELOG.md
@@ -49,7 +49,7 @@ import { compileChangelog } from "./compile-changelog.mjs";
 const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Internal workspace deps whose `"^x"` range is rewritten on a version bump. */
-const INTERNAL_PACKAGES = ["reticulum-js"];
+const INTERNAL_PACKAGES = ["@reticulum/core"];
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -220,10 +220,10 @@ export function runRelease({
     );
   }
 
-  repo = repo || metas.find((m) => m.name === "reticulum-js")?.json.rngit;
+  repo = repo || metas.find((m) => m.name === "core")?.json.rngit;
   if (!repo) {
     throw new Error(
-      `No rngit repo configured (pass --repo, or add "rngit" to packages/reticulum-js/package.json)`,
+      `No rngit repo configured (pass --repo, or add "rngit" to packages/core/package.json)`,
     );
   }
 
@@ -251,11 +251,11 @@ export function runRelease({
   console.log("Version bump:");
   for (const m of metas) {
     const after = applyVersionBump(m.json, version);
-    const depBefore = m.json.dependencies?.["reticulum-js"];
-    const depAfter = after.dependencies?.["reticulum-js"];
+    const depBefore = m.json.dependencies?.["@reticulum/core"];
+    const depAfter = after.dependencies?.["@reticulum/core"];
     const depNote =
       depBefore && depAfter && depBefore !== depAfter
-        ? `  (reticulum-js dep ${depBefore} -> ${depAfter})`
+        ? `  (@reticulum/core dep ${depBefore} -> ${depAfter})`
         : "";
     console.log(`  ${m.name}: ${m.json.version} -> ${version}${depNote}`);
     if (!dryRun) writeJSON(m.path, after);
@@ -395,7 +395,7 @@ function printHelp() {
   --skip-checks       do not run types/tests before releasing
   --no-publish        stop after packing; print the rngit command instead of
                       running it (default: publish interactively)
-  --repo <rns-url>    override the rngit repo (default: packages/reticulum-js .rngit)
+  --repo <rns-url>    override the rngit repo (default: packages/core .rngit)
   --dry-run           plan only; no writes, no commit, no pack (previews tarballs)
   --root <dir>        monorepo root (default: parent of this script)
 `,

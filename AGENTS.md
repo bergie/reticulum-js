@@ -32,7 +32,7 @@ Every API interface needs to have TypeScript definitions in JsDoc format. Run `n
 
 ## Tests
 
-We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should recide in corresponding file under `test` folder, so that for instance tests for Identity (implementation `packages/reticulum-js/src/core/identity.js` are in `packages/reticulum-js/test/core/identity.js`.
+We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should recide in corresponding file under `test` folder, so that for instance tests for Identity (implementation `packages/core/src/core/identity.js` are in `packages/core/test/core/identity.js`.
 
 All tests should be verified against the Python reference implementation to make sure we are testing Reticulum compatibility instead of just quirks of our local implementation.
 
@@ -43,7 +43,7 @@ This tool aims to run on all modern JavaScript environments. There may be enviro
 We should minimize or even seek to eliminate dependencies outside of what's in the WinterTC Minimum Common API:
 https://min-common-api.proposal.wintertc.org/
 
-The core reticulum-js (`packages/reticulum-js`) may only depend on the standard web platform. Anything that needs a Node.js core library (`node:`) dependency should live in `packages/reticulum-js-node`. Interfaces and other things requiring 3rd party dependencies need packages of their own (see for example the Node.js WebSocket Server package).
+The `@reticulum/core` package (`packages/core`) may only depend on the standard web platform. Anything that needs a Node.js core library (`node:`) dependency should live in `packages/node`. Interfaces and other things requiring 3rd party dependencies need packages of their own (see for example the Node.js WebSocket Server package).
 
 ## Boundaries
 
@@ -53,7 +53,7 @@ The core reticulum-js (`packages/reticulum-js`) may only depend on the standard 
 - ✅ **Always**: compare implementation with how the Python reference implementation works and adapt to be compatible with it
 - ✅ **Always**: Use `git mv` instead of `mv' for renaming files
 - ✅ **Always**: Remove ambiguity and legacy support from APIs you modify. Right now there are no API consumers outside this repo so we can keep things fluid
-- ✅ **Always**: Use the logging helper from `packages/reticulum-js/src/utils/log.js` instead of `console.log` (and `.warn/.error`)
+- ✅ **Always**: Use the logging helper from `packages/core/src/utils/log.js` instead of `console.log` (and `.warn/.error`)
 - ✅ **Always**: Keep the work document associated with current task up-to-date
 - ⚠️ **Ask first**: adding dependencies
 - ⚠️ **Ask first**: modify CI config

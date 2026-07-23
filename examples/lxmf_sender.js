@@ -7,12 +7,12 @@ import {
   LXMRouter,
   Reticulum,
   toHex,
-} from "reticulum-js";
+} from "@reticulum/core";
 import {
   FileStorageAdapter,
   LocalClientInterface,
   TCPClientInterface,
-} from "reticulum-js-node";
+} from "@reticulum/node";
 
 // The LXMF destination hash this script will try to talk to.
 // Override at runtime with the `LXMF_TARGET` environment variable.
@@ -29,7 +29,7 @@ const TARGET_HASH_HEX =
  *
  * @param {Uint8Array} destinationHash
  * @param {number} timeoutMs
- * @returns {Promise<import("reticulum-js/src/core/identity.js").Identity|null>}
+ * @returns {Promise<import("@reticulum/core/src/core/identity.js").Identity|null>}
  */
 async function waitForKnownIdentity(destinationHash, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
@@ -146,7 +146,7 @@ async function startSender() {
  * Sends a short message as a single opportunistic Reticulum packet.
  *
  * @param {LXMRouter} lxmf
- * @param {import("reticulum-js/src/core/identity.js").Identity} senderIdentity
+ * @param {import("@reticulum/core/src/core/identity.js").Identity} senderIdentity
  * @param {Uint8Array} targetHash
  */
 async function sendOpportunistic(lxmf, senderIdentity, targetHash) {
@@ -171,7 +171,7 @@ async function sendOpportunistic(lxmf, senderIdentity, targetHash) {
  * `lxmf.propagation` destination hash; skipped otherwise.
  *
  * @param {LXMRouter} lxmf
- * @param {import("reticulum-js/src/core/identity.js").Identity} senderIdentity
+ * @param {import("@reticulum/core/src/core/identity.js").Identity} senderIdentity
  * @param {Uint8Array} targetHash
  */
 async function sendViaPropagationNode(lxmf, senderIdentity, targetHash) {
@@ -210,9 +210,9 @@ async function sendViaPropagationNode(lxmf, senderIdentity, targetHash) {
  *
  * @param {Reticulum} rns
  * @param {LXMRouter} lxmf
- * @param {import("reticulum-js/src/core/identity.js").Identity} senderIdentity
+ * @param {import("@reticulum/core/src/core/identity.js").Identity} senderIdentity
  * @param {Uint8Array} targetHash
- * @param {import("reticulum-js/src/core/identity.js").Identity} peerIdentity
+ * @param {import("@reticulum/core/src/core/identity.js").Identity} peerIdentity
  */
 async function sendDirectOverLink(
   rns,

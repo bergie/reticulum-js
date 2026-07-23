@@ -11,7 +11,7 @@ This implementation is optimized to operate as a "leaf node" transport layer. Fu
 ### 1.1 Dependency & import boundaries
 
 The codebase is an npm-workspaces monorepo (see §2). Only the **core
-package** (`packages/reticulum-js`) must stay browser-safe: its public entry
+package** (`packages/core`) must stay browser-safe: its public entry
 point (`src/index.js`) and every module in its **static import graph** must
 remain free of runtime dependencies beyond the
 [WinterTC Minimum Common API](https://min-common-api.proposal.wintertc.org/).
@@ -26,7 +26,7 @@ Paths written as `src/...` in this section are relative to the core package.
   bundler (webpack, tsdown/rolldown, vite, esbuild, rollup) never pulls
   Node-only code into a browser build, with zero per-tool configuration.
   Node-builtin interfaces and `src/utils/netinfo.js` (`node:os`) live in the
-  `reticulum-js-node` companion.)
+  `@reticulum/node` companion.)
 
 - **Functionality needing third-party or Node-only libraries must either:**
   1. be wired in via **dependency injection**, so the core has no static
@@ -35,18 +35,18 @@ Paths written as `src/...` in this section are relative to the core package.
      (`new Reticulum({ compressionProvider })` is threaded down to
      `Resource`/`Link` as `options.bz2`; `@digitaldefiance/bzip2-wasm` is a
      devDependency only); **or**
-  2. be **published as a separate package** that imports from `reticulum-js`
+  2. be **published as a separate package** that imports from `@reticulum/core`
      and injects its concrete runtime (dependency direction is one-way:
      companion → core, never core → companion). The companions are
-     `reticulum-js-node` (Node-builtin interfaces — TCP, AutoInterface,
+     `@reticulum/node` (Node-builtin interfaces — TCP, AutoInterface,
      LocalClient, HTTP POST server — plus the interface registry),
-     `reticulum-js-webrtc-node` (a werift-backed `createPeerConnection`
+     `@reticulum/webrtc-node` (a werift-backed `createPeerConnection`
      factory for the core's WebRTC transport), and
-     `reticulum-js-websocket-server-node` (a ws-backed WebSocket **server**).
+     `@reticulum/websocket-server-node` (a ws-backed WebSocket **server**).
 
 Interfaces built on `node:` libraries (e.g. `tcp.js`, `local_client.js`)
 therefore **do not live in the core package at all** — Node consumers import
-them from the `reticulum-js-node` companion, and browser consumers simply do
+them from the `@reticulum/node` companion, and browser consumers simply do
 not use them.
 
 ### 1.2 Logging
@@ -103,7 +103,7 @@ The project is an npm-workspaces monorepo: a zero-dependency, browser-safe **cor
 ```text
 reticulum-js/                                 # private monorepo root (npm workspaces)
 ├── packages/
-│   ├── reticulum-js/                         # CORE — zero-dep, browser-safe
+│   ├── core/                                 # CORE — zero-dep, browser-safe
 │   │   └── src/
 │   │       ├── crypto/                       # Web Crypto wrappers (keys, ciphers, token, hmac, pkcs7)
 │   │       ├── core/                         # domain logic (identity, destination, packet, resource, …)
@@ -118,17 +118,17 @@ reticulum-js/                                 # private monorepo root (npm works
 │   │       │   └── webrtc.js                 # WebRTCInterface (wraps an RTCDataChannel)
 │   │       ├── utils/                        # encoding, log, msgpack
 │   │       └── index.js                      # public API exports
-│   ├── reticulum-js-node/                    # Node-builtin interfaces + registry
+│   ├── node/                                 # Node-builtin interfaces + registry
 │   │   └── src/
 │   │       ├── interfaces/                   # auto, tcp, local_client, http_server, registry
 │   │       ├── utils/                        # netinfo (node:os)
 │   │       └── index.js
-│   ├── reticulum-js-webrtc-node/             # werift-backed createPeerConnection
-│   └── reticulum-js-websocket-server-node/   # ws-backed WebSocketServerInterface
+│   ├── webrtc-node/                          # werift-backed createPeerConnection
+│   └── websocket-server-node/                # ws-backed WebSocketServerInterface
 └── …
 ```
 
-Dependency direction is one-way: every companion depends on `reticulum-js`;
+Dependency direction is one-way: every companion depends on `@reticulum/core`;
 the core never depends on a companion.
 
 ---

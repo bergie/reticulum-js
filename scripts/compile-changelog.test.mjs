@@ -73,7 +73,7 @@ test("stampPackage returns null when there is no [Unreleased] (gap package)", ()
 test("buildCompiledSection merges packages, breaking-first, prefixed", () => {
   const perPkg = [
     {
-      pkg: "reticulum-js",
+      pkg: "core",
       cats: [
         {
           name: "Added",
@@ -83,7 +83,7 @@ test("buildCompiledSection merges packages, breaking-first, prefixed", () => {
       ],
     },
     {
-      pkg: "reticulum-js-node",
+      pkg: "node",
       cats: [{ name: "Added", entries: [["- New package thing"]] }],
     },
   ];
@@ -92,12 +92,12 @@ test("buildCompiledSection merges packages, breaking-first, prefixed", () => {
     [
       "## [0.4.0] - 2026-07-30",
       "### Changed (breaking)",
-      "- **reticulum-js**: Break X",
+      "- **core**: Break X",
       "### Added",
-      "- **reticulum-js**: Feature Y",
+      "- **core**: Feature Y",
       "  - subdetail",
-      "- **reticulum-js**: Feature Z",
-      "- **reticulum-js-node**: New package thing",
+      "- **core**: Feature Z",
+      "- **node**: New package thing",
     ].join("\n"),
   );
 });
@@ -106,9 +106,9 @@ test("compileChangelog end-to-end: stamps, skips gaps, writes root", () => {
   const root = mkdtempSync(join(tmpdir(), "rjs-cl-"));
   try {
     mkdirSync(join(root, "packages"), { recursive: true });
-    const coreDir = join(root, "packages", "reticulum-js");
-    const nodeDir = join(root, "packages", "reticulum-js-node");
-    const webrtcDir = join(root, "packages", "reticulum-js-webrtc-node");
+    const coreDir = join(root, "packages", "core");
+    const nodeDir = join(root, "packages", "node");
+    const webrtcDir = join(root, "packages", "webrtc-node");
     mkdirSync(coreDir, { recursive: true });
     mkdirSync(nodeDir, { recursive: true });
     mkdirSync(webrtcDir, { recursive: true });
@@ -132,9 +132,9 @@ test("compileChangelog end-to-end: stamps, skips gaps, writes root", () => {
       log: () => {},
     });
 
-    assert.deepEqual(res.stamped, ["reticulum-js", "reticulum-js-node"]);
+    assert.deepEqual(res.stamped, ["core", "node"]);
     assert.equal(res.skipped.length, 1);
-    assert.equal(res.skipped[0].pkg, "reticulum-js-webrtc-node");
+    assert.equal(res.skipped[0].pkg, "webrtc-node");
 
     // Gap package is untouched.
     assert.equal(
@@ -151,7 +151,7 @@ test("compileChangelog end-to-end: stamps, skips gaps, writes root", () => {
     // Root is created with the compiled [0.4.0] section only (no old history).
     assert.equal(
       readFileSync(join(root, "CHANGELOG.md"), "utf8"),
-      "# Changelog\n\n## [Unreleased]\n\n## [0.4.0] - 2026-07-30\n### Changed (breaking)\n- **reticulum-js**: Break X\n### Added\n- **reticulum-js**: Feature Y\n  - subdetail\n- **reticulum-js**: Feature Z\n- **reticulum-js-node**: New package thing\n",
+      "# Changelog\n\n## [Unreleased]\n\n## [0.4.0] - 2026-07-30\n### Changed (breaking)\n- **core**: Break X\n### Added\n- **core**: Feature Y\n  - subdetail\n- **core**: Feature Z\n- **node**: New package thing\n",
     );
 
     // Re-running for the same version is rejected (no duplicate sections).

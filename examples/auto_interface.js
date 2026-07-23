@@ -4,12 +4,12 @@ import {
   Identity,
   Reticulum,
   toHex,
-} from "reticulum-js";
+} from "@reticulum/core";
 import {
   AutoInterface,
   FileStorageAdapter,
   LocalClientInterface,
-} from "reticulum-js-node";
+} from "@reticulum/node";
 
 async function main() {
   const rns = new Reticulum({
