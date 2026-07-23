@@ -9,9 +9,11 @@
  *     1. pre-flight  — clean tree, tag v<version> not taken, packages lockstep
  *     2. checks      — npm run types / npm test
  *                      (skip with --skip-checks)
- *     3. version     — bump every packages/<pkg>/package.json to <version> and
- *                      rewrite the internal "@reticulum/core": "^old" dep refs in
- *                      the companions to "^<version>"
+ *     3. version     — bump every packages/<pkg>/package.json (and jsr.json,
+ *                      when present) to <version> and rewrite the internal
+ *                      "@reticulum/core": "^old" dep refs in the companions'
+ *                      package.json to "^<version>" (jsr.json deps use jsr:
+ *                      ranges and are left untouched)
  *     4. changelog   — compile-changelog: stamp each package's [Unreleased] ->
  *                      [<version>] and compile a root CHANGELOG.md
  *     5. notes       — write the compiled [<version>] section to
@@ -38,6 +40,7 @@
 
 import { execSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -112,13 +115,21 @@ function tryRun(cmd, opts) {
 }
 
 /** @param {string} root */
-function packageMetas(root) {
+export function packageMetas(root) {
   const dir = join(root, "packages");
   return readdirSync(dir)
     .filter((d) => statSync(join(dir, d)).isDirectory())
     .map((name) => {
       const path = join(dir, name, "package.json");
-      return { name, path, json: readJSON(path) };
+      const jsrPath = join(dir, name, "jsr.json");
+      const hasJsr = existsSync(jsrPath);
+      return {
+        name,
+        path,
+        json: readJSON(path),
+        jsrPath: hasJsr ? jsrPath : null,
+        jsrJson: hasJsr ? readJSON(jsrPath) : null,
+      };
     });
 }
 
@@ -250,18 +261,29 @@ export function runRelease({
     console.log();
   }
 
-  // 3. version bump + internal dep refs
+  // 3. version bump (package.json + jsr.json) + internal dep ref rewrite
+  //    (package.json only: jsr.json uses jsr: range specifiers for deps, so we
+  //    only touch its version field and leave dependencies as-is)
   console.log("Version bump:");
   for (const m of metas) {
-    const after = applyVersionBump(m.json, version);
-    const depBefore = m.json.dependencies?.["@reticulum/core"];
-    const depAfter = after.dependencies?.["@reticulum/core"];
-    const depNote =
-      depBefore && depAfter && depBefore !== depAfter
-        ? `  (@reticulum/core dep ${depBefore} -> ${depAfter})`
-        : "";
-    console.log(`  ${m.name}: ${m.json.version} -> ${version}${depNote}`);
-    if (!dryRun) writeJSON(m.path, after);
+    /** @type {{path: string, json: Record<string, any>, isJsr: boolean}[]} */
+    const manifests = [{ path: m.path, json: m.json, isJsr: false }];
+    if (m.jsrJson)
+      manifests.push({ path: m.jsrPath, json: m.jsrJson, isJsr: true });
+    for (const { path, json, isJsr } of manifests) {
+      const after = applyVersionBump(json, version, isJsr ? [] : undefined);
+      const depBefore = json.dependencies?.["@reticulum/core"];
+      const depAfter = after.dependencies?.["@reticulum/core"];
+      const depNote =
+        depBefore && depAfter && depBefore !== depAfter
+          ? `  (@reticulum/core dep ${depBefore} -> ${depAfter})`
+          : "";
+      const label = isJsr ? " jsr.json" : "";
+      console.log(
+        `  ${m.name}${label}: ${json.version} -> ${version}${depNote}`,
+      );
+      if (!dryRun) writeJSON(path, after);
+    }
   }
   console.log();
 
@@ -304,12 +326,12 @@ export function runRelease({
   // 7. commit + tag
   if (dryRun) {
     console.log(
-      "Would commit + tag: packages/*/package.json packages/*/CHANGELOG.md CHANGELOG.md package-lock.json\n",
+      "Would commit + tag: packages/*/package.json packages/*/jsr.json packages/*/CHANGELOG.md CHANGELOG.md package-lock.json\n",
     );
   } else {
     console.log("Committing release...");
     run(
-      "git add packages/*/package.json packages/*/CHANGELOG.md CHANGELOG.md package-lock.json",
+      "git add packages/*/package.json packages/*/jsr.json packages/*/CHANGELOG.md CHANGELOG.md package-lock.json",
       {
         cwd: root,
       },
