@@ -1,4 +1,3 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   Destination,
   DestType,
@@ -6,25 +5,15 @@ import {
   Reticulum,
   toHex,
 } from "reticulum-js";
-import { AutoInterface, LocalClientInterface } from "reticulum-js-node";
-
-// A minimal file-backed storage adapter so the node keeps the same Identity
-// (and therefore the same destination hash) across restarts.
-class FileStorageAdapter {
-  constructor(path) {
-    this.path = path;
-  }
-  async loadKey() {
-    return existsSync(this.path) ? readFileSync(this.path) : null;
-  }
-  async saveKey(keyData) {
-    writeFileSync(this.path, keyData);
-  }
-}
+import {
+  AutoInterface,
+  FileStorageAdapter,
+  LocalClientInterface,
+} from "reticulum-js-node";
 
 async function main() {
   const rns = new Reticulum({
-    storageAdapter: new FileStorageAdapter("./auto-identity.key"),
+    storageAdapter: new FileStorageAdapter("./auto-storage"),
   });
 
   // AutoInterface: zero-config IPv6-multicast peering on the local network.

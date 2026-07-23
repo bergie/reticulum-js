@@ -1,4 +1,3 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   fromHex,
   Identity,
@@ -7,27 +6,18 @@ import {
   Reticulum,
   toHex,
 } from "reticulum-js";
-import { LocalClientInterface, TCPClientInterface } from "reticulum-js-node";
-
-// A simple Node.js file storage adapter for the bot's private key
-class FileStorageAdapter {
-  constructor(path) {
-    this.path = path;
-  }
-  async loadKey() {
-    return existsSync(this.path) ? readFileSync(this.path) : null;
-  }
-  async saveKey(keyData) {
-    writeFileSync(this.path, keyData);
-  }
-}
+import {
+  FileStorageAdapter,
+  LocalClientInterface,
+  TCPClientInterface,
+} from "reticulum-js-node";
 
 async function startEchoBot() {
   console.log("Starting LXMF Echo Bot...");
 
   // Initialize the Core RNS Engine
   const rns = new Reticulum({
-    storageAdapter: new FileStorageAdapter("./bot-identity.key"),
+    storageAdapter: new FileStorageAdapter("./echobot-storage"),
   });
 
   // Prefer the local shared instance (a running rnsd, or our own daemon): it

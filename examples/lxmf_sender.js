@@ -1,4 +1,3 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   Destination,
   DestType,
@@ -9,25 +8,19 @@ import {
   Reticulum,
   toHex,
 } from "reticulum-js";
-import { LocalClientInterface, TCPClientInterface } from "reticulum-js-node";
+import {
+  FileStorageAdapter,
+  LocalClientInterface,
+  TCPClientInterface,
+} from "reticulum-js-node";
 
 // The LXMF destination hash this script will try to talk to.
 // Override at runtime with the `LXMF_TARGET` environment variable.
 const TARGET_HASH_HEX =
   process.env.LXMF_TARGET ?? "178b9ff0b5463650cec7124d05ac5cc9";
 
-// A simple Node.js file storage adapter for the sender's private key
-class FileStorageAdapter {
-  constructor(path) {
-    this.path = path;
-  }
-  async loadKey() {
-    return existsSync(this.path) ? readFileSync(this.path) : null;
-  }
-  async saveKey(keyData) {
-    writeFileSync(this.path, keyData);
-  }
-}
+// A Node.js file-backed storage adapter: persists the sender's private key
+// plus the peers/ratchets/paths we communicate with across restarts.
 
 /**
  * Waits until the identity for a destination hash has been learned (typically
@@ -54,7 +47,7 @@ async function startSender() {
 
   // Initialize the Core RNS Engine
   const rns = new Reticulum({
-    storageAdapter: new FileStorageAdapter("./sender-identity.key"),
+    storageAdapter: new FileStorageAdapter("./sender-storage"),
   });
 
   // Prefer the local shared instance (a running rnsd, or our own daemon): it

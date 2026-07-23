@@ -25,3 +25,4 @@ export {
   registerInterface,
 } from "./interfaces/registry.js";
 export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
+export { FileStorageAdapter } from "./storage/file.js";

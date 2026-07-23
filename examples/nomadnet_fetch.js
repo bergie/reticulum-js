@@ -13,7 +13,6 @@
  *   NN_TARGET=d6d0cc236a9ecb80303c4e148c23d22e RNS_HOST=127.0.0.1 RNS_PORT=42424 \
  *     node examples/nomadnet_fetch.js
  */
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   Destination,
   DestType,
@@ -22,7 +21,11 @@ import {
   Reticulum,
   toHex,
 } from "reticulum-js";
-import { LocalClientInterface, TCPClientInterface } from "reticulum-js-node";
+import {
+  FileStorageAdapter,
+  LocalClientInterface,
+  TCPClientInterface,
+} from "reticulum-js-node";
 
 // The NomadNet node to fetch from: a 16-byte destination hash (32 hex chars).
 const TARGET_HASH_HEX =
@@ -32,19 +35,6 @@ const PAGE_PATH = process.env.NN_PAGE ?? "/page/index.mu";
 // Interface to the mesh (a local rnsd by default).
 const RNS_HOST = process.env.RNS_HOST ?? "127.0.0.1";
 const RNS_PORT = Number(process.env.RNS_PORT ?? 42424);
-
-/** Simple file-backed storage adapter for our own identity key. */
-class FileStorageAdapter {
-  constructor(path) {
-    this.path = path;
-  }
-  async loadKey() {
-    return existsSync(this.path) ? readFileSync(this.path) : null;
-  }
-  async saveKey(keyData) {
-    writeFileSync(this.path, keyData);
-  }
-}
 
 /**
  * Waits until the identity for a destination hash has been learned (from an
@@ -75,7 +65,7 @@ async function main() {
   console.log(`NomadNet fetch -> ${TARGET_HASH_HEX}${PAGE_PATH}`);
 
   const rns = new Reticulum({
-    storageAdapter: new FileStorageAdapter("./nomadnet-fetch-identity.key"),
+    storageAdapter: new FileStorageAdapter("./nomadnet-fetch-storage"),
   });
 
   // Prefer the local shared instance (auto-discovered from
