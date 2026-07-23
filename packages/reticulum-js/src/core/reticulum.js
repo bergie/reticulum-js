@@ -71,6 +71,8 @@ export class Reticulum {
     });
     this.transport.persistor = this.persistor;
     this.persistorLoadPromise = this.persistor.load();
+    /** Whether {@link stop} has run. */
+    this._stopped = false;
 
     // Interface discovery (work doc #17). Surface-only in v1: parses,
     // stamp-validates and surfaces `rnstransport.discovery.interface` announces
@@ -173,5 +175,33 @@ export class Reticulum {
   broadcast(packet) {
     // The core acts as the mediator
     this.transport.broadcast(packet);
+  }
+
+  /**
+   * Graceful shutdown: stops interface discovery, disconnects every attached
+   * interface, and flushes the persistence layer so the final debounced batch
+   * isn't lost. A per-interface disconnect failure is logged and the rest
+   * still proceed. Idempotent.
+   *
+   * Links and their channels are not torn down here (they are owned by the
+   * application's destinations); they terminate when their interfaces close.
+   * @returns {Promise<void>}
+   */
+  async stop() {
+    if (this._stopped) return;
+    this._stopped = true;
+    this.discovery?.stop();
+    for (const iface of [...this.transport.interfaces]) {
+      try {
+        await iface.disconnect();
+      } catch (e) {
+        log(
+          "Reticulum",
+          `Interface ${iface.name} disconnect failed during stop: ${e}`,
+          LogLevel.WARNING,
+        );
+      }
+    }
+    await this.persistor.flush();
   }
 }

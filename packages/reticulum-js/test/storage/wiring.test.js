@@ -189,3 +189,56 @@ describe("TransportCore.sendPacket — communicate-with marking (#16)", () => {
     );
   });
 });
+
+describe("Reticulum.stop() — graceful shutdown", () => {
+  test("flushes the persistor (cancels the pending debounced flush)", async () => {
+    const rns = new Reticulum({
+      storageAdapter: new MemoryStorageAdapter(),
+    });
+    rns.persistor.markContacted("cd".repeat(16));
+    assert.ok(rns.persistor._flushTimer, "a debounced flush is pending");
+    await rns.stop();
+    assert.strictEqual(
+      rns.persistor._flushTimer,
+      null,
+      "stop flushed and cleared the timer",
+    );
+  });
+
+  test("disconnects every attached interface (best-effort)", async () => {
+    const rns = new Reticulum({});
+    const state = { a: false, b: false };
+    const mk = (name, flag) =>
+      Object.assign(new EventTarget(), {
+        name,
+        disconnect: async () => {
+          state[flag] = true;
+        },
+      });
+    rns.transport.addInterface(mk("a", "a"));
+    rns.transport.addInterface(mk("b", "b"));
+
+    await rns.stop();
+
+    assert.ok(state.a, "interface a disconnected");
+    assert.ok(state.b, "interface b disconnected");
+  });
+
+  test("a disconnect() that rejects is logged, not thrown", async () => {
+    const rns = new Reticulum({});
+    const iface = Object.assign(new EventTarget(), {
+      name: "failing",
+      disconnect: async () => {
+        throw new Error("boom");
+      },
+    });
+    rns.transport.addInterface(iface);
+    await rns.stop(); // must not throw
+  });
+
+  test("idempotent", async () => {
+    const rns = new Reticulum({});
+    await rns.stop();
+    await rns.stop(); // second call is a no-op
+  });
+});
