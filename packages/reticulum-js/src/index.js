@@ -40,6 +40,11 @@ export * as LXMFConstants from "./lxmf/constants.js";
 export { Message as LXMessage } from "./lxmf/message.js";
 export { LXMRouter } from "./lxmf/router.js";
 export * as LXStamper from "./lxmf/stamper.js";
+// --- Persistence (work doc #16) ---
+// Platform-neutral storage contract + reference in-memory backend. Real
+// backends live in companion packages (`FileStorageAdapter` in
+// `reticulum-js-node`, a user-supplied IndexedDB adapter in the browser).
+export { MemoryStorageAdapter, StorageNamespace } from "./storage/storage.js";
 // Web Stream byte-stream adapters over a Channel (RNS/Buffer.py). Importing
 // this also wires channel.openReadable / openWritable / openDuplex.
 export {
