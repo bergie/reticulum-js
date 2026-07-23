@@ -35,7 +35,7 @@ rngit release rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js fetc
 npm install reticulum-core-*.tgz
 ```
 
-You can also get `@reticulum/core` [from NPM](https://www.npmjs.com/package/@reticulum/core):
+You can also get `@reticulum/core` [from JSR](https://jsr.io/@reticulum/core) or [from NPM](https://www.npmjs.com/package/@reticulum/core):
 
 ```sh
 npm install @reticulum/core
