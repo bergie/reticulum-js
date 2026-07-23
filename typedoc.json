@@ -1,6 +1,6 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "name": "@reticulum",
+  "name": "reticulum-js",
   "entryPointStrategy": "packages",
   "entryPoints": [
     "packages/core",
