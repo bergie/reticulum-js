@@ -81,6 +81,7 @@ export class HttpPostClientInterface extends Interface {
             "Base URL of the HTTP exchange server, e.g. " +
             "https://node.example.com/reticulum.",
           examples: ["https://node.example.com/reticulum"],
+          default: "https://retichat.com/reticulum",
         },
         pollIntervalMs: {
           type: "integer",
