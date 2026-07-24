@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.4.2] - 2026-07-24
 ### Fixed
 - LXMF `LXMRouter.send()` now reaches mobile clients (Columba, Sideband on
   mobile). When no link was supplied it delivered a single **opportunistic**

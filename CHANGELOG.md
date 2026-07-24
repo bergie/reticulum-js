@@ -23,6 +23,32 @@
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.4.2] - 2026-07-24
+### Fixed
+- **core**: LXMF `LXMRouter.send()` now reaches mobile clients (Columba, Sideband on
+  mobile). When no link was supplied it delivered a single **opportunistic**
+  packet, but mobile LXMF clients listen for replies over a **DIRECT** link —
+  so a bot responding to an opportunistic/propagation-delivered message (where
+  the inbound `link` is `null`) sent its reply to a channel the client never
+  read, and the message silently disappeared. `send()` now matches the Python
+  reference's default delivery method (`LXMRouter.process_outbound`, which is
+  `LXMessage.DIRECT`): it establishes a DIRECT link to the recipient and sends
+  the body over it (with the once-per-link `LINKIDENTIFY` the responder
+  requires before it will accept application DATA), falling back to a single
+  opportunistic packet only when no link can be established (peer unreachable
+  or identity unknown). `Link.initiate` does implicit path discovery, so this
+  reaches a client the same way an explicit `createLink()` does. The established
+  link is cached per recipient hash (`directLinks`) and reused across sends.
+  No echo-bot code change is needed — `send(reply, identity, link)` now does
+  the right thing when `link` is `null`.
+- **core**: Outbound DIRECT links now **receive replies** (the backchannel). The router
+  only wired up the `data`/`resource` inbound listeners on *accepted* (inbound)
+  links, never on links it initiated — so a reply arriving on an outbound
+  delivery link was dropped. Mirrors Python, which calls
+  `delivery_link_established` on outbound direct links as well as inbound ones.
+  The listeners are factored into `_attachLinkMessageListeners(link)`, shared by
+  both paths. New round-trip test `test/lxmf/echo_direct_repro.test.js`.
+
 ## [0.4.1] - 2026-07-23
 ### Fixed
 - **core**: Persist identity learned via `LINKIDENTIFY` (work doc #16): the LXMF router's
