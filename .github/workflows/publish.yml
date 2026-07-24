@@ -72,13 +72,13 @@ jobs:
         run: npm publish --workspaces --access public
       - name: Publish @reticulum/core to JSR
         working-directory: packages/core
-        run: npx -y jsr publish
+        run: npx -y jsr publish --allow-dirty
       - name: Publish @reticulum/node to JSR
         working-directory: packages/node
-        run: npx -y jsr publish
+        run: npx -y jsr publish --allow-dirty
       - name: Publish @reticulum/webrtc-node to JSR
         working-directory: packages/webrtc-node
-        run: npx -y jsr publish
+        run: npx -y jsr publish --allow-dirty
       - name: Publish @reticulum/websocket-server-node to JSR
         working-directory: packages/websocket-server-node
-        run: npx -y jsr publish
+        run: npx -y jsr publish --allow-dirty
