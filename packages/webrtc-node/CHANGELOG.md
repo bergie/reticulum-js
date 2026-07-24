@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.4.3] - 2026-07-24
 ### Fixed
 - JSR package score: satisfy the "no slow types" scoring criterion. JSR's fast
   type-check does not auto-resolve a sibling `.d.ts` for a JavaScript

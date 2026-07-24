@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/websocket-server-node",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "license": "EUPL-1.2",
   "exports": {
     ".": "./src/index.js"

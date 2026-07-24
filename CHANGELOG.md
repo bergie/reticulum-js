@@ -23,6 +23,34 @@
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.4.3] - 2026-07-24
+### Fixed
+- **core**: JSR package score: satisfy the "no slow types" and "every entrypoint has a
+  module doc" scoring criteria. JSR's fast type-check does not auto-resolve a
+  sibling `.d.ts` for a JavaScript entrypoint, so each of the 12 entrypoints
+  now carries a `/* @ts-self-types="…types/…d.ts" */` directive pointing at
+  its generated declaration, and `types/` is shipped to JSR (`jsr.json`
+  `publish.include`; the declarations stay git-ignored build artifacts,
+  un-ignored only at publish time (in CI, or locally via `scripts/jsr-dryrun.sh`)
+  because `deno publish` honors `.gitignore`). Six entrypoints additionally had
+  their module doc placed after the imports (or were missing one) and so were
+  not recognized — these are now leading the file.
+- **node**: JSR package score: satisfy the "no slow types" scoring criterion. JSR's fast
+  type-check does not auto-resolve a sibling `.d.ts` for a JavaScript
+  entrypoint, so the entrypoint now carries a
+  `/* @ts-self-types="…types/…d.ts" */` directive pointing at its generated
+  declaration, and `types/` is shipped to JSR.
+- **webrtc-node**: JSR package score: satisfy the "no slow types" scoring criterion. JSR's fast
+  type-check does not auto-resolve a sibling `.d.ts` for a JavaScript
+  entrypoint, so the entrypoint now carries a
+  `/* @ts-self-types="…types/…d.ts" */` directive pointing at its generated
+  declaration, and `types/` is shipped to JSR.
+- **websocket-server-node**: JSR package score: satisfy the "no slow types" scoring criterion. JSR's fast
+  type-check does not auto-resolve a sibling `.d.ts` for a JavaScript
+  entrypoint, so the entrypoint now carries a
+  `/* @ts-self-types="…types/…d.ts" */` directive pointing at its generated
+  declaration, and `types/` is shipped to JSR.
+
 ## [0.4.2] - 2026-07-24
 ### Fixed
 - **core**: LXMF `LXMRouter.send()` now reaches mobile clients (Columba, Sideband on
