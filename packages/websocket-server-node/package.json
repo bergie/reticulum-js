@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/websocket-server-node",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Node.js WebSocket server interface for reticulum-js — accepts inbound WebSocket connections and spawns a client interface per connection, backed by ws",
   "keywords": [
     "reticulum",
@@ -27,7 +27,7 @@
     "CHANGELOG.md"
   ],
   "dependencies": {
-    "@reticulum/core": "^0.4.3",
+    "@reticulum/core": "^0.4.4",
     "ws": "^8.18.0"
   },
   "scripts": {

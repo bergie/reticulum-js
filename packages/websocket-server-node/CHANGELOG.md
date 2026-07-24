@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-24
+
 ## [0.4.3] - 2026-07-24
 ### Fixed
 - JSR package score: satisfy the "no slow types" scoring criterion. JSR's fast

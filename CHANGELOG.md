@@ -23,6 +23,10 @@
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.4.4] - 2026-07-24
+### Fixed
+- **core**: Added handling for `0xcf` in MsgPack as Columba uses it for NomadNet requests
+
 ## [0.4.3] - 2026-07-24
 ### Fixed
 - **core**: JSR package score: satisfy the "no slow types" and "every entrypoint has a

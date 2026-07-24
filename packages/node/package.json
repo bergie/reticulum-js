@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/node",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Node.js-only Reticulum interfaces (TCP, AutoInterface, LocalClient, HTTP exchange server) and the interface registry, for reticulum-js",
   "keywords": [
     "reticulum",
@@ -25,7 +25,7 @@
     "CHANGELOG.md"
   ],
   "dependencies": {
-    "@reticulum/core": "^0.4.3"
+    "@reticulum/core": "^0.4.4"
   },
   "scripts": {
     "test": "node --test --test-force-exit --test-timeout 5000 test/*.js test/**/*.js",
