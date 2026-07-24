@@ -101,8 +101,12 @@ export class MicroMsgPack {
             (value >> 8) & 0xff,
             value & 0xff,
           ); // uint 32
+        } else if (value <= Number.MAX_SAFE_INTEGER) {
+          MicroMsgPack._encodeUint64(value, bytes); // uint 64
         } else {
-          MicroMsgPack._encodeFloat64(value, bytes); // Fallback for JS max safe integers
+          // Beyond 2^53 a JS Number cannot represent every uint64 exactly;
+          // float64 is the lossless-available representation for the magnitude.
+          MicroMsgPack._encodeFloat64(value, bytes);
         }
       } else {
         if (value >= -0x20) {
@@ -119,6 +123,8 @@ export class MicroMsgPack {
             (value >> 8) & 0xff,
             value & 0xff,
           ); // int 32
+        } else if (value >= -Number.MAX_SAFE_INTEGER) {
+          MicroMsgPack._encodeInt64(value, bytes); // int 64
         } else {
           MicroMsgPack._encodeFloat64(value, bytes);
         }
@@ -137,6 +143,30 @@ export class MicroMsgPack {
     bytes.push(0xcb); // float 64
     const buffer = new ArrayBuffer(8);
     new DataView(buffer).setFloat64(0, value, false); // Big-Endian
+    bytes.push(...new Uint8Array(buffer));
+  }
+
+  /**
+   * @param {number} value - positive integer ≤ Number.MAX_SAFE_INTEGER
+   * @param {number[]} bytes
+   * @private
+   */
+  static _encodeUint64(value, bytes) {
+    bytes.push(0xcf); // uint 64
+    const buffer = new ArrayBuffer(8);
+    new DataView(buffer).setBigUint64(0, BigInt(value), false); // big-endian
+    bytes.push(...new Uint8Array(buffer));
+  }
+
+  /**
+   * @param {number} value - negative integer ≥ -Number.MAX_SAFE_INTEGER
+   * @param {number[]} bytes
+   * @private
+   */
+  static _encodeInt64(value, bytes) {
+    bytes.push(0xd3); // int 64
+    const buffer = new ArrayBuffer(8);
+    new DataView(buffer).setBigInt64(0, BigInt(value), false); // big-endian (two's complement)
     bytes.push(...new Uint8Array(buffer));
   }
 
@@ -304,6 +334,8 @@ export class MicroMsgPack {
         return MicroMsgPack._readUint16(state); // uint 16
       case 0xce:
         return MicroMsgPack._readUint32(state); // uint 32
+      case 0xcf:
+        return MicroMsgPack._readUint64(state); // uint 64
       case 0xcb:
         return MicroMsgPack._readFloat64(state); // float 64
       case 0xd0:
@@ -312,6 +344,8 @@ export class MicroMsgPack {
         return MicroMsgPack._readInt16(state); // int 16
       case 0xd2:
         return MicroMsgPack._readInt32(state); // int 32
+      case 0xd3:
+        return MicroMsgPack._readInt64(state); // int 64
       case 0xd9:
         return MicroMsgPack._decodeString(
           state,
@@ -410,6 +444,36 @@ export class MicroMsgPack {
     const val = state.view.getInt32(state.offset, false);
     state.offset += 4;
     return val;
+  }
+
+  /**
+   * Reads a big-endian unsigned 64-bit integer. Returned as a JS Number; values
+   * above Number.MAX_SAFE_INTEGER lose low-order precision but never throw.
+   * Some peers (e.g. Columba) send the §11.1 REQUEST envelope timestamp as a
+   * uint64 (ms / ns since epoch), which exceeds the uint32 range and previously
+   * aborted decoding with "Unimplemented MessagePack byte: 0xcf", dropping the
+   * whole REQUEST before any handler ran.
+   * @param {{view: DataView, offset: number}} state
+   * @returns {number}
+   * @private
+   */
+  static _readUint64(state) {
+    const val = state.view.getBigUint64(state.offset, false);
+    state.offset += 8;
+    return Number(val);
+  }
+
+  /**
+   * Reads a big-endian signed 64-bit integer. Same Number / precision caveat
+   * as {@link _readUint64}.
+   * @param {{view: DataView, offset: number}} state
+   * @returns {number}
+   * @private
+   */
+  static _readInt64(state) {
+    const val = state.view.getBigInt64(state.offset, false);
+    state.offset += 8;
+    return Number(val);
   }
 
   /**
