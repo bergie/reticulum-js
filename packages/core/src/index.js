@@ -3,6 +3,8 @@
  * Zero-dependency, EUPL-1.2 compliant protocol stack.
  */
 
+/* @ts-self-types="../types/src/index.d.ts" */
+
 export { Allow, Destination } from "./core/destination.js";
 // --- 2. Cryptography & Identity ---
 // Everything needed to create, load, and sign data as an RNS node.

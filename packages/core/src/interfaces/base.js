@@ -2,6 +2,9 @@
  * @file base.js
  * @description Interface abstract base class
  */
+
+/* @ts-self-types="../../types/src/interfaces/base.d.ts" */
+
 import { LogLevel, log } from "../utils/log.js";
 
 /**

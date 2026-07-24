@@ -3,6 +3,8 @@
  * @description Identity creation, signing, and verification
  */
 
+/* @ts-self-types="../../types/src/core/identity.d.ts" */
+
 import { hkdf } from "../crypto/ciphers.js";
 import {
   exportPublicKey,

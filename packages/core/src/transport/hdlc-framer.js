@@ -1,5 +1,3 @@
-import { LogLevel, log } from "../utils/log.js";
-
 /**
  * @file hdlc-framer.js
  * @description HDLC-based stream framing for RNS packets.
@@ -9,6 +7,10 @@ import { LogLevel, log } from "../utils/log.js";
  * `FLAG` (0x7E) / `ESC` (0x7D) byte-stuffing with an `ESC_MASK` of 0x20.
  * See `PROTOCOL-SPEC.md` §8.2.
  */
+
+/* @ts-self-types="../../types/src/transport/hdlc-framer.d.ts" */
+
+import { LogLevel, log } from "../utils/log.js";
 
 const FLAG = 0x7e;
 const ESC = 0x7d;

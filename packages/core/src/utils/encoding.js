@@ -3,6 +3,8 @@
  * Strictly utilizes standard ES6 TypedArrays and Strings.
  */
 
+/* @ts-self-types="../../types/src/utils/encoding.d.ts" */
+
 /**
  * Converts a Uint8Array to a lowercase hexadecimal string.
  * This is primarily used for indexing Routing Tables and displaying Destination Hashes.

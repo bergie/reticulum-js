@@ -1,7 +1,3 @@
-import { Packet } from "../core/packet.js";
-import { LogLevel, log } from "../utils/log.js";
-import { Interface } from "./base.js";
-
 /**
  * @file webrtc.js
  * @description Reticulum interface transport over a WebRTC `RTCDataChannel`.
@@ -23,6 +19,12 @@ import { Interface } from "./base.js";
  * `error` events) so it runs in a browser **and** can be exercised in Node
  * tests with a mock channel pair (Node has no native WebRTC).
  */
+
+/* @ts-self-types="../../types/src/interfaces/webrtc.d.ts" */
+
+import { Packet } from "../core/packet.js";
+import { LogLevel, log } from "../utils/log.js";
+import { Interface } from "./base.js";
 
 /**
  * Minimum RNS header size in bytes (`RNS.Reticulum.HEADER_MINSIZE`):

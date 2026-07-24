@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- JSR package score: satisfy the "no slow types" scoring criterion. JSR's fast
+  type-check does not auto-resolve a sibling `.d.ts` for a JavaScript
+  entrypoint, so the entrypoint now carries a
+  `/* @ts-self-types="…types/…d.ts" */` directive pointing at its generated
+  declaration, and `types/` is shipped to JSR.
 
 ## [0.4.2] - 2026-07-24
 

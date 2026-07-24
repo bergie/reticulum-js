@@ -3,6 +3,8 @@
  * @description Binary serialization/deserialization for Reticulum packets
  */
 
+/* @ts-self-types="../../types/src/core/packet.d.ts" */
+
 /**
  * Returns the key name for a given value in an enum object.
  * @param {Record<string, any>} enumObj

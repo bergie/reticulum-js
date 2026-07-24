@@ -15,6 +15,8 @@
  * interface configuration schemas by id.
  */
 
+/* @ts-self-types="../types/src/index.d.ts" */
+
 export { AutoInterface } from "./interfaces/auto.js";
 export { HttpPostServerInterface } from "./interfaces/http_server.js";
 export { LocalClientInterface } from "./interfaces/local_client.js";

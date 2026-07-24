@@ -1,8 +1,3 @@
-import { Packet } from "../core/packet.js";
-import { base64ToBytes, bytesToBase64 } from "../utils/encoding.js";
-import { LogLevel, log } from "../utils/log.js";
-import { Interface } from "./base.js";
-
 /**
  * @file http.js
  * @description HTTP POST exchange interface (client + Node.js server)
@@ -21,6 +16,13 @@ import { Interface } from "./base.js";
  * The client side is platform-neutral (WinterTC `fetch`); the server side is
  * Node.js (`node:http`) and is a drop-in replacement for the PHP router.
  */
+
+/* @ts-self-types="../../types/src/interfaces/http.d.ts" */
+
+import { Packet } from "../core/packet.js";
+import { base64ToBytes, bytesToBase64 } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
+import { Interface } from "./base.js";
 
 /**
  * @typedef {Object} HttpPostClientInterfaceOptions

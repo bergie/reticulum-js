@@ -1,4 +1,13 @@
-// src/transport/transport.js
+/**
+ * @file transport.js
+ * @description Central packet router for a Reticulum node.
+ *
+ * Routes packets emitted by Interfaces, maintains path and announce tables,
+ * and drives Link/Channel establishment. Mirrors the `Transport` class in the
+ * Python reference `RNS/Transport.py`.
+ */
+
+/* @ts-self-types="../../types/src/transport/transport.d.ts" */
 
 import { Destination, Direction } from "../core/destination.js";
 import { Identity } from "../core/identity.js";

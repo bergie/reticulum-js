@@ -17,6 +17,8 @@
  * ```
  */
 
+/* @ts-self-types="../types/src/index.d.ts" */
+
 import { RTCPeerConnection } from "werift";
 
 export { RTCPeerConnection };

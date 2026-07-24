@@ -1,5 +1,3 @@
-import { LogLevel, log } from "../utils/log.js";
-
 /**
  * @file kiss-framer.js
  * @description KISS (Keep It Simple, Stupid) stream framing for RNS packets.
@@ -17,6 +15,10 @@ import { LogLevel, log } from "../utils/log.js";
  * (radio config, flow control, etc.) are collected but never emitted, so the
  * same unframer can sit on an RNode serial link later without special-casing.
  */
+
+/* @ts-self-types="../../types/src/transport/kiss-framer.d.ts" */
+
+import { LogLevel, log } from "../utils/log.js";
 
 const FEND = 0xc0;
 const FESC = 0xdb;

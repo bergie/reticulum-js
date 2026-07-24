@@ -8,6 +8,9 @@
  *
  * @enum {number}
  */
+
+/* @ts-self-types="../../types/src/utils/log.d.ts" */
+
 export const LogLevel = {
   NONE: -1,
   CRITICAL: 0,

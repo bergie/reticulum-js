@@ -16,6 +16,8 @@
  * ```
  */
 
+/* @ts-self-types="../types/src/index.d.ts" */
+
 import { Interface } from "@reticulum/core/src/interfaces/base.js";
 import { WebSocketClientInterface } from "@reticulum/core/src/interfaces/websocket.js";
 import { WebSocketServer } from "ws";

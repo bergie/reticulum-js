@@ -1,11 +1,3 @@
-import { Packet } from "../core/packet.js";
-import {
-  createKissUnframerStream,
-  kissFrame,
-} from "../transport/kiss-framer.js";
-import { LogLevel, log } from "../utils/log.js";
-import { Interface, reconnectSchemaProperties } from "./base.js";
-
 /**
  * @file websocket.js
  * @description Reticulum interface transport over WebSocket (RFC 6455)
@@ -25,6 +17,16 @@ import { Interface, reconnectSchemaProperties } from "./base.js";
  * The server spawns a client interface per accepted connection, and the
  * framing mode is inherited from the server configuration.
  */
+
+/* @ts-self-types="../../types/src/interfaces/websocket.d.ts" */
+
+import { Packet } from "../core/packet.js";
+import {
+  createKissUnframerStream,
+  kissFrame,
+} from "../transport/kiss-framer.js";
+import { LogLevel, log } from "../utils/log.js";
+import { Interface, reconnectSchemaProperties } from "./base.js";
 
 /**
  * Minimum RNS header size in bytes (`RNS.Reticulum.HEADER_MINSIZE`):
