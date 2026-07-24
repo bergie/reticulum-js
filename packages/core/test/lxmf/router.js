@@ -77,7 +77,11 @@ test("LXMRouter", async (t) => {
           title: "opportunistic",
           content: "secret payload",
         });
-        await router.send(message, senderIdentity);
+        // Drive the opportunistic path directly: send() now prefers a DIRECT
+        // link (with an opportunistic fallback), so exercising the single-
+        // packet wire format in isolation avoids the link-handshake timeout.
+        const { wireData } = await message.serialize(senderIdentity);
+        await router._sendOpportunistic(message, wireData);
       } finally {
         interfaceLayer.transport.sendPacket = originalSendPacket;
       }

@@ -7,7 +7,7 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { Resource } from "../core/resource.js";
-import { LinkStatus } from "../transport/link.js";
+import { Link, LinkStatus } from "../transport/link.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import {
@@ -42,6 +42,14 @@ import { generateStamp, WORKBLOCK_EXPAND_ROUNDS_PN } from "./stamper.js";
  * link comes down (or the process exits) first. The JS Resource has no
  * sender-side watchdog yet, so this bounds the wait on a dead link.
  */
+/**
+ * Upper bound (ms) for establishing an outbound DIRECT delivery link before
+ * falling back to opportunistic delivery. A reachable peer completes the
+ * handshake in a couple of RTTs; this bounds the wait on an unreachable one so
+ * `send()` does not stall indefinitely.
+ */
+const DIRECT_LINK_TIMEOUT_MS = 10_000;
+
 const RESOURCE_TRANSFER_TIMEOUT_MS = 60_000;
 
 /**
@@ -75,6 +83,10 @@ export class LXMRouter extends EventTarget {
     // Tracks outbound links (by hex link_id) we have already sent LINKIDENTIFY
     // on, so we identify once per link rather than on every message.
     this.identifiedLinks = new Set();
+    // --- Outbound DIRECT delivery links (Python LXMRouter.direct_links),
+    // cached by recipient destination hash so repeated sends reuse one link. ---
+    /** @type {Map<string, import("../transport/link.js").Link>} */
+    this.directLinks = new Map();
     // Last display name / stamp cost we announced with (§4.3 app_data).
     this.displayName = null;
     this.stampCost = null;
@@ -743,37 +755,11 @@ export class LXMRouter extends EventTarget {
           // resource can be decompressed (§10.2). Harmless when absent.
           link.bz2 = this.rns.compressionProvider || undefined;
 
-          // Listen for single-packet LXMF messages over the established link
-          link.addEventListener("data", async (/** @type {any} */ pktEvent) => {
-            await this._processIncomingMessage(
-              /** @type {any} */ (pktEvent).detail.packet.payload,
-              pktEvent.detail.link,
-              expectedDestHash,
-            );
-          });
-
-          // §5.2/§10.1: a large DIRECT message arrives as a Resource. Feed the
-          // reassembled, integrity-checked body through the same inbound path
-          // as a single-packet message once the transfer completes.
-          link.addEventListener("resource", (/** @type {any} */ resEvent) => {
-            const resource = /** @type {any} */ (resEvent).detail.resource;
-            resource
-              .whenComplete()
-              .then(() => {
-                this._processIncomingMessage(
-                  /** @type {Uint8Array} */ (resource.data),
-                  link.linkId,
-                  expectedDestHash,
-                );
-              })
-              .catch((/** @type {Error} */ err) => {
-                log(
-                  "LXMF",
-                  `Incoming LXMF resource transfer failed: ${err}`,
-                  LogLevel.ERROR,
-                );
-              });
-          });
+          // Receive single-packet and large (Resource) LXMF messages over the
+          // established link. Shared with outbound delivery links so replies
+          // arriving on a link we initiated are dispatched too (Python calls
+          // delivery_link_established on outbound direct links as well).
+          this._attachLinkMessageListeners(link);
 
           // Python LXMF is not ready to receive messages until it has identified
           // We should park messages until we receive LINKIDENTIFY (or a timeout)
@@ -1088,9 +1074,16 @@ export class LXMRouter extends EventTarget {
   /**
    * Serializes and sends an LXMF message.
    *
-   * When delivering over a link, this waits for the link to become ACTIVE and
-   * then sends LINKIDENTIFY (once per initiator link) *before* the message
-   * DATA — Python LXMF otherwise drops packets that arrive before identify.
+   * Delivery method mirrors the Python reference (`LXMRouter.process_outbound`):
+   *   - a provided `linkId` is reused (DIRECT over an existing link);
+   *   - otherwise a DIRECT link to the recipient is established (and cached);
+   *   - if no DIRECT link can be established, falls back to a single
+   *     opportunistic packet.
+   *
+   * On a link this initiates, LINKIDENTIFY is sent once before the message DATA
+   * (Python LXMF otherwise drops packets that arrive before identify), and the
+   * link is wired to receive replies (backchannel).
+   *
    * @param {Message} message
    * @param {Identity} senderIdentity
    * @param {Uint8Array|null} linkId
@@ -1102,6 +1095,24 @@ export class LXMRouter extends EventTarget {
     log("LXMF", `DEBUG: Sending to ${toHex(message.destinationHash)}`);
 
     const DESTINATION_LENGTH = 16; // RNS TRUNCATED_HASHLENGTH//8
+
+    // No link provided: deliver over a DIRECT link to the recipient — Python's
+    // default DIRECT method (LXMRouter.process_outbound) and the channel mobile
+    // LXMF clients listen on for replies. A single opportunistic packet is used
+    // only as a fallback when no link can be established (peer unreachable or
+    // identity unknown).
+    if (!linkId) {
+      const directLink = await this._establishDirectLink(
+        message.destinationHash,
+      );
+      if (directLink) {
+        // Backchannel: a DIRECT link we initiated must also *receive* — Python
+        // calls delivery_link_established on outbound direct links after
+        // delivery so replies are dispatched instead of dropped.
+        this._attachLinkMessageListeners(directLink);
+        linkId = directLink.linkId;
+      }
+    }
 
     // Direct delivery happens over a Link. The full LXMF body
     // (dest_hash || source_hash || signature || payload) travels inside the
@@ -1153,20 +1164,36 @@ export class LXMRouter extends EventTarget {
       return;
     }
 
-    // Opportunistic delivery: a single encrypted DATA packet addressed
-    // directly to the recipient's lxmf.delivery destination (LXMF.md §5.1).
-    //
-    // The leading destination hash is stripped from the LXMF body — it is
-    // conveyed by the outer Reticulum packet envelope and re-prepended by the
-    // receiver (Python LXMRouter.delivery_packet). The remainder is encrypted
-    // with the recipient's public key via Destination.send, exactly mirroring
-    // LXMessage.__as_packet for the OPPORTUNISTIC case. Sending the plaintext
-    // body unencrypted causes the recipient's identity.decrypt() to return
-    // null and silently drop the message.
+    // Opportunistic fallback: no DIRECT link could be established.
+    await this._sendOpportunistic(message, wireData);
+  }
+
+  /**
+   * Opportunistic fallback delivery: a single encrypted DATA packet addressed
+   * directly to the recipient's lxmf.delivery destination (LXMF.md §5.1).
+   *
+   * The leading destination hash is stripped from the LXMF body — it is
+   * conveyed by the outer Reticulum packet envelope and re-prepended by the
+   * receiver (Python LXMRouter.delivery_packet). The remainder is encrypted
+   * with the recipient's public key via Destination.send, exactly mirroring
+   * LXMessage.__as_packet for the OPPORTUNISTIC case.
+   *
+   * Factored out of {@link send} so the opportunistic path stays reachable as a
+   * fallback once DIRECT delivery became the default, and is unit-testable in
+   * isolation.
+   *
+   * @param {Message} message
+   * @param {Uint8Array} wireData - pre-serialized LXMF body (from
+   *   `message.serialize`).
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _sendOpportunistic(message, wireData) {
+    const DESTINATION_LENGTH = 16; // RNS TRUNCATED_HASHLENGTH//8
     const peerIdentity = await Destination.recall(message.destinationHash);
     if (!peerIdentity) {
       throw new Error(
-        `Cannot deliver opportunistically: identity for ${toHex(message.destinationHash)} is unknown`,
+        `Cannot deliver: identity for ${toHex(message.destinationHash)} is unknown`,
       );
     }
     const peerDestination = await Destination.OUT(
@@ -1185,5 +1212,113 @@ export class LXMRouter extends EventTarget {
       payload: wireData.subarray(DESTINATION_LENGTH),
     });
     await peerDestination.send(opportunisticPacket);
+  }
+
+  /**
+   * Establishes (or reuses a cached) DIRECT delivery link to an `lxmf.delivery`
+   * destination (Python `LXMRouter.direct_links`).
+   *
+   * DIRECT delivery is the default outbound method in the Python reference and
+   * the channel mobile LXMF clients listen on for replies. Returns the link, or
+   * `null` when the recipient's identity is unknown or the handshake fails /
+   * times out — the caller should then fall back to opportunistic delivery.
+   *
+   * @param {Uint8Array} destinationHash
+   * @returns {Promise<import("../transport/link.js").Link|null>}
+   * @private
+   */
+  async _establishDirectLink(destinationHash) {
+    const destHex = toHex(destinationHash);
+    const cached = this.directLinks.get(destHex);
+    if (cached && cached.status === LinkStatus.ACTIVE) {
+      return cached;
+    }
+    this.directLinks.delete(destHex);
+
+    const peerIdentity = await Destination.recall(destinationHash);
+    if (!peerIdentity) {
+      log(
+        "LXMF",
+        `Cannot establish DIRECT link: identity unknown for ${destHex}`,
+        LogLevel.DEBUG,
+      );
+      return null;
+    }
+    try {
+      const peerDestination = await Destination.OUT(
+        "lxmf.delivery",
+        DestType.SINGLE,
+        peerIdentity,
+        this.rns,
+      );
+      const link = await Link.initiate(peerDestination, this.rns.transport);
+      await link.whenActive(DIRECT_LINK_TIMEOUT_MS);
+      // Evict from the cache when the link comes down so the next send
+      // re-establishes a fresh one (Python pops direct_links on close).
+      link.addEventListener("statuschange", (/** @type {any} */ ev) => {
+        if (ev.detail.status === LinkStatus.CLOSED) {
+          if (this.directLinks.get(destHex) === link) {
+            this.directLinks.delete(destHex);
+          }
+        }
+      });
+      this.directLinks.set(destHex, link);
+      log(
+        "LXMF",
+        `Established DIRECT delivery link to ${destHex}`,
+        LogLevel.DEBUG,
+      );
+      return link;
+    } catch (/** @type {any} */ e) {
+      log(
+        "LXMF",
+        `DIRECT link to ${destHex} failed, falling back to opportunistic: ${e}`,
+        LogLevel.WARNING,
+      );
+      return null;
+    }
+  }
+
+  /**
+   * Attaches the inbound `data` and `resource` listeners that feed
+   * link-delivered LXMF messages through {@link _processIncomingMessage}.
+   *
+   * Called for both inbound (accepted) links and outbound delivery links we
+   * initiate: an outbound link becomes a backchannel once we have sent over it
+   * (Python calls `delivery_link_established` on outbound direct links), so
+   * replies arriving on it are dispatched rather than silently dropped.
+   *
+   * @param {import("../transport/link.js").Link} link
+   * @private
+   */
+  _attachLinkMessageListeners(link) {
+    const expectedDestHash = this.deliveryDest?.destinationHash;
+    if (!expectedDestHash) return;
+    link.addEventListener("data", async (/** @type {any} */ pktEvent) => {
+      await this._processIncomingMessage(
+        /** @type {any} */ (pktEvent).detail.packet.payload,
+        pktEvent.detail.link,
+        expectedDestHash,
+      );
+    });
+    link.addEventListener("resource", (/** @type {any} */ resEvent) => {
+      const resource = /** @type {any} */ (resEvent).detail.resource;
+      resource
+        .whenComplete()
+        .then(() => {
+          this._processIncomingMessage(
+            /** @type {Uint8Array} */ (resource.data),
+            link.linkId,
+            expectedDestHash,
+          );
+        })
+        .catch((/** @type {Error} */ err) => {
+          log(
+            "LXMF",
+            `Incoming LXMF resource transfer failed: ${err}`,
+            LogLevel.ERROR,
+          );
+        });
+    });
   }
 }

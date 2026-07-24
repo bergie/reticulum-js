@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 ### Fixed
+- **core**: LXMF `send()` now reaches mobile clients (Columba, mobile
+  Sideband). With no link supplied it delivered a single opportunistic packet,
+  but mobile clients listen for replies over a DIRECT link — so a bot replying
+  to an opportunistic/propagation-delivered message (inbound `link` is `null`)
+  sent its reply to a channel the client never read. `send()` now matches
+  Python's default DIRECT method (`LXMRouter.process_outbound`): it establishes
+  a cached DIRECT link to the recipient (with implicit path discovery via
+  `Link.initiate`) and falls back to opportunistic only when no link can be
+  established. Outbound DIRECT links now also receive replies (the
+  backchannel), mirroring Python's `delivery_link_established` on outbound
+  direct links — previously only accepted inbound links were wired to receive.
 - **core**: Persist identity learned via `LINKIDENTIFY` (work doc #16): the LXMF
   router's link `identify` handler now calls
   `rns.persistor.markContacted(peerDeliveryDest.destinationHash)` after
