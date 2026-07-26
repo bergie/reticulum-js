@@ -207,7 +207,7 @@ function buildHeaderByteZero(ifacFlag, headerType, contextFlag, packetType) {
 
 ### 4.2 Packet Construction
 
-Packets are allocated exactly to their required byte length to prevent memory bloat during high-frequency CRDT visual coordinate updates.
+Packets are allocated exactly to their required byte length to prevent memory bloat.
 
 ```javascript
 export class PacketSerializer {
