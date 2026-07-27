@@ -95,12 +95,35 @@ export function createHdlcFramerStream() {
 
 /**
  * Creates a TransformStream for HDLC un-framing (Bytes -> Packets).
+ *
+ * The accumulated in-progress frame is bounded by `maxFrameSize`: if a peer
+ * sends a continuous run of non-FLAG bytes (or opens a frame and never closes
+ * it) the buffer is dropped once it exceeds the cap and the unframer resyncs
+ * on the next FLAG, mirroring the Python TCP reader's `len(frame_buffer) >
+ * HW_MTU*2` guard. Defaults to 2× the Python TCP `HW_MTU` (262144), which
+ * comfortably admits any legitimate frame while preventing unbounded memory
+ * growth on a stream-oriented interface.
  * @param {typeof import('../core/packet.js').Packet} packetClass
  * @param {number} [ifacSize=0] - Optional size of the IFAC field if present
+ * @param {number} [maxFrameSize=524288] - Maximum bytes accumulated between
+ *   flags before the in-progress frame is dropped and the unframer resyncs.
  * @returns {TransformStream}
  */
-export function createHdlcUnframerStream(packetClass, ifacSize = 0) {
-  let buffer = new Uint8Array(0);
+export function createHdlcUnframerStream(
+  packetClass,
+  ifacSize = 0,
+  maxFrameSize = 524288,
+) {
+  // Byte-oriented state machine, mirroring createKissUnframerStream. A FLAG
+  // both closes the in-progress frame (emitting it) and opens the next; bytes
+  // outside any frame are line noise and ignored. The in-progress accumulator
+  // is capped at maxFrameSize, so a peer that floods non-FLAG bytes or opens a
+  // frame and never closes it (or pads one with megabytes of content) can only
+  // ever hold maxFrameSize bytes per interface — the oversized frame is dropped
+  // and the unframer resyncs on the next FLAG.
+  let inFrame = false;
+  /** @type {number[]} raw (still-HDLC-escaped) bytes of the current frame */
+  let dataBuffer = [];
 
   return new TransformStream({
     /**
@@ -109,54 +132,49 @@ export function createHdlcUnframerStream(packetClass, ifacSize = 0) {
      */
     transform(chunk, controller) {
       log("HDLC", `Received ${chunk.length} bytes`, LogLevel.DEBUG);
-      const combined = new Uint8Array(buffer.length + chunk.length);
-      combined.set(buffer);
-      combined.set(chunk, buffer.length);
-      buffer = combined;
+      for (let i = 0; i < chunk.length; i++) {
+        const byte = chunk[i];
 
-      while (true) {
-        const firstFlag = buffer.indexOf(FLAG);
-        if (firstFlag === -1) {
-          // No complete frames in buffer. Keep everything for next chunk.
-          break;
-        }
-
-        // If the first flag is not at the start, the data before it is junk/malformed
-        if (firstFlag > 0) {
-          log(
-            "HDLC",
-            `Discarding ${firstFlag} bytes of junk/malformed data before first 0x7E`,
-            LogLevel.WARNING,
-          );
-          // In a real stream, we might want to log this or handle it.
-          // For now, we just discard it.
-          buffer = buffer.slice(firstFlag);
+        if (byte === FLAG) {
+          // A FLAG closes the in-progress frame (if any content) and opens
+          // the next. Consecutive FLAGs just produce empty frames, which are
+          // skipped by the `dataBuffer.length > 0` guard.
+          if (inFrame && dataBuffer.length > 0) {
+            try {
+              const unescaped = hdlcUnescape(new Uint8Array(dataBuffer));
+              let dataToDeserialize = unescaped;
+              if (ifacSize > 0) {
+                dataToDeserialize = unescaped.slice(2 + ifacSize);
+              }
+              controller.enqueue(packetClass.deserialize(dataToDeserialize));
+            } catch (e) {
+              log("HDLC", `Failed to process frame: ${e}`, LogLevel.ERROR);
+            }
+          }
+          inFrame = true;
+          dataBuffer = [];
           continue;
         }
 
-        const secondFlag = buffer.indexOf(FLAG, 1);
-        if (secondFlag === -1) {
-          // Found start, but no end. Keep everything from start.
-          break;
+        if (!inFrame) {
+          // Bytes before the first FLAG (or after dropping an oversized frame)
+          // are line noise; ignore until the next FLAG.
+          continue;
         }
 
-        // Found a complete frame candidate
-        const frameData = buffer.slice(1, secondFlag);
-
-        try {
-          const unescaped = hdlcUnescape(frameData);
-          let dataToDeserialize = unescaped;
-          if (ifacSize > 0) {
-            dataToDeserialize = unescaped.slice(2 + ifacSize);
-          }
-          const packet = packetClass.deserialize(dataToDeserialize);
-          controller.enqueue(packet);
-        } catch (e) {
-          log("HDLC", `Failed to process frame: ${e}`, LogLevel.ERROR);
+        if (dataBuffer.length >= maxFrameSize) {
+          // Frame exceeds the cap; drop it and resync on the next FLAG.
+          log(
+            "HDLC",
+            `Frame exceeded maxFrameSize (${maxFrameSize}); resyncing`,
+            LogLevel.WARNING,
+          );
+          inFrame = false;
+          dataBuffer = [];
+          continue;
         }
 
-        // Advance buffer past the second flag
-        buffer = buffer.slice(secondFlag + 1);
+        dataBuffer.push(byte);
       }
     },
   });

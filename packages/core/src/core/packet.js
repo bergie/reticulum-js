@@ -88,6 +88,18 @@ export const DestType = {
 };
 
 /**
+ * Maximum hop count before a packet is rejected as looping / invalid.
+ *
+ * Mirrors `RNS.Transport.PATHFINDER_M` (128) from the Python reference: a
+ * packet whose hop count has reached this ceiling has traversed too many
+ * transports to be valid and is dropped at deserialize time, matching
+ * `Packet.unpack()`'s `if self.hops >= RNS.Transport.PATHFINDER_M: raise
+ * ValueError`. Defined here (rather than on `Transport`) so `deserialize`
+ * can apply the guard without a circular import.
+ */
+export const PATHFINDER_M = 128;
+
+/**
  * Represents a Reticulum packet.
  *
  * Holds the parsed header fields, destination hash, context byte and payload,
@@ -253,8 +265,9 @@ export class Packet {
   static deserialize(data) {
     const DST_LEN = 16; // Standard Reticulum truncated hash length (128 bits)
 
-    // Minimum packet length: flags(1) + hops(1) + destHash(16) + context(1) = 19 bytes
-    if (data.length < 19) throw new Error("Packet too short");
+    // We need at least the flags byte to know which header type follows, and
+    // the hops byte, before any length check can be header-type aware.
+    if (data.length < 2) throw new Error("Packet too short");
 
     const flags = data[0];
     const hops = data[1];
@@ -266,6 +279,24 @@ export class Packet {
     const transportType = (flags & 0x10) !== 0 ? 1 : 0;
     const destinationType = (flags & 0x0c) >> 2;
     const packetType = flags & 0x03;
+
+    // Minimum packet length depends on header type:
+    //   HEADER_1: flags(1) + hops(1) + destHash(16) + context(1) = 19
+    //   HEADER_2: flags(1) + hops(1) + transportId(16) + destHash(16) +
+    //            context(1) = 35
+    // Without this, a truncated HEADER_2 frame passes the old fixed 19-byte
+    // check and silently yields a Packet with a short destinationHash and a
+    // contextByte of undefined (coerced to NONE) — because Uint8Array.slice()
+    // clamps instead of throwing.
+    const minLen = isHeader2 ? 2 + 2 * DST_LEN + 1 : 2 + DST_LEN + 1;
+    if (data.length < minLen) throw new Error("Packet too short");
+
+    // Loop-prevention: mirror Python `unpack()`'s hop-count sanity check. A
+    // packet whose hops have reached PATHFINDER_M is invalid and must be
+    // rejected rather than routed further.
+    if (hops >= PATHFINDER_M) {
+      throw new Error(`Invalid hop count ${hops}`);
+    }
 
     let offset = 2;
 

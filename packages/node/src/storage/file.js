@@ -71,8 +71,16 @@ export class FileStorageAdapter {
    * @returns {Promise<void>}
    */
   async saveKey(bytes) {
-    await mkdir(this.directory, { recursive: true });
-    await writeFile(this._keyPath(), bytes);
+    // Create the containing directory owner-only. The identity private key IS
+    // this node's cryptographic address, so the directory holding it must not
+    // be world-readable/traversable. `recursive: true` only sets the mode on
+    // newly-created directories.
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    // mode 0o600 (rw-------): Node's default is 0o666, which after a typical
+    // umask of 0o022 resolves to 0o644 — world-readable. 0o600 is unaffected
+    // by umask (it has no group/other bits to clear), so the key is always
+    // owner-only regardless of the process umask.
+    await writeFile(this._keyPath(), bytes, { mode: 0o600 });
   }
 
   /**

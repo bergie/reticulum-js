@@ -36,6 +36,16 @@ test("Identity sign and validate", async (t) => {
   assert.strictEqual(isValidWrongMessage, false);
 });
 
+test("Identity.validate fails closed on a short signature (no RangeError)", async () => {
+  const identity = await Identity.generate();
+  const message = new Uint8Array([1, 2, 3, 4]);
+  // A too-short signature used to construct an out-of-bounds Uint8Array view
+  // and throw an uncaught RangeError; it must instead fail verification.
+  const shortSig = new Uint8Array(10);
+  const result = await identity.validate(shortSig, message);
+  assert.strictEqual(result, false);
+});
+
 test("Identity encryption and decryption", async (t) => {
   const identity = await Identity.generate();
   const plaintext = new Uint8Array([10, 20, 30, 40, 50]);
@@ -261,4 +271,78 @@ test("validateAnnounce rejects when the body is too short for a ratchet announce
     body,
   );
   assert.strictEqual(result, null);
+});
+
+// --- loadOrGenerate (fail-loud on corrupt/error) ---------------------------
+
+/** A minimal in-memory StorageAdapter for loadOrGenerate tests. */
+function makeAdapter(opts = {}) {
+  const store = { saved: null, loaded: null, ...opts };
+  return {
+    store,
+    async loadKey() {
+      if (store.loaded instanceof Error) throw store.loaded;
+      return store.loaded;
+    },
+    async saveKey(bytes) {
+      if (store.saveThrows) throw store.saveThrows;
+      store.saved = bytes;
+    },
+  };
+}
+
+test("loadOrGenerate generates and persists when no key exists", async () => {
+  const adapter = makeAdapter({ loaded: null });
+  const identity = await Identity.loadOrGenerate(adapter);
+  assert.ok(identity.identityHash);
+  assert.strictEqual(adapter.store.saved?.length, 128, "persisted private key");
+});
+
+test("loadOrGenerate loads an existing valid key without regenerating", async () => {
+  const original = await Identity.generate();
+  const privBytes = await original.getPrivateKey();
+  const adapter = makeAdapter({ loaded: privBytes });
+  const loaded = await Identity.loadOrGenerate(adapter);
+  assert.ok(
+    bytesEqual(loaded.identityHash, original.identityHash),
+    "same identity loaded back",
+  );
+  assert.strictEqual(adapter.store.saved, null, "did not overwrite");
+});
+
+test("loadOrGenerate refuses to overwrite a corrupt stored key", async () => {
+  // A stored blob of the wrong length is corrupt; the node's identity must not
+  // be silently replaced with a brand-new one.
+  const adapter = makeAdapter({ loaded: new Uint8Array(100) });
+  await assert.rejects(
+    () => Identity.loadOrGenerate(adapter),
+    /could not be loaded/i,
+    "must throw on corrupt key",
+  );
+  assert.strictEqual(
+    adapter.store.saved,
+    null,
+    "must not persist a new key over the corrupt one",
+  );
+});
+
+test("loadOrGenerate propagates a storage read error instead of regenerating", async () => {
+  const adapter = makeAdapter({
+    loaded: new Error("disk read failed (permissions)"),
+  });
+  await assert.rejects(
+    () => Identity.loadOrGenerate(adapter),
+    /disk read failed/,
+    "must surface read errors, not mint a new identity",
+  );
+  assert.strictEqual(
+    adapter.store.saved,
+    null,
+    "must not persist anything after a read failure",
+  );
+});
+
+test("loadOrGenerate without an adapter generates an ephemeral identity", async () => {
+  const identity = await Identity.loadOrGenerate(undefined);
+  assert.ok(identity.identityHash);
 });

@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import { Packet } from "@reticulum/core/src/core/packet.js";
 import { Interface } from "@reticulum/core/src/interfaces/base.js";
@@ -247,6 +247,13 @@ export class HttpPostPeerInterface extends Interface {
  *   exchange response.
  * @property {number} [maxPacketBytes=500] - Maximum packet size advertised to
  *   clients.
+ * @property {number} [maxRequestBodyBytes=2097152] - Hard cap on the size of
+ *   an inbound request body, enforced before any auth or parsing. Defends
+ *   against an anonymous OOM via a single oversized POST.
+ * @property {number} [requestTimeoutMs=30000] - Node HTTP `requestTimeout`.
+ *   Defends against slowloris-style connection exhaustion.
+ * @property {number} [headersTimeoutMs=30000] - Node HTTP `headersTimeout`
+ *   (must be <= `requestTimeoutMs`; clamped if not).
  * @property {number} [ifacSize=0] - Optional IFAC field size (reserved).
  */
 
@@ -314,6 +321,26 @@ export class HttpPostServerInterface extends Interface {
           default: 64,
           description: "Maximum packets delivered per exchange.",
         },
+        maxRequestBodyBytes: {
+          type: "integer",
+          minimum: 1024,
+          default: 2097152,
+          description:
+            "Hard cap on an inbound request body before auth/parsing.",
+        },
+        requestTimeoutMs: {
+          type: "integer",
+          minimum: 1000,
+          default: 30000,
+          description: "Node HTTP requestTimeout (slowloris defense).",
+        },
+        headersTimeoutMs: {
+          type: "integer",
+          minimum: 1000,
+          default: 30000,
+          description:
+            "Node HTTP headersTimeout (slowloris defense; must be <= requestTimeoutMs).",
+        },
       },
       required: ["listenPort"],
       additionalProperties: false,
@@ -343,6 +370,9 @@ export class HttpPostServerInterface extends Interface {
     this.peerIdleTimeoutMs = options.peerIdleTimeoutMs ?? 60000;
     this.maxBatchPackets = options.maxBatchPackets ?? 64;
     this.maxPacketBytes = options.maxPacketBytes ?? 500;
+    this.maxRequestBodyBytes = options.maxRequestBodyBytes ?? 2 * 1024 * 1024;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 30000;
+    this.headersTimeoutMs = options.headersTimeoutMs ?? 30000;
 
     /** @type {import("node:http").Server | null} */
     this.server = null;
@@ -383,9 +413,18 @@ export class HttpPostServerInterface extends Interface {
    * @returns {Promise<void>}
    */
   async connect() {
-    const server = http.createServer((req, res) => {
-      this._handleRequest(req, res);
-    });
+    const server = http.createServer(
+      {
+        // Defend against slowloris-style connection exhaustion: cap how long
+        // the server will wait for a complete request/headers. Node requires
+        // headersTimeout <= requestTimeout, so clamp defensively.
+        requestTimeout: this.requestTimeoutMs,
+        headersTimeout: Math.min(this.headersTimeoutMs, this.requestTimeoutMs),
+      },
+      (req, res) => {
+        this._handleRequest(req, res);
+      },
+    );
     this.server = server;
     server.on("connection", (/** @type {any} */ socket) => {
       this._sockets.add(socket);
@@ -467,10 +506,33 @@ export class HttpPostServerInterface extends Interface {
    */
   async _handleRequest(req, res) {
     let body = "";
+    let tooLarge = false;
     try {
-      for await (const chunk of req) body += chunk;
+      for await (const chunk of req) {
+        body += chunk;
+        // Unauthenticated flood defense: cap the body BEFORE any auth or
+        // JSON.parse. Without this a single anonymous oversized POST can OOM
+        // the process by string-concatenating the entire body into memory.
+        if (body.length > this.maxRequestBodyBytes) {
+          tooLarge = true;
+          break;
+        }
+      }
     } catch (_e) {
       // client disconnected mid-body; nothing to respond to
+      return;
+    }
+    if (tooLarge) {
+      // Stop reading the attacker's stream and reject.
+      try {
+        req.destroy();
+      } catch (_e) {
+        // already closed
+      }
+      if (!res.headersSent) {
+        res.writeHead(413, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "Request body too large" }));
+      }
       return;
     }
     /** @type {Record<string, any>} */
@@ -557,15 +619,30 @@ export class HttpPostServerInterface extends Interface {
    */
   _handleExchange(json, res) {
     const peer = this.peersById.get(json.interface_id);
-    if (!peer || peer.sessionToken !== json.session_token) {
+    if (
+      !peer ||
+      !this._constantTimeTokenEquals(peer.sessionToken, json.session_token)
+    ) {
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Invalid interface credentials" }));
       return;
     }
     peer.touch();
 
+    // Inbound cap mirrors the outbound one (maxBatchPackets) and bounds each
+    // entry so a single oversized base64 blob can't reach base64ToBytes and
+    // allocate a huge buffer before the per-packet parse try/catch runs.
     const posted = Array.isArray(json.packets) ? json.packets : [];
-    peer.ingest(posted);
+    const maxEntryBytes = this.maxPacketBytes * 2; // base64 ≈ 1.37× + margin
+    const capped = posted
+      .slice(0, this.maxBatchPackets)
+      .filter(
+        (entry) =>
+          typeof entry === "string" &&
+          entry !== "" &&
+          entry.length <= maxEntryBytes,
+      );
+    peer.ingest(capped);
 
     const requestCap =
       typeof json.max_packets === "number"
@@ -583,6 +660,25 @@ export class HttpPostServerInterface extends Interface {
 
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify(resp));
+  }
+
+  /**
+   * Constant-time comparison of two opaque session tokens. The tokens are
+   * server-minted and fixed-length, so the length check leaks nothing; the
+   * byte-wise compare uses crypto.timingSafeEqual to avoid a timing oracle on
+   * the token value.
+   * @param {string} expected
+   * @param {unknown} received
+   * @returns {boolean}
+   * @private
+   */
+  _constantTimeTokenEquals(expected, received) {
+    if (typeof expected !== "string" || typeof received !== "string")
+      return false;
+    const a = Buffer.from(expected);
+    const b = Buffer.from(received);
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(a, b);
   }
 
   /**

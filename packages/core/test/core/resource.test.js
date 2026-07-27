@@ -19,6 +19,7 @@ import {
   PacketType,
 } from "../../src/core/packet.js";
 import { Resource, ResourceStatus } from "../../src/core/resource.js";
+import { ResourceAdvertisement } from "../../src/core/resource_advertisement.js";
 import { Link, LinkStatus } from "../../src/transport/link.js";
 import { toHex } from "../../src/utils/encoding.js";
 
@@ -309,6 +310,98 @@ describe("Resource advertisement rejection (§10.9)", () => {
       "sender should observe the rejection",
     );
     assert.strictEqual(responder.incomingResources.size, 0);
+  });
+});
+
+describe("Resource part-count bomb defense (§10.4)", () => {
+  /** Minimal link mock for direct Resource.accept tests (no network). */
+  function mockLink(mtu = 500) {
+    return {
+      mtu,
+      linkId: new Uint8Array(16).fill(0xaa),
+      registered: null,
+      _registerIncomingResource(r) {
+        this.registered = r;
+      },
+      async send() {},
+    };
+  }
+
+  /** Builds a RESOURCE_ADV packet around an advertisement. */
+  function advPacket(link, adv) {
+    return new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: link.linkId,
+      contextByte: ContextType.RESOURCE_ADV,
+      payload: adv.pack(),
+    });
+  }
+
+  test("rejects a huge `n` paired with a tiny `t` instead of OOM-allocating parts", async () => {
+    const link = mockLink();
+    const adv = new ResourceAdvertisement({
+      t: 100, // tiny encrypted size (well under the size cap)
+      d: 100,
+      n: 50_000_000, // the attack: absurd part count → would OOM via new Array(n).fill
+      h: new Uint8Array(32).fill(0x01),
+      r: new Uint8Array(4).fill(0x02),
+      o: new Uint8Array(32).fill(0x03),
+      i: 1,
+      l: 1,
+      f: 0,
+      m: new Uint8Array(0),
+    });
+
+    const accepted = await Resource.accept(link, advPacket(link, adv));
+    assert.strictEqual(
+      accepted,
+      null,
+      "the bomb advertisement must be rejected",
+    );
+    assert.strictEqual(
+      link.registered,
+      null,
+      "no Resource was ever allocated/registered for it",
+    );
+  });
+
+  test("rejects `n` larger than `t` (each part must carry at least one byte)", async () => {
+    const link = mockLink();
+    const adv = new ResourceAdvertisement({
+      t: 10,
+      d: 10,
+      n: 11, // impossible for legitimate data
+      h: new Uint8Array(32).fill(0x01),
+      r: new Uint8Array(4).fill(0x02),
+      o: new Uint8Array(32).fill(0x03),
+      i: 1,
+      l: 1,
+      f: 0,
+      m: new Uint8Array(0),
+    });
+    const accepted = await Resource.accept(link, advPacket(link, adv));
+    assert.strictEqual(accepted, null);
+  });
+
+  test("accepts a well-formed advertisement (guard does not over-reject)", async () => {
+    const link = mockLink();
+    // sdu at mtu 500 = 500 - 35 - 1 = 464; t=1000 → expectedParts = ceil(1000/464) = 3.
+    const adv = new ResourceAdvertisement({
+      t: 1000,
+      d: 1000,
+      n: 3,
+      h: new Uint8Array(32).fill(0x01),
+      r: new Uint8Array(4).fill(0x02),
+      o: new Uint8Array(32).fill(0x03),
+      i: 1,
+      l: 1,
+      f: 0,
+      m: new Uint8Array(12), // 3 map_hashes
+    });
+    const accepted = await Resource.accept(link, advPacket(link, adv));
+    assert.ok(accepted, "legitimate advertisement must be accepted");
+    assert.strictEqual(accepted.totalParts, 3);
   });
 });
 

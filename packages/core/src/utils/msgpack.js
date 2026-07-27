@@ -5,6 +5,15 @@
  */
 
 /**
+ * Maximum nesting depth for decoded arrays/maps. msgpack payloads in this
+ * protocol are small and shallow by design, so a hand-rolled recursive-descent
+ * decoder must cap the recursion to avoid stack exhaustion on a tiny but
+ * deeply-nested malicious payload (e.g. thousands of nested single-element
+ * fixarrays). 128 comfortably exceeds any legitimate structure.
+ */
+const MAX_DEPTH = 128;
+
+/**
  * Minimal, zero-dependency MessagePack encoder/decoder optimized for the
  * subset of types used by RNS and LXMF.
  */
@@ -283,7 +292,7 @@ export class MicroMsgPack {
    * @returns {any}
    * @private
    */
-  static _decodeValue(state) {
+  static _decodeValue(state, depth = 0) {
     if (state.offset >= state.view.byteLength)
       throw new Error("Unexpected end of data");
     const byte = state.view.getUint8(state.offset++);
@@ -293,11 +302,11 @@ export class MicroMsgPack {
 
     // FixMap
     if (byte >= 0x80 && byte <= 0x8f)
-      return MicroMsgPack._decodeMap(state, byte & 0x0f);
+      return MicroMsgPack._decodeMap(state, byte & 0x0f, depth + 1);
 
     // FixArray
     if (byte >= 0x90 && byte <= 0x9f)
-      return MicroMsgPack._decodeArray(state, byte & 0x0f);
+      return MicroMsgPack._decodeArray(state, byte & 0x0f, depth + 1);
 
     // FixStr
     if (byte >= 0xa0 && byte <= 0xbf)
@@ -365,16 +374,26 @@ export class MicroMsgPack {
         return MicroMsgPack._decodeArray(
           state,
           MicroMsgPack._readUint16(state),
+          depth + 1,
         ); // array 16
       case 0xdd:
         return MicroMsgPack._decodeArray(
           state,
           MicroMsgPack._readUint32(state),
+          depth + 1,
         ); // array 32
       case 0xde:
-        return MicroMsgPack._decodeMap(state, MicroMsgPack._readUint16(state)); // map 16
+        return MicroMsgPack._decodeMap(
+          state,
+          MicroMsgPack._readUint16(state),
+          depth + 1,
+        ); // map 16
       case 0xdf:
-        return MicroMsgPack._decodeMap(state, MicroMsgPack._readUint32(state)); // map 32
+        return MicroMsgPack._decodeMap(
+          state,
+          MicroMsgPack._readUint32(state),
+          depth + 1,
+        ); // map 32
       default:
         throw new Error(
           `Unimplemented MessagePack byte: 0x${byte.toString(16)}`,
@@ -510,6 +529,15 @@ export class MicroMsgPack {
    * @private
    */
   static _decodeBinary(state, length) {
+    // Bounds-check before slicing: ArrayBuffer.slice() silently clamps an
+    // out-of-range length (returning a truncated buffer) instead of throwing,
+    // so a corrupt/malicious bin length would be handed back as a short,
+    // silently-corrupted payload. _decodeString (which uses the typed-array
+    // constructor) already throws on the same condition; match it here.
+    const remaining = state.view.byteLength - state.offset;
+    if (length < 0 || length > remaining) {
+      throw new Error("MessagePack binary length exceeds available data");
+    }
     const bytes = new Uint8Array(
       state.view.buffer.slice(
         state.view.byteOffset + state.offset,
@@ -526,10 +554,13 @@ export class MicroMsgPack {
    * @returns {any[]}
    * @private
    */
-  static _decodeArray(state, length) {
+  static _decodeArray(state, length, depth = 0) {
+    if (depth > MAX_DEPTH) {
+      throw new Error("MessagePack nesting depth exceeded");
+    }
     const arr = new Array(length);
     for (let i = 0; i < length; i++) {
-      arr[i] = MicroMsgPack._decodeValue(state);
+      arr[i] = MicroMsgPack._decodeValue(state, depth);
     }
     return arr;
   }
@@ -537,15 +568,35 @@ export class MicroMsgPack {
   /**
    * @param {{view: DataView, offset: number}} state
    * @param {number} length
+   * @param {number} [depth=0]
    * @returns {Record<string, any>}
    * @private
    */
-  static _decodeMap(state, length) {
+  static _decodeMap(state, length, depth = 0) {
+    if (depth > MAX_DEPTH) {
+      throw new Error("MessagePack nesting depth exceeded");
+    }
     /** @type {Record<string, any>} */
     const map = {};
     for (let i = 0; i < length; i++) {
-      const key = MicroMsgPack._decodeValue(state);
-      map[key] = MicroMsgPack._decodeValue(state);
+      const key = MicroMsgPack._decodeValue(state, depth);
+      const value = MicroMsgPack._decodeValue(state, depth);
+      // Guard against prototype-pollution: a msgpack key that decodes to the
+      // string "__proto__" (or the inherited "constructor"/"prototype") would
+      // otherwise reassign this object's prototype chain via the
+      // Object.prototype __proto__ setter. Define them as plain own data
+      // properties (which bypasses the setter) so the value is preserved
+      // without hijacking inherited methods on the decoded object.
+      if (key === "__proto__" || key === "constructor" || key === "prototype") {
+        Object.defineProperty(map, key, {
+          value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      } else {
+        map[key] = value;
+      }
     }
     return map;
   }

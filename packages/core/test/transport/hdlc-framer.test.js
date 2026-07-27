@@ -209,3 +209,86 @@ describe("RNS Unframer TransformStream", () => {
     assert.deepEqual(results[1].payload, p2.payload);
   });
 });
+
+describe("RNS Unframer DoS bound (maxFrameSize)", () => {
+  /**
+   * Runs an unframer with an explicit maxFrameSize and feeds it chunks,
+   * collecting decoded packets.
+   */
+  async function runBoundedUnframer(maxFrameSize, chunks) {
+    const unframer = createHdlcUnframerStream(Packet, 0, maxFrameSize);
+    const writer = unframer.writable.getWriter();
+    const reader = unframer.readable.getReader();
+    const results = [];
+    const pump = async () => {
+      for (const chunk of chunks) await writer.write(chunk);
+      await writer.close();
+    };
+    const consume = async () => {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        results.push(value);
+      }
+    };
+    await Promise.all([pump(), consume()]);
+    return results;
+  }
+
+  test("a run of non-FLAG bytes over the cap is dropped and does not grow memory", async () => {
+    // 64KB of pure noise (no 0x7e) with a 1KB cap. Before the bound this would
+    // accumulate all 64KB in the unframer's internal buffer.
+    const maxFrameSize = 1024;
+    const noise = new Uint8Array(64 * 1024).fill(0x55);
+    // Feeding must complete quickly (no hang) and emit nothing.
+    const results = await runBoundedUnframer(maxFrameSize, [noise]);
+    assert.deepEqual(results, []);
+  });
+
+  test("an opened-but-never-closed frame over the cap is dropped and resyncs", async () => {
+    const maxFrameSize = 64;
+    // A real small frame on both sides of the oversized one.
+    const packet = new Packet({
+      headerType: HeaderType.HEADER_1,
+      hops: 1,
+      transportType: 0,
+      destinationType: DestType.SINGLE,
+      packetType: PacketType.DATA,
+      contextFlag: false,
+      destinationHash: new Uint8Array(16),
+      payload: new Uint8Array([0x42]),
+    });
+    const escaped = hdlcEscape(packet.serialize());
+    const goodFrame = new Uint8Array(escaped.length + 2);
+    goodFrame[0] = 0x7e;
+    goodFrame.set(escaped, 1);
+    goodFrame[goodFrame.length - 1] = 0x7e;
+
+    // good | FLAG | junk(>cap, no FLAG) | FLAG | good
+    const junk = new Uint8Array(maxFrameSize + 100).fill(0x33);
+    const parts = [
+      goodFrame,
+      new Uint8Array([0x7e]),
+      junk,
+      new Uint8Array([0x7e]),
+      goodFrame,
+    ];
+    const total = parts.reduce((n, p) => n + p.length, 0);
+    const opened = new Uint8Array(total);
+    let off = 0;
+    for (const p of parts) {
+      opened.set(p, off);
+      off += p.length;
+    }
+
+    const results = await runBoundedUnframer(maxFrameSize, [opened]);
+    // The two legitimate frames decode; the oversized junk frame is dropped.
+    assert.equal(
+      results.length,
+      2,
+      "legitimate frames survive, oversized frame is dropped",
+    );
+    assert.deepEqual(results[0].payload, packet.payload);
+    assert.deepEqual(results[1].payload, packet.payload);
+  });
+});

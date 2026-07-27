@@ -85,9 +85,20 @@ export class Identity extends EventTarget {
   }
 
   /**
-   * Attempts to load an identity from a storage adapter, or generates and saves a new one.
+   * Attempts to load an identity from a storage adapter, or generates and
+   * saves a new one.
+   *
+   * Fail-loud semantics: an identity *is* the node's cryptographic address, so
+   * we never silently mint a fresh one over an existing key. Only a genuinely
+   * absent key file (the adapter returns `null`) leads to generation; a read
+   * error or an unusable/corrupt stored blob is surfaced to the operator
+   * rather than quietly overwritten, which would break every peer that has
+   * cached the old public key.
+   *
    * @param {any} [storageAdapter] - Must implement async loadKey() and async saveKey(bytes)
    * @returns {Promise<Identity>}
+   * @throws {Error} if a stored key exists but cannot be loaded, or if reading
+   *   or persisting the key fails for any non-"missing file" reason.
    */
   static async loadOrGenerate(storageAdapter) {
     if (!storageAdapter) {
@@ -99,28 +110,49 @@ export class Identity extends EventTarget {
       return await Identity.generate();
     }
 
+    let savedBytes = null;
     try {
-      const savedBytes = await storageAdapter.loadKey();
-      // Reticulum private keys export to exactly 128 bytes
-      if (savedBytes && savedBytes.length === 128) {
-        const identity = await Identity.fromBytes(savedBytes);
-        if (identity) {
-          return identity;
-        }
-      }
+      savedBytes = await storageAdapter.loadKey();
     } catch (e) {
+      // A transient disk/permissions error is NOT the same as "no key yet" —
+      // regenerating here would silently replace the node's identity.
       log(
         "Identity",
-        `Failed to load identity from storage, generating new one: ${e}`,
-        LogLevel.WARNING,
+        `Failed to read identity from storage: ${e}`,
+        LogLevel.ERROR,
+      );
+      throw new Error(`Failed to read identity from storage: ${e}`);
+    }
+
+    if (savedBytes) {
+      // Reticulum private keys export to exactly 128 bytes.
+      if (savedBytes.length === 128) {
+        const identity = await Identity.fromBytes(savedBytes);
+        if (identity) return identity;
+      }
+      // A stored blob that is the wrong length or fails to import is corrupt.
+      // Surface it loudly so the operator can recover the key rather than have
+      // us overwrite it with a brand-new, address-changing identity.
+      log(
+        "Identity",
+        "Stored identity key is present but could not be loaded (corrupt or wrong length). " +
+          "Refusing to overwrite; remove the file manually to regenerate.",
+        LogLevel.ERROR,
+      );
+      throw new Error(
+        "Stored identity key is present but could not be loaded; refusing to overwrite it",
       );
     }
 
-    // Fallback to generation if the file is missing or corrupt
+    // Genuinely no key file yet: generate and persist a new one.
     const newIdentity = await Identity.generate();
     const privateBytes = await newIdentity.getPrivateKey();
-    await storageAdapter.saveKey(privateBytes);
-
+    try {
+      await storageAdapter.saveKey(privateBytes);
+    } catch (e) {
+      log("Identity", `Failed to persist new identity: ${e}`, LogLevel.ERROR);
+      throw new Error(`Failed to persist new identity: ${e}`);
+    }
     return newIdentity;
   }
 
@@ -494,6 +526,12 @@ export class Identity extends EventTarget {
    * @returns {Promise<boolean>}
    */
   async validate(signature, messageId) {
+    // Ed25519 signatures are exactly 64 bytes. Fail closed on a short/
+    // attacker-influenced buffer instead of constructing an out-of-bounds view
+    // that throws an uncaught RangeError. This is a public method, so it must
+    // be safe to call with arbitrary bytes.
+    if (signature.length !== 64) return false;
+
     const signatureView = new Uint8Array(
       signature.buffer,
       signature.byteOffset,
@@ -504,7 +542,6 @@ export class Identity extends EventTarget {
       messageId.byteOffset,
       messageId.byteLength,
     );
-    const keyData = await crypto.subtle.exportKey("raw", this.ed25519Pub);
 
     return await crypto.subtle.verify(
       "Ed25519",

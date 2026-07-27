@@ -2,6 +2,7 @@ import assert from "node:assert";
 import {
   DestType,
   HeaderType,
+  PATHFINDER_M,
   Packet,
   PacketType,
 } from "../../src/core/packet.js";
@@ -68,6 +69,44 @@ async function testPacket() {
   assert.deepStrictEqual(deserialized2.transportId, transportId);
   assert.deepStrictEqual(deserialized2.destinationHash, destHash);
   assert.deepStrictEqual(deserialized2.payload, payload);
+
+  // --- Deserialize hardening (untrusted-input defenses) ---
+
+  // A truncated HEADER_2 frame (between the old 19-byte floor and the real
+  // 35-byte HEADER_2 minimum) used to be silently accepted: slice() clamps,
+  // yielding a short destinationHash and an undefined contextByte. It must now
+  // throw before any slicing.
+  const truncatedH2 = new Uint8Array(20);
+  truncatedH2[0] = 0x40; // HEADER_2 flag bit
+  assert.throws(
+    () => Packet.deserialize(truncatedH2),
+    /too short/,
+    "truncated HEADER_2 must be rejected",
+  );
+
+  // A HEADER_1 frame under its 19-byte minimum is rejected too.
+  assert.throws(
+    () => Packet.deserialize(new Uint8Array(10)),
+    /too short/,
+    "too-short HEADER_1 must be rejected",
+  );
+
+  // hop-count loop-prevention (mirrors Python PATHFINDER_M). A packet whose
+  // hops have reached the ceiling is invalid and dropped at deserialize time.
+  const tooManyHops = new Uint8Array(19);
+  tooManyHops[0] = 0x00; // HEADER_1
+  tooManyHops[1] = PATHFINDER_M; // hops == ceiling → invalid
+  assert.throws(
+    () => Packet.deserialize(tooManyHops),
+    /Invalid hop count/,
+    "hops >= PATHFINDER_M must be rejected",
+  );
+
+  // hops == PATHFINDER_M - 1 is the largest valid value and must be accepted.
+  const maxHops = new Uint8Array(19);
+  maxHops[1] = PATHFINDER_M - 1;
+  assert.doesNotThrow(() => Packet.deserialize(maxHops));
+  assert.strictEqual(Packet.deserialize(maxHops).hops, PATHFINDER_M - 1);
 
   console.log("Packet tests passed!");
 }

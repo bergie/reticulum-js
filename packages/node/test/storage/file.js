@@ -4,7 +4,7 @@
  * disk, plus an integration round-trip with `Persistor`.
  */
 import assert from "node:assert";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
@@ -45,6 +45,20 @@ describe("FileStorageAdapter — identity key blob", () => {
       );
       const loaded = await a.loadKey();
       assert.ok(loaded && bytesEqual(loaded, blob));
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("saveKey writes the identity key owner-only (mode 0o600)", async () => {
+    // The identity private key IS the node's cryptographic address; Node's
+    // default 0o666 (→ 0o644 after umask) leaves it world-readable.
+    const { dir, cleanup } = tempDir();
+    try {
+      const a = new FileStorageAdapter(dir);
+      await a.saveKey(fromHex("00".repeat(128)));
+      const mode = statSync(join(dir, "identity.key")).mode & 0o777;
+      assert.strictEqual(mode, 0o600, "identity key must be owner-only");
     } finally {
       cleanup();
     }

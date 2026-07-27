@@ -93,6 +93,16 @@ export class Resource extends EventTarget {
   /** Cap on advertised transfer/logical size at accept time (§10.4 bomb defense). */
   static DEFAULT_MAX_SIZE = 32 * 1024 * 1024;
 
+  /**
+   * Absolute cap on the advertised part count `n` at accept time. Defends
+   * against a single RESOURCE_ADV that advertises a tiny `t` but a huge `n`:
+   * the receiver allocates `new Array(n).fill(null)` for the parts, so an
+   * unbounded `n` is a one-packet OOM. Set generously enough that any
+   * legitimate transfer up to {@link DEFAULT_MAX_SIZE} at the minimum MTU
+   * (219 → sdu 183 → ~183k parts for 32 MiB) still fits, with headroom.
+   */
+  static DEFAULT_MAX_PARTS = 262144;
+
   /** Receiver request window during a transfer. */
   window = Resource.WINDOW;
 
@@ -544,15 +554,34 @@ export class Resource extends EventTarget {
    * @param {Bzip2} [options.bz2]
    * @param {number} [options.maxSize] - Reject advertisements whose `t` or `d`
    *   exceeds this (§10.4 bomb defense). Defaults to 32 MiB.
+   * @param {number} [options.maxParts] - Reject advertisements whose part count
+   *   `n` exceeds this. Defaults to {@link Resource.DEFAULT_MAX_PARTS}.
    * @returns {Promise<Resource|null>} null if the advertisement was rejected.
    */
   static async accept(link, advertisementPacket, options = {}) {
     const adv = ResourceAdvertisement.unpack(advertisementPacket.payload);
     const maxSize = options.maxSize ?? Resource.DEFAULT_MAX_SIZE;
-    if (adv.t > maxSize || adv.d > maxSize) {
+    const maxParts = options.maxParts ?? Resource.DEFAULT_MAX_PARTS;
+
+    // §10.4 bomb defense. An attacker could advertise a tiny `t` (under the
+    // size cap) with a huge `n` and OOM the receiver via the
+    // `new Array(n).fill(null)` allocation below, so `n` is validated too:
+    //   - it must be positive and under an absolute ceiling, and
+    //   - it can never exceed `t` (each part carries at least one byte), and
+    //   - it must be consistent with the negotiated link SDU (both ends share
+    //     the link MTU), within a 1-part rounding margin.
+    const sdu = link.mtu - Resource.HEADER_MAXSIZE - Resource.IFAC_MIN_SIZE;
+    const expectedParts = sdu > 0 ? Math.ceil(adv.t / sdu) : 0;
+    const partCountInsane =
+      adv.n <= 0 ||
+      adv.n > maxParts ||
+      adv.n > adv.t ||
+      (expectedParts > 0 && adv.n > expectedParts + 1);
+    if (adv.t > maxSize || adv.d > maxSize || partCountInsane) {
       log(
         "Resource",
-        `Rejecting advertisement: size t=${adv.t} d=${adv.d} over cap ${maxSize}`,
+        `Rejecting advertisement: size t=${adv.t} d=${adv.d} n=${adv.n} ` +
+          `(cap size=${maxSize} parts=${maxParts}, expected≈${expectedParts})`,
         LogLevel.WARNING,
       );
       await Resource._sendReject(link, adv.h);
