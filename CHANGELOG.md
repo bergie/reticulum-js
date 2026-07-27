@@ -1,6 +1,68 @@
 # Changelog
 
 ## [Unreleased]
+### Security
+Hardening pass from a full security audit of the `core` and `node` packages.
+All findings address untrusted input (peer-supplied wire bytes, anonymous HTTP
+POSTs, identity key files on disk). No behaviour change for well-formed traffic.
+
+- **core**: `Resource.accept` now validates the advertised part count `n` before
+  allocating the receiver's `parts` array, closing a single-packet OOM. An
+  attacker could advertise a tiny encrypted size `t` (under the size cap) with a
+  huge `n` and crash the receiver via `new Array(n).fill(null)` in a single
+  RESOURCE_ADV from any peer that had established a link. `n` is now rejected
+  unless it is positive, under an absolute ceiling (`DEFAULT_MAX_PARTS`), no
+  larger than `t` (each part carries at least one byte), and consistent with the
+  negotiated link SDU (both ends share the link MTU) within a one-part margin.
+- **core**: The HDLC stream unframer (the default framing for the TCP interface,
+  the standard Reticulum transport) is now a byte-oriented state machine with a
+  capped per-frame accumulator (`maxFrameSize`, default 512 KiB = 2× Python TCP
+  `HW_MTU`), mirroring `kiss-framer.js`. Previously a peer could grow the
+  unframer's buffer without bound by streaming non-FLAG bytes, by opening a
+  frame and never closing it, or by padding a frame past the cap; the oversized
+  frame is now dropped and the unframer resyncs on the next FLAG.
+- **core**: `MicroMsgPack` (the parser fed directly with attacker-controlled
+  bytes from LXMF messages, announce `app_data`, resource advertisements and
+  propagation sync) is hardened against three untrusted-input issues: a
+  `__proto__` map key no longer hijacks the decoded object's prototype chain
+  (dangerous keys are stored as plain own data properties via
+  `Object.defineProperty`); nested arrays/maps are capped at a depth of 128 so a
+  tiny but deeply-nested payload can't exhaust the stack; and `_decodeBinary`
+  bounds-checks its length before slicing so a corrupt/malicious bin length is
+  rejected instead of silently returned as a truncated buffer.
+- **core**: `Packet.deserialize` now computes the minimum packet length per
+  header type (HEADER_2 needs 35 bytes, not the HEADER_1 floor of 19) before
+  slicing, so a truncated HEADER_2 frame is rejected instead of silently
+  producing a Packet with a short destination hash and an undefined context byte
+  coerced to NONE. It also rejects packets whose hop count has reached
+  `PATHFINDER_M` (128), mirroring Python `Packet.unpack()`'s loop-prevention
+  guard that was missing from the port.
+- **core**: `Identity.validate` returns `false` on a non-64-byte signature
+  instead of constructing an out-of-bounds view that throws an uncaught
+  RangeError, so the public method fails closed on arbitrary input. Dead
+  `keyData` export removed.
+- **core**: `Identity.loadOrGenerate` no longer silently mints a brand-new
+  identity over an existing one. A read error from the storage adapter, or a
+  stored key that is the wrong length or fails to import, now throws (with a
+  loud ERROR log) rather than falling through to generate-and-overwrite — since
+  the identity *is* the node's cryptographic address, silently replacing it
+  would break every peer that has cached the old public key. A genuinely absent
+  key file (the adapter returns `null`) still generates and persists as before.
+- **core**: Removed the dead `pkcs7` import from `Token` (Web Crypto's AES-CBC
+  already handles PKCS7 padding internally).
+- **node**: The HTTP POST exchange server (the PHP-router replacement, listening
+  on an open port with no authentication) now caps the request body
+  (`maxRequestBodyBytes`, default 2 MiB) *before* any auth or JSON.parse and
+  responds 413, so a single anonymous oversized POST can no longer OOM the
+  process. Inbound `packets` are capped at `maxBatchPackets` with per-entry size
+  filtering (matching the outbound cap), the session-token comparison is now
+  constant-time via `crypto.timingSafeEqual`, and the Node HTTP server gets
+  explicit `requestTimeout`/`headersTimeout` (slowloris defense).
+- **node**: `FileStorageAdapter.saveKey` writes the identity private-key file
+  with mode `0o600` and its containing directory with `0o700`. Node's default
+  `0o666` resolves to `0o644` after a typical umask, leaving the key that *is*
+  the node's cryptographic address world-readable to other local users.
+
 ### Fixed
 - **core**: LXMF `send()` now reaches mobile clients (Columba, mobile
   Sideband). With no link supplied it delivered a single opportunistic packet,
