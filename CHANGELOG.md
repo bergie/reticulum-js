@@ -85,6 +85,8 @@ POSTs, identity key files on disk). No behaviour change for well-formed traffic.
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.4.5] - 2026-07-27
+
 ## [0.4.4] - 2026-07-24
 ### Fixed
 - **core**: Added handling for `0xcf` in MsgPack as Columba uses it for NomadNet requests
