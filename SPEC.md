@@ -115,6 +115,7 @@ reticulum-js/                                 # private monorepo root (npm works
 │   │       │   ├── base.js                   # Interface base class
 │   │       │   ├── http.js                   # HttpPostClientInterface (fetch)
 │   │       │   ├── rnode.js                  # RNodeInterface base (transport-agnostic KISS/RNode protocol)
+│   │       │   ├── rnode-webserial.js        # RNodeWebSerialInterface (navigator.serial backend)
 │   │       │   ├── websocket.js              # WebSocketClientInterface
 │   │       │   └── webrtc.js                 # WebRTCInterface (wraps an RTCDataChannel)
 │   │       ├── utils/                        # encoding, log, msgpack

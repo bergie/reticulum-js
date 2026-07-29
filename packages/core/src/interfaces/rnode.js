@@ -431,6 +431,8 @@ export class RNodeInterface extends Interface {
     this._transportClose = null;
     /** @type {Promise<void> | null} */ this._loopPromise = null;
     /** @type {AbortController | null} */ this._readAbort = null;
+    /** @type {ReadableStreamDefaultReader<Uint8Array> | null} */
+    this._reader = null;
 
     // Expose a Packet WritableStream so Transport can grab a writer in
     // `addInterface` regardless of connect ordering; writes only transmit once
@@ -511,8 +513,8 @@ export class RNodeInterface extends Interface {
    * Opens the raw byte transport to the RNode and returns the inbound readable,
    * outbound writer, and closer. The base class is transport-agnostic; a
    * backend subclass (Node.js serial, Web Serial, Web Bluetooth, …) must
-   * override this.
-   * @returns {RNodeTransport}
+   * override this. It may be `async` (e.g. Web Serial `port.open()`).
+   * @returns {RNodeTransport | Promise<RNodeTransport>}
    * @protected
    */
   _openTransport() {
@@ -558,7 +560,7 @@ export class RNodeInterface extends Interface {
     // Close any transport left over from a dropped connection before opening a
     // fresh one (otherwise reconnecting after e.g. a USB unplug leaks the fd).
     await this._closeTransportSafely();
-    const transport = this._openTransport();
+    const transport = await this._openTransport();
     this._readableBytes = transport.readable;
     this._transportWrite = transport.write;
     this._transportClose = transport.close;
@@ -612,6 +614,16 @@ export class RNodeInterface extends Interface {
    */
   async _closeTransportSafely() {
     this._stopReadLoop();
+    // Wait for the read loop to finish (and release the reader) before closing
+    // the transport — a Web Serial port cannot be closed while its readable is
+    // locked.
+    if (this._loopPromise) {
+      try {
+        await this._loopPromise;
+      } catch (_e) {
+        // already surfaced via the loop's error handling
+      }
+    }
     if (this._transportClose) {
       try {
         await this._transportClose();
@@ -974,6 +986,19 @@ export class RNodeInterface extends Interface {
       this._readAbort.abort();
       this._readAbort = null;
     }
+    // Cancel any in-flight read so the loop ends and releases the reader
+    // before the transport is closed (Web Serial `port.close()` rejects while
+    // the readable is still locked).
+    if (this._reader) {
+      const reader = this._reader;
+      this._reader = null;
+      try {
+        const p = reader.cancel("interface closing");
+        if (p && typeof p.then === "function") p.catch(() => {});
+      } catch (_e) {
+        // already released/cancelled
+      }
+    }
   }
 
   /**
@@ -986,6 +1011,7 @@ export class RNodeInterface extends Interface {
   async _readLoop(signal) {
     if (!this._readableBytes) return;
     const reader = this._readableBytes.getReader();
+    this._reader = reader;
     let lost = false;
     try {
       while (!signal.aborted) {
@@ -1011,6 +1037,7 @@ export class RNodeInterface extends Interface {
       } catch (_e) {
         // already released
       }
+      this._reader = null;
       if (lost && !signal.aborted) {
         this.online = false;
         this._handleConnectionLost();
