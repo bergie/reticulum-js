@@ -44,6 +44,18 @@
   `msgpack({ signature, ratchets: msgpack([[priv32, pub32], ...]) })`.
   `Destination.MAX_RATCHETS` is raised 128 → 512 to match the Python
   `RATCHET_COUNT`.
+- Learned peer ratchets (`Destination.knownRatchets`, the *public* keys used
+  to encrypt outbound) now retain only the single newest ratchet per
+  destination with a 30-day expiry, matching `RNS.Identity` (`RATCHET_EXPIRY`,
+  `_remember_ratchet`, `_clean_ratchets`). Previously every distinct ratchet
+  heard was accumulated into an ever-growing, never-expiring ring (unbounded
+  memory/disk growth, stale keys never dropped). A newer announce overwrites;
+  re-announcing the same ratchet is a no-op (the receipt time is not
+  refreshed); `Destination.recallRatchets` is replaced by `recallRatchet`
+  (single value, drops expired entries on read); and the new
+  `Destination.cleanKnownRatchets` drops expired entries and ratchets whose
+  destination has been forgotten, run once on `Persistor.load`. The persisted
+  ratchet record changes from a msgpack array to `{ratchet, received}`.
 
 ## [0.4.5] - 2026-07-27
 ### Fixed

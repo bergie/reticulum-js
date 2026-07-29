@@ -76,9 +76,9 @@ describe("Destination.enableRatchets — ownership & announce emission", () => {
     const transport = new TransportCore();
     await transport._routeIncomingPacket(arriving, /** @type {any} */ (null));
 
-    const recalled = Destination.recallRatchets(dest.destinationHash);
-    assert.ok(recalled && recalled.length > 0);
-    assert.ok(bytesEqual(recalled[0], dest.ratchets[0].publicKey));
+    const recalled = Destination.recallRatchet(dest.destinationHash);
+    assert.ok(recalled);
+    assert.ok(bytesEqual(recalled, dest.ratchets[0].publicKey));
   });
 });
 
@@ -102,7 +102,7 @@ describe("Destination.encrypt / _handleData — ratchet wiring", () => {
     );
 
     // Outbound destination for A (public-only identity) routes encrypt() via
-    // Destination.recallRatchets → Identity.encrypt(ratchet).
+    // Destination.recallRatchet → Identity.encrypt(ratchet).
     const idAOut = await Identity.fromPublicKey(await idA.getPublicKey());
     const destAOut = await Destination.OUT(
       "test.ratchet.xcv",
@@ -157,7 +157,7 @@ describe("Destination.encrypt / _handleData — ratchet wiring", () => {
       idAOut,
       null,
     );
-    // No rememberRatchets → recallRatchets returns null → long-term encryption.
+    // No rememberRatchet → recallRatchet returns null → long-term encryption.
     const plaintext = enc("no ratchet here");
     const ciphertext = await destAOut.encrypt(plaintext);
 

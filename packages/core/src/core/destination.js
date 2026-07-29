@@ -130,11 +130,13 @@ export class Destination extends EventTarget {
   static knownDestinations = new Map();
 
   /**
-   * Known ratchet X25519 public keys per destination (SPEC.md §4.5 step 6.2,
-   * §7.4). Maps hex destination hash → array of ratchet pubs (newest first).
-   * Populated from validated announces; consumed by the inbound-decrypt
-   * tolerance path once full ratchet support lands.
-   * @type {Map<string, Uint8Array[]>}
+   * Known ratchet X25519 public key per peer destination (SPEC.md §4.5 step
+   * 6.2, §7.4) — the single newest ratchet learned from that peer's validated
+   * announces. Maps hex destination hash → `{ ratchet, received }`. Only the
+   * newest ratchet is retained (a newer announce overwrites); entries expire
+   * after {@link Destination.RATCHET_EXPIRY_MS}. Consumed by the outbound
+   * encrypt path for forward secrecy.
+   * @type {Map<string, {ratchet: Uint8Array, received: number}>}
    */
   static knownRatchets = new Map();
 
@@ -145,6 +147,12 @@ export class Destination extends EventTarget {
   static RATCHET_INTERVAL_MS = 30 * 60 * 1000;
   /** Maximum number of retained ratchet keys for decryption tolerance. */
   static MAX_RATCHETS = 512;
+  /**
+   * How long a learned peer ratchet stays valid, in milliseconds (default 30
+   * days). Mirrors `RNS.Identity.RATCHET_EXPIRY`. Past this a peer ratchet is
+   * dropped and the long-term key is used until a fresh announce arrives.
+   */
+  static RATCHET_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
   /**
    * Low-level constructor. Prefer the static factories (`Destination.IN`,
@@ -1006,34 +1014,70 @@ export class Destination extends EventTarget {
   /**
    * Remembers a ratchet X25519 public key announced for a destination (SPEC.md
    * §4.5 step 6.2). Called only for validated announces where `context_flag`
-   * was set and the ratchet is non-empty. Newest ratchets are prepended so the
-   * ring is newest-first; duplicates are skipped.
+   * was set and the ratchet is non-empty. Only the single newest ratchet is
+   * retained per destination; re-announcing the SAME ratchet is a no-op (the
+   * `received` time is not refreshed), matching `RNS.Identity._remember_ratchet`.
    * @param {Uint8Array} destinationHash
    * @param {Uint8Array} ratchet - 32-byte ratchet X25519 public key.
    */
   static rememberRatchet(destinationHash, ratchet) {
     if (!ratchet || ratchet.length === 0) return;
     const key = toHex(destinationHash);
-    /** @type {Uint8Array[]} */
-    const ring = Destination.knownRatchets.get(key) ?? [];
     const copy = new Uint8Array(ratchet);
-    if (!ring.some((r) => bytesEqual(r, copy))) {
-      ring.unshift(copy);
-      Destination.knownRatchets.set(key, ring);
-    }
+    const existing = Destination.knownRatchets.get(key);
+    if (existing && bytesEqual(existing.ratchet, copy)) return;
+    Destination.knownRatchets.set(key, {
+      ratchet: copy,
+      received: Date.now(),
+    });
   }
 
   /**
-   * Recalls the ratchet ring for a destination (newest first), or null.
-   *
-   * Consumed by the inbound-decrypt tolerance path (SPEC.md §7.4): a sender
-   * may have encrypted to a just-rotated previous ratchet, so the receiver
-   * tries each privkey in the ring before falling back to the long-term key.
+   * Recalls the newest non-expired ratchet public key for a destination, or
+   * null. Expired entries (past {@link Destination.RATCHET_EXPIRY_MS}) are
+   * dropped on read. Consumed by the outbound encrypt path (§7.4).
    * @param {Uint8Array} destinationHash
-   * @returns {Uint8Array[]|null}
+   * @returns {Uint8Array|null}
    */
-  static recallRatchets(destinationHash) {
-    return Destination.knownRatchets.get(toHex(destinationHash)) ?? null;
+  static recallRatchet(destinationHash) {
+    const key = toHex(destinationHash);
+    const entry = Destination.knownRatchets.get(key);
+    if (!entry) return null;
+    if (Date.now() > entry.received + Destination.RATCHET_EXPIRY_MS) {
+      Destination.knownRatchets.delete(key);
+      return null;
+    }
+    return entry.ratchet;
+  }
+
+  /**
+   * Drops expired and obsolete peer ratchets from a known-ratchets map. Called
+   * once at startup after persistence hydration (mirrors
+   * `RNS.Identity._clean_ratchets`): an entry is removed when it is past
+   * {@link Destination.RATCHET_EXPIRY_MS} or its destination is no longer in
+   * `knownDestinations` (the peer was forgotten).
+   *
+   * @param {Map<string, {ratchet: Uint8Array, received: number}>} [knownRatchets]
+   *   Defaults to `Destination.knownRatchets`.
+   * @param {Map<string, any>} [knownDestinations] Defaults to
+   *   `Destination.knownDestinations`.
+   * @returns {number} the number of entries removed.
+   */
+  static cleanKnownRatchets(
+    knownRatchets = Destination.knownRatchets,
+    knownDestinations = Destination.knownDestinations,
+  ) {
+    let removed = 0;
+    const now = Date.now();
+    for (const [key, entry] of knownRatchets) {
+      const expired = now > entry.received + Destination.RATCHET_EXPIRY_MS;
+      const unknown = !knownDestinations.has(key);
+      if (expired || unknown) {
+        knownRatchets.delete(key);
+        removed++;
+      }
+    }
+    return removed;
   }
 
   /**
@@ -1048,10 +1092,9 @@ export class Destination extends EventTarget {
     // §7.4: encrypt to the recipient's newest known ratchet public key for
     // forward secrecy when one was learned from an announce; otherwise fall
     // back to the long-term X25519 key (Identity.encrypt handles ratchet=null).
-    const ring = this.destinationHash
-      ? Destination.recallRatchets(this.destinationHash)
+    const ratchet = this.destinationHash
+      ? Destination.recallRatchet(this.destinationHash)
       : null;
-    const ratchet = ring && ring.length > 0 ? ring[0] : null;
     return await this.identity.encrypt(data, ratchet);
   }
 

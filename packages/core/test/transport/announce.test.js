@@ -172,7 +172,7 @@ test("TransportCore routes a ratchet-bearing announce and caches the ratchet", a
   const transport = new TransportCore();
   await transport._routeIncomingPacket(packet, /** @type {any} */ (null));
 
-  const ring = Destination.recallRatchets(dest.destinationHash);
-  assert.ok(ring, "ratchet should have been cached");
-  assert.ok(bytesEqual(ring[0], ratchet));
+  const recalled = Destination.recallRatchet(dest.destinationHash);
+  assert.ok(recalled, "ratchet should have been cached");
+  assert.ok(bytesEqual(recalled, ratchet));
 });

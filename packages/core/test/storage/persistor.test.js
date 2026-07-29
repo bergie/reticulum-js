@@ -10,6 +10,7 @@
  */
 import assert from "node:assert";
 import { describe, test } from "node:test";
+import { Destination } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import { Persistor } from "../../src/storage/persistor.js";
 import {
@@ -96,13 +97,22 @@ describe("Persistor — communicate-with gating", () => {
     ]);
   });
 
-  test("ratchet ring round-trips for a contacted destination", async () => {
+  test("ratchet round-trips for a contacted destination", async () => {
     const s = freshSurface();
     const p = new Persistor({ ...s, debounceMs: 0 });
     const dest = fromHex("aa".repeat(16));
-    const ring = [fromHex("01".repeat(32)), fromHex("02".repeat(32))];
+    const ratchet = fromHex("01".repeat(32));
 
-    s.knownRatchets.set(toHex(dest), ring);
+    // A known-destination entry is required: cleanKnownRatchets (run on load)
+    // drops ratchets whose destination is no longer known.
+    s.knownDestinations.set(toHex(dest), [
+      Date.now() / 1000,
+      fromHex("99".repeat(16)),
+      fromHex("21".repeat(64)),
+      null,
+      0,
+    ]);
+    s.knownRatchets.set(toHex(dest), { ratchet, received: Date.now() });
     p.markContacted(dest);
     await p.flush();
 
@@ -110,9 +120,7 @@ describe("Persistor — communicate-with gating", () => {
       StorageNamespace.RATCHETS,
       toHex(dest),
     );
-    assert.ok(persisted, "ratchet ring should be persisted");
-    const decoded = p.knownRatchets; // not decoded yet — load() does that
-    assert.ok(decoded, "sanity");
+    assert.ok(persisted, "ratchet should be persisted");
 
     // Reload into fresh maps and confirm equality.
     const s2 = freshSurface();
@@ -120,9 +128,62 @@ describe("Persistor — communicate-with gating", () => {
     await p2.load();
     const reloaded = s2.knownRatchets.get(toHex(dest));
     assert.ok(reloaded);
-    assert.strictEqual(reloaded.length, 2);
-    assert.ok(bytesEqual(reloaded[0], ring[0]));
-    assert.ok(bytesEqual(reloaded[1], ring[1]));
+    assert.ok(bytesEqual(reloaded.ratchet, ratchet));
+    assert.strictEqual(typeof reloaded.received, "number");
+  });
+
+  test("load() drops expired ratchets and ratchets for forgotten destinations", async () => {
+    const s = freshSurface();
+    const p = new Persistor({ ...s, debounceMs: 0 });
+    const knownDest = fromHex("cc".repeat(16));
+    const forgottenDest = fromHex("dd".repeat(16));
+    const expiredDest = fromHex("ee".repeat(16));
+
+    s.knownDestinations.set(toHex(knownDest), [
+      Date.now() / 1000,
+      fromHex("00".repeat(16)),
+      fromHex("21".repeat(64)),
+      null,
+      0,
+    ]);
+    s.knownDestinations.set(toHex(expiredDest), [
+      Date.now() / 1000,
+      fromHex("00".repeat(16)),
+      fromHex("22".repeat(64)),
+      null,
+      0,
+    ]);
+    s.knownRatchets.set(toHex(knownDest), {
+      ratchet: fromHex("01".repeat(32)),
+      received: Date.now(),
+    });
+    s.knownRatchets.set(toHex(forgottenDest), {
+      ratchet: fromHex("02".repeat(32)),
+      received: Date.now(),
+    });
+    s.knownRatchets.set(toHex(expiredDest), {
+      ratchet: fromHex("03".repeat(32)),
+      received: Date.now() - Destination.RATCHET_EXPIRY_MS - 1,
+    });
+    p.markContacted(knownDest);
+    p.markContacted(forgottenDest);
+    p.markContacted(expiredDest);
+    await p.flush();
+
+    // Reload: the forgotten dest has no identity on disk, and the expired dest
+    // is past RATCHET_EXPIRY_MS — both ratchets are dropped on load.
+    const s2 = freshSurface();
+    const p2 = new Persistor({ ...s2, adapter: s.adapter, debounceMs: 0 });
+    await p2.load();
+    assert.ok(s2.knownRatchets.has(toHex(knownDest)), "fresh ratchet kept");
+    assert.ok(
+      !s2.knownRatchets.has(toHex(forgottenDest)),
+      "forgotten-destination ratchet dropped",
+    );
+    assert.ok(
+      !s2.knownRatchets.has(toHex(expiredDest)),
+      "expired ratchet dropped",
+    );
   });
 
   test("path entry round-trips; the live interface reference is dropped", async () => {
@@ -213,8 +274,11 @@ describe("Persistor — explicit store (favorited contacts)", () => {
       bytesEqual(entry[3], new TextEncoder().encode("Alice")),
       "app_data preserved",
     );
-    const ring = s2.knownRatchets.get(toHex(dest));
-    assert.ok(ring && bytesEqual(ring[0], ratchet), "ratchet preserved");
+    const ratchetEntry = s2.knownRatchets.get(toHex(dest));
+    assert.ok(
+      ratchetEntry && bytesEqual(ratchetEntry.ratchet, ratchet),
+      "ratchet preserved",
+    );
   });
 
   test("store flushes immediately (favorite survives even with debounce on)", async () => {

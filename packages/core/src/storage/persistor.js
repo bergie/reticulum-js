@@ -62,20 +62,31 @@ function decodeIdentityEntry(bytes) {
 }
 
 /**
- * @param {Uint8Array[]} ring
+ * @param {{ratchet: Uint8Array, received: number}} entry
  * @returns {Uint8Array}
  */
-function encodeRatchetRing(ring) {
-  return MicroMsgPack.encode(ring.map(toU8));
+function encodeRatchet(entry) {
+  return MicroMsgPack.encode({
+    ratchet: toU8(entry.ratchet),
+    received: entry.received,
+  });
 }
 
 /**
  * @param {Uint8Array} bytes
- * @returns {Uint8Array[]}
+ * @returns {{ratchet: Uint8Array, received: number}}
+ * @throws when the bytes do not decode to `{ratchet, received}` (so
+ *   {@link Persistor#load} can skip corrupt records).
  */
-function decodeRatchetRing(bytes) {
-  const arr = MicroMsgPack.decode(bytes);
-  return Array.isArray(arr) ? arr.map(toU8) : [];
+function decodeRatchet(bytes) {
+  const e = MicroMsgPack.decode(bytes);
+  if (!e || !(e.ratchet instanceof Uint8Array)) {
+    throw new Error("ratchet entry is not {ratchet, received}");
+  }
+  return {
+    ratchet: toU8(e.ratchet),
+    received: typeof e.received === "number" ? e.received : 0,
+  };
 }
 
 /**
@@ -148,7 +159,7 @@ function decodeRoute(bytes) {
  *   null to disable persistence (all methods become no-ops).
  * @property {Map<string, any[]>} [knownDestinations] Defaults to
  *   `Destination.knownDestinations`.
- * @property {Map<string, Uint8Array[]>} [knownRatchets] Defaults to
+ * @property {Map<string, {ratchet: Uint8Array, received: number}>} [knownRatchets] Defaults to
  *   `Destination.knownRatchets`.
  * @property {{ routes: Map<string, any> }} [routingTable] Transport path table;
  *   its `routes` map is read/written directly.
@@ -302,11 +313,10 @@ export class Persistor {
       0,
     ]);
     if (announce.ratchet && announce.ratchet.length > 0) {
-      const ring = this.knownRatchets.get(hex) ?? [];
       const copy = toU8(announce.ratchet);
-      if (!ring.some((r) => bytesEqual(r, copy))) {
-        ring.unshift(copy);
-        this.knownRatchets.set(hex, ring);
+      const existing = this.knownRatchets.get(hex);
+      if (!existing || !bytesEqual(existing.ratchet, copy)) {
+        this.knownRatchets.set(hex, { ratchet: copy, received: Date.now() });
       }
     }
   }
@@ -351,12 +361,12 @@ export class Persistor {
         );
         written++;
       }
-      const ring = this.knownRatchets.get(hex);
-      if (ring) {
+      const ratchet = this.knownRatchets.get(hex);
+      if (ratchet) {
         await adapter.set(
           StorageNamespace.RATCHETS,
           hex,
-          encodeRatchetRing(ring),
+          encodeRatchet(ratchet),
         );
       }
       if (this.routingTable) {
@@ -393,7 +403,7 @@ export class Persistor {
       adapter,
       StorageNamespace.RATCHETS,
       this.knownRatchets,
-      decodeRatchetRing,
+      decodeRatchet,
     );
     if (this.routingTable) {
       await this._loadNamespace(
@@ -403,6 +413,9 @@ export class Persistor {
         decodeRoute,
       );
     }
+    // Drop peer ratchets that expired while offline or whose destination was
+    // forgotten (mirrors RNS.Identity._clean_ratchets).
+    Destination.cleanKnownRatchets(this.knownRatchets, this.knownDestinations);
     log(
       "Persistor",
       `Loaded ${this.persistedDestinations.size} persisted destination(s).`,

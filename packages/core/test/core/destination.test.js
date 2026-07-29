@@ -185,7 +185,7 @@ test("Destination.announce output round-trips through Identity.validateAnnounce"
   assert.strictEqual(result.ratchet, null);
 });
 
-test("Destination.rememberRatchet / recallRatchets store and dedup ratchets", () => {
+test("Destination.rememberRatchet / recallRatchet store the newest ratchet", () => {
   const destHash = crypto.getRandomValues(new Uint8Array(16));
   const ratchetA = crypto.getRandomValues(new Uint8Array(32));
   const ratchetB = crypto.getRandomValues(new Uint8Array(32));
@@ -197,27 +197,74 @@ test("Destination.rememberRatchet / recallRatchets store and dedup ratchets", ()
   Destination.knownRatchets.delete(key);
 
   Destination.rememberRatchet(destHash, ratchetA);
-  let ring = Destination.recallRatchets(destHash);
-  assert.ok(ring);
-  assert.strictEqual(ring.length, 1);
-  assert.ok(bytesEqual(ring[0], ratchetA));
+  let ratchet = Destination.recallRatchet(destHash);
+  assert.ok(ratchet);
+  assert.ok(bytesEqual(ratchet, ratchetA));
 
-  // Newest-first: a second, different ratchet is prepended.
+  // Only the single newest is retained: a newer ratchet overwrites.
   Destination.rememberRatchet(destHash, ratchetB);
-  ring = Destination.recallRatchets(destHash);
-  assert.strictEqual(ring.length, 2);
-  assert.ok(bytesEqual(ring[0], ratchetB));
-  assert.ok(bytesEqual(ring[1], ratchetA));
+  ratchet = Destination.recallRatchet(destHash);
+  assert.ok(ratchet);
+  assert.ok(bytesEqual(ratchet, ratchetB));
 
-  // Re-adding an existing ratchet is a no-op (dedup).
-  Destination.rememberRatchet(destHash, ratchetA);
-  ring = Destination.recallRatchets(destHash);
-  assert.strictEqual(ring.length, 2);
+  // Re-announcing the SAME ratchet is a no-op (received is not refreshed).
+  Destination.rememberRatchet(destHash, ratchetB);
+  ratchet = Destination.recallRatchet(destHash);
+  assert.ok(bytesEqual(ratchet, ratchetB));
 
   Destination.knownRatchets.delete(key);
 });
 
-test("Destination.recallRatchets returns null for an unknown destination", () => {
+test("Destination.recallRatchet returns null for an unknown destination", () => {
   const destHash = crypto.getRandomValues(new Uint8Array(16));
-  assert.strictEqual(Destination.recallRatchets(destHash), null);
+  assert.strictEqual(Destination.recallRatchet(destHash), null);
+});
+
+test("Destination.recallRatchet drops an expired ratchet", () => {
+  const destHash = crypto.getRandomValues(new Uint8Array(16));
+  const ratchet = crypto.getRandomValues(new Uint8Array(32));
+  const key = Array.from(destHash)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  Destination.knownRatchets.delete(key);
+
+  // Seed an already-expired entry directly.
+  Destination.knownRatchets.set(key, {
+    ratchet: ratchet.slice(),
+    received: Date.now() - Destination.RATCHET_EXPIRY_MS - 1,
+  });
+  assert.strictEqual(Destination.recallRatchet(destHash), null);
+  // Recall deletes the expired entry.
+  assert.ok(!Destination.knownRatchets.has(key));
+});
+
+test("Destination.cleanKnownRatchets drops expired and unknown-destination entries", () => {
+  const knownRatchets = new Map();
+  const knownDestinations = new Map();
+  const keepHash = "11".repeat(16);
+  const expiredHash = "22".repeat(16);
+  const unknownHash = "33".repeat(16);
+  knownDestinations.set(keepHash, true);
+  knownDestinations.set(expiredHash, true);
+  knownRatchets.set(keepHash, {
+    ratchet: new Uint8Array(32),
+    received: Date.now(),
+  });
+  knownRatchets.set(expiredHash, {
+    ratchet: new Uint8Array(32),
+    received: Date.now() - Destination.RATCHET_EXPIRY_MS - 1,
+  });
+  knownRatchets.set(unknownHash, {
+    ratchet: new Uint8Array(32),
+    received: Date.now(),
+  });
+
+  const removed = Destination.cleanKnownRatchets(
+    knownRatchets,
+    knownDestinations,
+  );
+  assert.strictEqual(removed, 2);
+  assert.ok(knownRatchets.has(keepHash));
+  assert.ok(!knownRatchets.has(expiredHash));
+  assert.ok(!knownRatchets.has(unknownHash));
 });
