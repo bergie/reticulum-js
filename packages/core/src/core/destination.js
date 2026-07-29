@@ -11,6 +11,7 @@ import {
 import { Link } from "../transport/link.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
+import { MicroMsgPack } from "../utils/msgpack.js";
 import { Identity } from "./identity.js";
 import {
   ContextType,
@@ -143,7 +144,7 @@ export class Destination extends EventTarget {
    */
   static RATCHET_INTERVAL_MS = 30 * 60 * 1000;
   /** Maximum number of retained ratchet keys for decryption tolerance. */
-  static MAX_RATCHETS = 128;
+  static MAX_RATCHETS = 512;
 
   /**
    * Low-level constructor. Prefer the static factories (`Destination.IN`,
@@ -333,11 +334,12 @@ export class Destination extends EventTarget {
   /**
    * Enables forward-secrecy ratchets on this destination (§7.4).
    *
-   * Generates the initial ratchet keypair. The newest ratchet public key is
-   * then embedded in subsequent announces, and inbound packets are decrypted
-   * against the private ring before the long-term key. Ratchet private keys
-   * are held in memory only for now (persistence lands with the storage
-   * layer); a restart therefore rotates the ratchet.
+   * The owned ratchet private-key ring is persisted (signed by this
+   * destination's identity) so a restart can still decrypt messages encrypted
+   * to prior ratchets. On the first run (no persisted ring) an initial key is
+   * generated immediately; otherwise the persisted ring is loaded and a fresh
+   * key is rotated on the next announce. Inbound packets are decrypted
+   * against the private ring before the long-term key.
    *
    * @returns {Promise<void>}
    */
@@ -348,14 +350,25 @@ export class Destination extends EventTarget {
     }
     this.ratchets = [];
     this.ratchetsEnabled = true;
-    await this.rotateRatchets(true);
+    // Hydrate the persisted private ring (if any) so messages encrypted to
+    // pre-restart ratchets still decrypt. latestRatchetTime stays 0 so the
+    // next announce rotates a fresh key (matching RNS.Destination), while the
+    // retained ring keeps decrypting in-flight traffic (§7.4).
+    const restored = await this._loadOwnedRatchets();
+    if (!restored || this.ratchets.length === 0) {
+      // First run (or empty/missing store): seed the initial key now so
+      // callers can read ratchets[0] before the first announce.
+      await this.rotateRatchets(true);
+    }
   }
 
   /**
    * Rotates the ratchet ring when the interval has elapsed
    * (Destination.RATCHET_INTERVAL), inserting the newest key at index 0 and
    * capping the ring to {@link Destination.MAX_RATCHETS}. Pass `force` to
-   * generate a key unconditionally (used for the initial key).
+   * generate a key unconditionally (used for the initial key). The rotated
+   * ring is persisted (signed by the identity) so a restart retains the
+   * private keys.
    *
    * No-op when ratchets are not enabled.
    *
@@ -377,8 +390,7 @@ export class Destination extends EventTarget {
       this.ratchets.pop();
     }
     this.latestRatchetTime = now;
-    // TODO: persist the ratchet ring once a storage layer exists so a restart
-    // can still decrypt in-flight messages encrypted to prior ratchets.
+    await this._persistOwnedRatchets();
   }
 
   /**
@@ -394,6 +406,125 @@ export class Destination extends EventTarget {
     }
     await this.rotateRatchets();
     return this.ratchets[0].publicKey.slice();
+  }
+
+  /**
+   * The backing storage adapter when one is bound (via the Reticulum interface
+   * layer), else null — ratchets then run memory-only (no restart tolerance).
+   *
+   * @returns {import("../storage/storage.js").StorageAdapter|null}
+   * @private
+   */
+  _ratchetStorage() {
+    return this.interfaceLayer?.storage ?? null;
+  }
+
+  /**
+   * Encodes the owned ratchet ring into the persisted (signed) blob, mirroring
+   * `RNS.Destination._persist_ratchets`: the signature is computed over the
+   * msgpack-packed ring, then both are wrapped in a second msgpack map.
+   *
+   * Layout: `msgpack({ signature: Ed25519_sign(packedRing), ratchets: packedRing })`
+   * where `packedRing = msgpack([[priv32, pub32], ...])`.
+   *
+   * @returns {Promise<Uint8Array>}
+   * @private
+   */
+  async _encodeOwnedRatchets() {
+    const identity = this.identity;
+    const ratchets = this.ratchets;
+    if (!identity) {
+      throw new Error("Cannot encode ratchets without an identity.");
+    }
+    if (!ratchets) {
+      throw new Error("Cannot encode ratchets: no ring initialized.");
+    }
+    const packedRing = MicroMsgPack.encode(
+      ratchets.map((r) => [r.privateKey, r.publicKey]),
+    );
+    const signature = await identity.sign(packedRing);
+    return MicroMsgPack.encode({ signature, ratchets: packedRing });
+  }
+
+  /**
+   * Loads and validates the persisted owned ratchet ring for this destination.
+   * On success hydrates `this.ratchets` (newest first) and returns true; on any
+   * failure (absent / corrupt / bad signature) leaves `this.ratchets` untouched
+   * and returns false.
+   *
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _loadOwnedRatchets() {
+    const adapter = this._ratchetStorage();
+    const identity = this.identity;
+    if (!adapter || !this.destinationHash || !identity) return false;
+    let bytes;
+    try {
+      bytes = await adapter.loadOwnedRatchets(toHex(this.destinationHash));
+    } catch (e) {
+      log("Destination", `Failed to load ratchets: ${e}`, LogLevel.WARNING);
+      return false;
+    }
+    if (!bytes) return false;
+    try {
+      const data = MicroMsgPack.decode(bytes);
+      if (
+        !data ||
+        !(data.signature instanceof Uint8Array) ||
+        !(data.ratchets instanceof Uint8Array)
+      ) {
+        return false;
+      }
+      if (!(await identity.validate(data.signature, data.ratchets))) {
+        log(
+          "Destination",
+          "Persisted ratchet ring signature invalid; ignoring.",
+          LogLevel.WARNING,
+        );
+        return false;
+      }
+      const ring = MicroMsgPack.decode(data.ratchets);
+      if (!Array.isArray(ring)) return false;
+      const parsed = [];
+      for (const entry of ring) {
+        if (!Array.isArray(entry) || entry.length !== 2) return false;
+        const [priv, pub] = entry;
+        if (!(priv instanceof Uint8Array) || priv.length !== 32) return false;
+        if (!(pub instanceof Uint8Array) || pub.length !== 32) return false;
+        parsed.push({
+          privateKey: new Uint8Array(priv),
+          publicKey: new Uint8Array(pub),
+        });
+      }
+      this.ratchets = parsed;
+      return true;
+    } catch (e) {
+      log(
+        "Destination",
+        `Persisted ratchet ring corrupt: ${e}`,
+        LogLevel.WARNING,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Persists the current owned ratchet ring (signed). Failures are logged and
+   * swallowed: the in-memory ring still works, only restart-tolerance is lost.
+   *
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _persistOwnedRatchets() {
+    const adapter = this._ratchetStorage();
+    if (!adapter || !this.destinationHash || !this.ratchets) return;
+    try {
+      const blob = await this._encodeOwnedRatchets();
+      await adapter.saveOwnedRatchets(toHex(this.destinationHash), blob);
+    } catch (e) {
+      log("Destination", `Failed to persist ratchets: ${e}`, LogLevel.WARNING);
+    }
   }
 
   /**
@@ -673,6 +804,7 @@ export class Destination extends EventTarget {
   async _handleData(packet) {
     let plaintext = null;
     if (this.type === DestType.SINGLE && this.identity) {
+      const identity = this.identity;
       // §7.4: try each owned ratchet private key (newest first) before the
       // long-term key, so messages encrypted to a just-rotated ratchet still
       // decrypt. Identity.decrypt performs the long-term fallback itself.
@@ -680,7 +812,19 @@ export class Destination extends EventTarget {
         this.ratchetsEnabled && this.ratchets
           ? this.ratchets.map((r) => r.privateKey)
           : null;
-      plaintext = await this.identity.decrypt(packet.payload, privRing);
+      plaintext = await identity.decrypt(packet.payload, privRing);
+      // §7.4: if ratchet decryption failed, another process sharing this
+      // storage may have rotated and persisted a newer ring. Reload and retry
+      // once (mirrors the RNS.Destination decrypt path).
+      if (!plaintext && privRing && (await this._loadOwnedRatchets())) {
+        const reloaded = this.ratchets;
+        if (reloaded) {
+          plaintext = await identity.decrypt(
+            packet.payload,
+            reloaded.map((r) => r.privateKey),
+          );
+        }
+      }
     } else {
       plaintext = packet.payload;
     }

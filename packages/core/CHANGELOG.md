@@ -29,6 +29,21 @@
   `CMD_FB_WRITE` and the `FB_*` geometry constants are exported on the `KISS`
   table and as `RNodeInterface` statics. On headless hardware (no display
   reported) the framebuffer methods are no-ops that log a warning.
+- Owned ratchet private-key rings are now persisted across restarts (§7.4),
+  fixing opportunistic-delivery decryption failures after a restart. A local
+  `SINGLE` destination with ratchets enabled (`Destination.enableRatchets`,
+  used by `LXMRouter` for `lxmf.delivery`) writes its private-key ring — signed
+  by the destination's identity — to the `StorageAdapter` on every rotation and
+  reloads it (signature-verified) on `enableRatchets`, so messages encrypted to
+  a pre-restart ratchet still decrypt. The `StorageAdapter` contract gains a
+  secret-slot pair `loadOwnedRatchets`/`saveOwnedRatchets` (backends MUST store
+  owner-only, like `loadKey`/`saveKey`); `MemoryStorageAdapter` implements it
+  in-memory. On a decrypt failure the owned ring is reloaded from storage and
+  retried once (handles a concurrent process having rotated). The persisted
+  layout mirrors `RNS.Destination._persist_ratchets`:
+  `msgpack({ signature, ratchets: msgpack([[priv32, pub32], ...]) })`.
+  `Destination.MAX_RATCHETS` is raised 128 → 512 to match the Python
+  `RATCHET_COUNT`.
 
 ## [0.4.5] - 2026-07-27
 ### Fixed

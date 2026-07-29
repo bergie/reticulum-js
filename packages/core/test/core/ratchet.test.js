@@ -11,8 +11,9 @@ import { describe, test } from "node:test";
 import { Destination } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import { DestType, Packet } from "../../src/core/packet.js";
+import { MemoryStorageAdapter } from "../../src/storage/storage.js";
 import { TransportCore } from "../../src/transport/transport.js";
-import { bytesEqual } from "../../src/utils/encoding.js";
+import { bytesEqual, toHex } from "../../src/utils/encoding.js";
 
 /** Captures broadcast announce packets in place of a real interface layer. */
 class CapturingLayer {
@@ -199,5 +200,94 @@ describe("Destination.rotateRatchets — rotation tolerance", () => {
     const decrypted = await idA.decrypt(ciphertext, privRing);
     assert.ok(decrypted);
     assert.ok(bytesEqual(decrypted, enc("in flight")));
+  });
+});
+
+describe("Destination.enableRatchets — owned private-ring persistence", () => {
+  test("a ratchet private key survives a simulated restart and still decrypts", async () => {
+    const storage = new MemoryStorageAdapter();
+    const identity = await Identity.generate();
+    const layer = /** @type {any} */ ({ storage });
+
+    // First "run": enable ratchets and capture the advertised public key.
+    const dest1 = await Destination.IN(
+      "test.ratchet.persist",
+      DestType.SINGLE,
+      identity,
+      layer,
+    );
+    await dest1.enableRatchets();
+    assert.strictEqual(dest1.ratchets.length, 1);
+    const advertisedPub = dest1.ratchets[0].publicKey.slice();
+
+    // A peer encrypts to that ratchet (sender recalls the advertised pub).
+    Destination.rememberRatchet(dest1.destinationHash, advertisedPub);
+    const idOut = await Identity.fromPublicKey(await identity.getPublicKey());
+    const destOut = await Destination.OUT(
+      "test.ratchet.persist",
+      DestType.SINGLE,
+      idOut,
+      null,
+    );
+    const ciphertext = await destOut.encrypt(enc("survive restart"));
+
+    // Second "run": a brand-new Destination with the same identity + storage.
+    const dest2 = await Destination.IN(
+      "test.ratchet.persist",
+      DestType.SINGLE,
+      identity,
+      layer,
+    );
+    await dest2.enableRatchets();
+
+    // The pre-restart private key was restored → decryption succeeds.
+    const decrypted = await identity.decrypt(
+      ciphertext,
+      dest2.ratchets.map((r) => r.privateKey),
+    );
+    assert.ok(decrypted, "pre-restart ratchet must still decrypt");
+    assert.ok(bytesEqual(decrypted, enc("survive restart")));
+    assert.ok(
+      dest2.ratchets.some((r) => bytesEqual(r.publicKey, advertisedPub)),
+      "restored ring contains the pre-restart public key",
+    );
+  });
+
+  test("a tampered persisted ring is rejected and a fresh key is seeded", async () => {
+    const storage = new MemoryStorageAdapter();
+    const identity = await Identity.generate();
+    const layer = /** @type {any} */ ({ storage });
+
+    const dest = await Destination.IN(
+      "test.ratchet.tamper",
+      DestType.SINGLE,
+      identity,
+      layer,
+    );
+    await dest.enableRatchets();
+    const originalPub = dest.ratchets[0].publicKey.slice();
+
+    // Corrupt the persisted blob: flip a ring content byte so the signature
+    // over the packed ring no longer validates.
+    const key = toHex(dest.destinationHash);
+    const blob = await storage.loadOwnedRatchets(key);
+    assert.ok(blob);
+    const tampered = blob.slice();
+    tampered[tampered.length - 1] ^= 0xff;
+    await storage.saveOwnedRatchets(key, tampered);
+
+    // Reload: signature fails → ring ignored, fresh key seeded instead.
+    const dest2 = await Destination.IN(
+      "test.ratchet.tamper",
+      DestType.SINGLE,
+      identity,
+      layer,
+    );
+    await dest2.enableRatchets();
+    assert.strictEqual(dest2.ratchets.length, 1);
+    assert.ok(
+      !bytesEqual(dest2.ratchets[0].publicKey, originalPub),
+      "tampered ring must not be restored",
+    );
   });
 });

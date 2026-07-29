@@ -14,6 +14,11 @@
   radio can't starve the loop. Registered in the interface registry as
   `rnode-serial`; re-exported from the package index (also as `RNodeInterface`).
   Validated live against an ESP32 RNode (firmware 1.86).
+- `FileStorageAdapter` implements the new secret-slot pair
+  `loadOwnedRatchets`/`saveOwnedRatchets` for a local destination's owned
+  ratchet private-key ring, written at `<dir>/owned_ratchets/<hash>.key`. Like
+  `identity.key`, the file is mode `0o600` and its directory `0o700`, so the
+  secret key material is owner-only regardless of the process umask.
 
 ## [0.4.5] - 2026-07-27
 - The HTTP POST exchange server (the PHP-router replacement, listening

@@ -7,6 +7,7 @@
  * On-disk layout under the configured `directory`:
  *
  *   <dir>/identity.key            — local Identity private-key blob (loadKey/saveKey)
+ *   <dir>/owned_ratchets/<hash>.key — own ratchet private-key rings (loadOwnedRatchets/saveOwnedRatchets)
  *   <dir>/<namespace>/<key>.bin   — one file per namespaced record (get/set/delete/keys)
  *
  * Records are written verbatim as opaque bytes; the core layer owns msgpack
@@ -55,6 +56,16 @@ export class FileStorageAdapter {
   }
 
   /**
+   * @param {string} destHashHex
+   * @returns {string}
+   * @private
+   */
+  _ownedRatchetPath(destHashHex) {
+    _assertSafe(destHashHex, "destHashHex");
+    return join(this.directory, "owned_ratchets", `${destHashHex}.key`);
+  }
+
+  /**
    * @returns {Promise<Uint8Array|null>}
    */
   async loadKey() {
@@ -81,6 +92,39 @@ export class FileStorageAdapter {
     // by umask (it has no group/other bits to clear), so the key is always
     // owner-only regardless of the process umask.
     await writeFile(this._keyPath(), bytes, { mode: 0o600 });
+  }
+
+  /**
+   * @param {string} destHashHex
+   * @returns {Promise<Uint8Array|null>}
+   */
+  async loadOwnedRatchets(destHashHex) {
+    try {
+      return new Uint8Array(
+        await readFile(this._ownedRatchetPath(destHashHex)),
+      );
+    } catch (e) {
+      if (isNotFound(e)) return null;
+      throw e;
+    }
+  }
+
+  /**
+   * @param {string} destHashHex
+   * @param {Uint8Array} bytes
+   * @returns {Promise<void>}
+   */
+  async saveOwnedRatchets(destHashHex, bytes) {
+    // Ratchet private keys are secret material, exactly like the identity
+    // key, so they are stored owner-only: dir 0o700, file 0o600 (unaffected by
+    // umask). See saveKey for the rationale.
+    await mkdir(join(this.directory, "owned_ratchets"), {
+      recursive: true,
+      mode: 0o700,
+    });
+    await writeFile(this._ownedRatchetPath(destHashHex), bytes, {
+      mode: 0o600,
+    });
   }
 
   /**

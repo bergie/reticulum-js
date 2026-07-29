@@ -11,10 +11,13 @@
  *
  * The KV shape (`get/set/delete/keys`, namespaced by string) is already
  * consumed by `InterfaceDiscovery` (`src/transport/discovery.js`); this module
- * formalizes the typedef and ships a reference in-memory backend. The local
- * Identity's private key keeps the legacy single-blob `loadKey`/`saveKey` pair
- * (consumed by `Identity.loadOrGenerate`); the namespaced KV is used for
- * learned peers, ratchet rings and path entries.
+ * formalizes the typedef and ships a reference in-memory backend. Secret
+ * key material uses dedicated single-blob slots: the local Identity's private
+ * key via `loadKey`/`saveKey` (consumed by `Identity.loadOrGenerate`), and each
+ * local destination's owned ratchet private-key ring via
+ * `loadOwnedRatchets`/`saveOwnedRatchets` (consumed by `Destination`) — both
+ * MUST be stored owner-only. The namespaced KV is used for learned peers,
+ * ratchet rings and path entries.
  */
 
 /**
@@ -32,6 +35,13 @@
  *   Identity's private-key blob (128 bytes), or null when absent.
  * @property {(bytes: Uint8Array) => Promise<void>} saveKey Persists the local
  *   Identity's private-key blob.
+ * @property {(destHashHex: string) => Promise<Uint8Array|null>} loadOwnedRatchets
+ *   Loads this node's own ratchet private-key ring for a destination (secret
+ *   material — backends MUST store it with identity-key-grade, owner-only
+ *   permissions), or null when absent.
+ * @property {(destHashHex: string, bytes: Uint8Array) => Promise<void>} saveOwnedRatchets
+ *   Persists this node's own ratchet private-key ring for a destination
+ *   (secret material — owner-only permissions).
  * @property {(namespace: string, key: string) => Promise<Uint8Array|null>} get
  *   Reads one record, or null when absent.
  * @property {(namespace: string, key: string, value: Uint8Array) => Promise<void>} set
@@ -73,6 +83,8 @@ export class MemoryStorageAdapter {
     this._stores = new Map();
     /** @type {Uint8Array|null} */
     this._key = null;
+    /** @type {Map<string, Uint8Array>} */
+    this._ownedRatchets = new Map();
   }
 
   /**
@@ -99,6 +111,24 @@ export class MemoryStorageAdapter {
    */
   async saveKey(bytes) {
     this._key = bytes.slice();
+  }
+
+  /**
+   * @param {string} destHashHex
+   * @returns {Promise<Uint8Array|null>}
+   */
+  async loadOwnedRatchets(destHashHex) {
+    const v = this._ownedRatchets.get(destHashHex);
+    return v ? v.slice() : null;
+  }
+
+  /**
+   * @param {string} destHashHex
+   * @param {Uint8Array} bytes
+   * @returns {Promise<void>}
+   */
+  async saveOwnedRatchets(destHashHex, bytes) {
+    this._ownedRatchets.set(destHashHex, bytes.slice());
   }
 
   /**
