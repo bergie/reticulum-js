@@ -67,6 +67,23 @@ function be32(value) {
   ];
 }
 
+/** Inverse of `cmdFrame` escaping: FESC TFEND→FEND, FESC TFESC→FESC. */
+function unescape(bytes) {
+  const out = [];
+  let esc = false;
+  for (const b of bytes) {
+    if (esc) {
+      out.push(b === C.TFEND ? C.FEND : b === C.TFESC ? C.FESC : b);
+      esc = false;
+    } else if (b === C.FESC) {
+      esc = true;
+    } else {
+      out.push(b);
+    }
+  }
+  return out;
+}
+
 /**
  * Resolves once `predicate()` is true, polling every 10ms (faster than the
  * production 50ms so tests stay snappy). Rejects after `timeoutMs`.
@@ -373,4 +390,139 @@ test("disconnect powers the radio off and sends leave", async () => {
   assert.equal(radioOff[2], C.RADIO_STATE_OFF);
   assert.ok(leave, "should have sent CMD_LEAVE");
   assert.equal(iface.online, false);
+});
+
+// -------------------------------------------------------------------------
+// Framebuffer / display
+// -------------------------------------------------------------------------
+
+test("framebuffer geometry constants match the Python reference (64x64 @ 1bpp)", () => {
+  assert.equal(RNodeInterface.FB_PIXEL_WIDTH, 64);
+  assert.equal(RNodeInterface.FB_BITS_PER_PIXEL, 1);
+  assert.equal(RNodeInterface.FB_BYTES_PER_LINE, 8);
+  assert.equal(RNodeInterface.FB_SIZE_BYTES, 512);
+  assert.equal(KISS.CMD_FB_EXT, 0x41);
+  assert.equal(KISS.CMD_FB_READ, 0x42);
+  assert.equal(KISS.CMD_FB_WRITE, 0x43);
+});
+
+test("display capability is true for ESP32 after detect, false before", async () => {
+  const iface = new FakeTransport(RADIO);
+  assert.equal(iface.display, false);
+  await bringOnline(iface); // brings up an ESP32 platform
+  assert.equal(iface.display, true);
+  await iface.disconnect();
+});
+
+test("enable/disable external framebuffer toggle CMD_FB_EXT", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  const before = iface.written.length;
+  iface.enableExternalFramebuffer();
+  iface.disableExternalFramebuffer();
+  const frames = iface.written
+    .slice(before)
+    .filter((w) => w[1] === C.CMD_FB_EXT);
+  assert.equal(frames.length, 2);
+  assert.equal(frames[0][2], 0x01);
+  assert.equal(frames[1][2], 0x00);
+  await iface.disconnect();
+});
+
+test("writeFramebuffer frames a CMD_FB_WRITE line with line-number prefix", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  const before = iface.written.length;
+  iface.writeFramebuffer(3, [1, 2, 3, 4, 5, 6, 7, 8]);
+  const frame = iface.written[before];
+  assert.equal(frame[0], C.FEND);
+  assert.equal(frame[1], C.CMD_FB_WRITE);
+  const body = unescape(frame.slice(2, frame.length - 1));
+  assert.deepEqual(body, [3, 1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal(frame[frame.length - 1], C.FEND);
+  await iface.disconnect();
+});
+
+test("writeFramebuffer escapes FEND/FESC bytes in line and data", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  const before = iface.written.length;
+  // Line index 0xC0 (==FEND) and data containing FEND(0xC0) and FESC(0xDB).
+  iface.writeFramebuffer(
+    0xc0,
+    [0xc0, 0xdb, 0x00, 0xc0, 0x01, 0x02, 0x03, 0x04],
+  );
+  const frame = iface.written[before];
+  assert.ok(frame.includes(C.FESC), "payload should have been KISS-escaped");
+  const body = unescape(frame.slice(2, frame.length - 1));
+  assert.deepEqual(
+    body,
+    [0xc0, 0xc0, 0xdb, 0x00, 0xc0, 0x01, 0x02, 0x03, 0x04],
+  );
+  await iface.disconnect();
+});
+
+test("displayImage writes one CMD_FB_WRITE per 8-byte line", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  const before = iface.written.length;
+  const image = new Uint8Array(20); // 2 full lines (16 bytes) + 4 trailing
+  for (let i = 0; i < 20; i++) image[i] = i;
+  const lines = iface.displayImage(image);
+  assert.equal(lines, 2);
+  const fbWrites = iface.written
+    .slice(before)
+    .filter((w) => w[1] === C.CMD_FB_WRITE);
+  assert.equal(fbWrites.length, 2);
+  assert.equal(unescape(fbWrites[0].slice(2, fbWrites[0].length - 1))[0], 0);
+  assert.equal(unescape(fbWrites[1].slice(2, fbWrites[1].length - 1))[0], 1);
+  await iface.disconnect();
+});
+
+test("readFramebuffer captures the 512-byte image with unescaping", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+
+  // A 512-byte image that cycles 0..255 twice, so it contains FEND(0xC0) and
+  // FESC(0xDB) and exercises the round-trip unescaping on read.
+  const fb = new Uint8Array(512);
+  for (let i = 0; i < 512; i++) fb[i] = i & 0xff;
+
+  const pending = iface.readFramebuffer(2000);
+  await waitFor(() => iface.written.some((w) => w[1] === C.CMD_FB_READ));
+  iface.push(cmdFrame(C.CMD_FB_READ, Array.from(fb)));
+  const result = await pending;
+
+  assert.ok(result instanceof Uint8Array, "should resolve with a Uint8Array");
+  assert.equal(result.length, 512);
+  assert.deepEqual(Array.from(result), Array.from(fb));
+  assert.equal(typeof iface.rFrameBufferLatency, "number");
+  await iface.disconnect();
+});
+
+test("readFramebuffer sends CMD_FB_READ with a 0x01 payload byte", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  const before = iface.written.length;
+  const pending = iface.readFramebuffer(50); // short timeout; we only inspect the request
+  await pending;
+  const req = iface.written.slice(before).find((w) => w[1] === C.CMD_FB_READ);
+  assert.ok(req, "should have sent a CMD_FB_READ");
+  assert.deepEqual(Array.from(req.slice(2, req.length - 1)), [0x01]);
+  assert.equal(iface.rFrameBuffer, null); // timed out, no response pushed
+  await iface.disconnect();
+});
+
+test("framebuffer methods are no-ops on a headless (undetected) device", async () => {
+  const iface = new FakeTransport(RADIO); // not connected → display stays false
+  assert.equal(iface.display, false);
+  const before = iface.written.length;
+  iface.enableExternalFramebuffer();
+  assert.equal(iface.displayImage(new Uint8Array(16)), 0);
+  assert.equal(await iface.readFramebuffer(), null);
+  assert.equal(
+    iface.written.length,
+    before,
+    "nothing should have been written",
+  );
 });

@@ -62,6 +62,10 @@ const CMD_STAT_BAT = 0x27;
 const CMD_STAT_CSMA = 0x28;
 const CMD_STAT_TEMP = 0x29;
 const CMD_RANDOM = 0x40;
+const CMD_FB_EXT = 0x41;
+const CMD_FB_READ = 0x42;
+const CMD_FB_WRITE = 0x43;
+const CMD_DISP_READ = 0x66;
 const CMD_PLATFORM = 0x48;
 const CMD_MCU = 0x49;
 const CMD_FW_VERSION = 0x50;
@@ -86,6 +90,18 @@ const PLATFORM_NRF52 = 0x70;
 
 /** RSSI offset applied to raw radio RSSI readings, matching the Python ref. */
 const RSSI_OFFSET = 157;
+
+/**
+ * Framebuffer geometry (Python `FB_*` constants). The RNode display is 64×64
+ * pixels at 1 bit per pixel: `displayImage` writes it one 8-byte line at a
+ * time, and `readFramebuffer` reads back the full 512-byte image.
+ */
+const FB_PIXEL_WIDTH = 64;
+const FB_BITS_PER_PIXEL = 1;
+const FB_PIXELS_PER_BYTE = 8 / FB_BITS_PER_PIXEL;
+const FB_BYTES_PER_LINE = FB_PIXEL_WIDTH / FB_PIXELS_PER_BYTE;
+/** Full framebuffer size in bytes, as returned by CMD_FB_READ (64×64/8 = 512). */
+const FB_SIZE_BYTES = 512;
 
 /**
  * The full KISS command byte table, exported for backends, tests, and tooling
@@ -120,6 +136,10 @@ export const KISS = Object.freeze({
   CMD_STAT_CSMA,
   CMD_STAT_TEMP,
   CMD_RANDOM,
+  CMD_FB_EXT,
+  CMD_FB_READ,
+  CMD_FB_WRITE,
+  CMD_DISP_READ,
   CMD_PLATFORM,
   CMD_MCU,
   CMD_FW_VERSION,
@@ -136,6 +156,11 @@ export const KISS = Object.freeze({
   ERROR_MODEM_TIMEOUT,
   PLATFORM_ESP32,
   PLATFORM_NRF52,
+  FB_PIXEL_WIDTH,
+  FB_BITS_PER_PIXEL,
+  FB_PIXELS_PER_BYTE,
+  FB_BYTES_PER_LINE,
+  FB_SIZE_BYTES,
 });
 
 /**
@@ -321,6 +346,16 @@ export class RNodeInterface extends Interface {
   static REQUIRED_FW_VER_MAJ = 1;
   /** Minimum required firmware minor version. */
   static REQUIRED_FW_VER_MIN = 52;
+  /** Framebuffer width in pixels (Python `FB_PIXEL_WIDTH`). */
+  static FB_PIXEL_WIDTH = FB_PIXEL_WIDTH;
+  /** Framebuffer bits per pixel (Python `FB_BITS_PER_PIXEL`). */
+  static FB_BITS_PER_PIXEL = FB_BITS_PER_PIXEL;
+  /** Pixels packed per framebuffer byte (Python `FB_PIXELS_PER_BYTE`). */
+  static FB_PIXELS_PER_BYTE = FB_PIXELS_PER_BYTE;
+  /** Bytes per framebuffer line (Python `FB_BYTES_PER_LINE`). */
+  static FB_BYTES_PER_LINE = FB_BYTES_PER_LINE;
+  /** Full framebuffer size in bytes. */
+  static FB_SIZE_BYTES = FB_SIZE_BYTES;
 
   /**
    * Creates an RNode interface.
@@ -407,6 +442,11 @@ export class RNodeInterface extends Interface {
     this.fwVersionReceived = false;
     /** @type {number | null} */ this.platform = null;
     /** @type {number | null} */ this.mcu = null;
+    /** True once a display-capable device (ESP32/NRF52) has been detected. */
+    this.display = false;
+    /** @type {Uint8Array | null} */ this.rFrameBuffer = null;
+    /** @type {number | null} */ this.rFrameBufferReadTime = null;
+    /** @type {number | null} */ this.rFrameBufferLatency = null;
     this.majVersion = 0;
     this.minVersion = 0;
     this.firmwareOk = false;
@@ -666,6 +706,11 @@ export class RNodeInterface extends Interface {
     if (!detected) {
       throw new Error(`Could not detect RNode device for ${this.name}`);
     }
+    // Display capability is known once the platform echoes back (ESP32 and
+    // NRF52 boards carry a screen); other platforms stay headless. Mirrors the
+    // Python `self.display = True` gate.
+    this.display =
+      this.platform === PLATFORM_ESP32 || this.platform === PLATFORM_NRF52;
     // The firmware version is reported asynchronously (in response to the
     // CMD_FW_VERSION probe sent by `detect()`). Wait for it, then validate; if
     // the device never reports a version, warn and proceed (Python only aborts
@@ -788,6 +833,112 @@ export class RNodeInterface extends Interface {
     this._sendCommand(CMD_RADIO_STATE, [state]);
   }
 
+  // -----------------------------------------------------------------------
+  // Framebuffer / display (Python `enable_external_framebuffer`,
+  // `disable_external_framebuffer`, `write_framebuffer`, `display_image`,
+  // `read_framebuffer`). Only devices that report a display (ESP32/NRF52)
+  // respond; on headless hardware these are no-ops that log a warning.
+  // -----------------------------------------------------------------------
+
+  /**
+   * Enables host control of the on-device display (external framebuffer mode)
+   * so that {@link RNodeInterface#displayImage} output is shown. Mirrors Python
+   * `enable_external_framebuffer`. No-op on headless devices.
+   */
+  enableExternalFramebuffer() {
+    if (!this._hasDisplay("enableExternalFramebuffer")) return;
+    this._sendCommand(CMD_FB_EXT, [0x01]);
+  }
+
+  /**
+   * Returns control of the display to the device firmware. Mirrors Python
+   * `disable_external_framebuffer`. No-op on headless devices.
+   */
+  disableExternalFramebuffer() {
+    if (!this._hasDisplay("disableExternalFramebuffer")) return;
+    this._sendCommand(CMD_FB_EXT, [0x00]);
+  }
+
+  /**
+   * Writes one {@link RNodeInterface.FB_BYTES_PER_LINE}-byte line to the
+   * framebuffer at the given line index (0-based). The payload
+   * `[line, ...lineData]` is KISS-escaped, matching Python `write_framebuffer`.
+   * @param {number} line
+   * @param {Uint8Array | number[]} lineData
+   */
+  writeFramebuffer(line, lineData) {
+    if (!this._hasDisplay("writeFramebuffer")) return;
+    const data = new Uint8Array(1 + lineData.length);
+    data[0] = line & 0xff;
+    data.set(lineData, 1);
+    this._sendCommand(CMD_FB_WRITE, Array.from(data), true);
+  }
+
+  /**
+   * Writes a full image to the framebuffer, one
+   * {@link RNodeInterface.FB_BYTES_PER_LINE}-byte line at a time. Trailing
+   * bytes that do not fill a complete line are ignored. Mirrors Python
+   * `display_image`.
+   * @param {Uint8Array | number[]} imageData
+   * @returns {number} The number of complete lines written.
+   */
+  displayImage(imageData) {
+    if (!this._hasDisplay("displayImage")) return 0;
+    const bytes =
+      imageData instanceof Uint8Array ? imageData : new Uint8Array(imageData);
+    const lines = Math.floor(bytes.length / FB_BYTES_PER_LINE);
+    for (let line = 0; line < lines; line++) {
+      const start = line * FB_BYTES_PER_LINE;
+      this.writeFramebuffer(
+        line,
+        bytes.subarray(start, start + FB_BYTES_PER_LINE),
+      );
+    }
+    return lines;
+  }
+
+  /**
+   * Requests the current 512-byte framebuffer contents and resolves once the
+   * device has echoed them back (or after `timeoutMs`). The image is also kept
+   * on {@link RNodeInterface#rFrameBuffer}; the measured round-trip latency is
+   * on {@link RNodeInterface#rFrameBufferLatency}. Mirrors Python
+   * `read_framebuffer`.
+   * @param {number} [timeoutMs=2000]
+   * @returns {Promise<Uint8Array | null>} The framebuffer, or null on timeout
+   *   or on a headless device.
+   */
+  async readFramebuffer(timeoutMs = 2000) {
+    if (!this._hasDisplay("readFramebuffer")) return null;
+    this.rFrameBuffer = null;
+    this.rFrameBufferReadTime = Date.now();
+    this._sendCommand(CMD_FB_READ, [0x01]);
+    await this._waitFor(
+      () => this.rFrameBuffer != null,
+      timeoutMs,
+      "framebuffer read",
+    );
+    return this.rFrameBuffer;
+  }
+
+  /**
+   * True once a display-capable device (ESP32/NRF52) has been detected; until
+   * then framebuffer methods are no-ops. Logs a warning on each ignored call.
+   * @param {string} caller
+   * @returns {boolean}
+   * @private
+   */
+  _hasDisplay(caller) {
+    if (!this.display) {
+      log(
+        this.name,
+        `${caller}: device has no display, ignoring framebuffer request`,
+        LogLevel.WARNING,
+      );
+      return false;
+    }
+    return true;
+  }
+
   /**
    * Validates that the firmware meets the minimum required version. Throws if
    * it does not (Python panics; we surface a config error instead).
@@ -864,6 +1015,9 @@ export class RNodeInterface extends Interface {
     this.majVersion = 0;
     this.minVersion = 0;
     this.firmwareOk = false;
+    this.rFrameBuffer = null;
+    this.rFrameBufferReadTime = null;
+    this.rFrameBufferLatency = null;
   }
 
   // -----------------------------------------------------------------------
@@ -1296,6 +1450,16 @@ export class RNodeInterface extends Interface {
             `Radio reporting long-term airtime limit is ${uint16(buf, 0) / 100}%`,
             LogLevel.DEBUG,
           );
+        }
+        return;
+      case CMD_FB_READ:
+        // The device echoes the full 512-byte framebuffer back as an escaped
+        // payload; capture it once complete and measure the round-trip latency
+        // (Python: `r_framebuffer` / `r_framebuffer_latency`).
+        if (buf.length === FB_SIZE_BYTES) {
+          this.rFrameBufferLatency =
+            Date.now() - (this.rFrameBufferReadTime ?? Date.now());
+          this.rFrameBuffer = new Uint8Array(buf);
         }
         return;
       default:
