@@ -65,6 +65,54 @@ describe("FileStorageAdapter — identity key blob", () => {
   });
 });
 
+describe("FileStorageAdapter — owned ratchet rings", () => {
+  test("loadOwnedRatchets returns null when absent", async () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const a = new FileStorageAdapter(dir);
+      assert.strictEqual(await a.loadOwnedRatchets("aa".repeat(16)), null);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("save/load round-trip at <dir>/owned_ratchets/<hash>.key", async () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const a = new FileStorageAdapter(dir);
+      const hash = "aa".repeat(16);
+      const blob = fromHex("deadbeef");
+      await a.saveOwnedRatchets(hash, blob);
+      assert.ok(
+        existsSync(join(dir, "owned_ratchets", `${hash}.key`)),
+        "lives at <dir>/owned_ratchets/<hash>.key",
+      );
+      const loaded = await a.loadOwnedRatchets(hash);
+      assert.ok(loaded && bytesEqual(loaded, blob));
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("save writes the ring owner-only (file 0o600, dir 0o700)", async () => {
+    // Ratchet private keys are secret material, exactly like the identity key.
+    const { dir, cleanup } = tempDir();
+    try {
+      const a = new FileStorageAdapter(dir);
+      const hash = "bb".repeat(16);
+      await a.saveOwnedRatchets(hash, fromHex("cafe"));
+      const fileMode = statSync(
+        join(dir, "owned_ratchets", `${hash}.key`),
+      ).mode & 0o777;
+      const dirMode = statSync(join(dir, "owned_ratchets")).mode & 0o777;
+      assert.strictEqual(fileMode, 0o600, "ratchet file must be owner-only");
+      assert.strictEqual(dirMode, 0o700, "ratchet dir must be owner-only");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe("FileStorageAdapter — namespaced KV", () => {
   test("get returns null for an unknown namespace/key", async () => {
     const { dir, cleanup } = tempDir();
