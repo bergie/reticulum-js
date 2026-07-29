@@ -26,5 +26,9 @@ export {
   listInterfaces,
   registerInterface,
 } from "./interfaces/registry.js";
+export {
+  RNodeSerialInterface,
+  RNodeSerialInterface as RNodeInterface,
+} from "./interfaces/rnode-serial.js";
 export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
 export { FileStorageAdapter } from "./storage/file.js";

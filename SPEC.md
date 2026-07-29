@@ -114,13 +114,14 @@ reticulum-js/                                 # private monorepo root (npm works
 │   │       ├── interfaces/                   # browser-safe I/O ONLY
 │   │       │   ├── base.js                   # Interface base class
 │   │       │   ├── http.js                   # HttpPostClientInterface (fetch)
+│   │       │   ├── rnode.js                  # RNodeInterface base (transport-agnostic KISS/RNode protocol)
 │   │       │   ├── websocket.js              # WebSocketClientInterface
 │   │       │   └── webrtc.js                 # WebRTCInterface (wraps an RTCDataChannel)
 │   │       ├── utils/                        # encoding, log, msgpack
 │   │       └── index.js                      # public API exports
 │   ├── node/                                 # Node-builtin interfaces + registry
 │   │   └── src/
-│   │       ├── interfaces/                   # auto, tcp, local_client, http_server, registry
+│   │       ├── interfaces/                   # auto, tcp, local_client, http_server, rnode-serial, registry
 │   │       ├── utils/                        # netinfo (node:os)
 │   │       └── index.js
 │   ├── webrtc-node/                          # werift-backed createPeerConnection

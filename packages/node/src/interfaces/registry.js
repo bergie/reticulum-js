@@ -12,6 +12,7 @@ import { WebSocketClientInterface } from "@reticulum/core/src/interfaces/websock
 import { AutoInterface } from "./auto.js";
 import { HttpPostServerInterface } from "./http_server.js";
 import { LocalClientInterface } from "./local_client.js";
+import { RNodeSerialInterface } from "./rnode-serial.js";
 import { TCPClientInterface, TCPServerInterface } from "./tcp.js";
 
 /**
@@ -37,6 +38,7 @@ registry.set("auto", AutoInterface);
 registry.set("http-client", HttpPostClientInterface);
 registry.set("http-server", HttpPostServerInterface);
 registry.set("local-client", LocalClientInterface);
+registry.set("rnode-serial", RNodeSerialInterface);
 registry.set("tcp-client", TCPClientInterface);
 registry.set("tcp-server", TCPServerInterface);
 registry.set("ws-client", WebSocketClientInterface);
