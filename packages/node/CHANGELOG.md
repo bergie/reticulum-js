@@ -1,8 +1,33 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- RNode serial backend (`src/interfaces/rnode-serial.js`,
+  `RNodeSerialInterface`, work doc #6): the Node.js serial transport for the
+  `RNodeInterface` base (in [`@reticulum/core`](../core)). Zero-dependency: it
+  opens the device non-blocking (`O_NONBLOCK` — a blocking `open()` wedges in
+  uninterruptible sleep waiting for carrier detect on real RNode hardware),
+  configures termios via an inherited-fd `stty` (so `stty` never re-opens the
+  device, avoiding both the carrier wait and the macOS `-f`/Linux `-F` flag
+  split), and drives the fd with `readSync`/`writeSync` — one `readSync` per
+  event-loop tick (treating `EAGAIN` as no data) so a continuously-trickling
+  radio can't starve the loop. Registered in the interface registry as
+  `rnode-serial`; re-exported from the package index (also as `RNodeInterface`).
+  Validated live against an ESP32 RNode (firmware 1.86).
 
 ## [0.4.5] - 2026-07-27
+- The HTTP POST exchange server (the PHP-router replacement, listening
+  on an open port with no authentication) now caps the request body
+  (`maxRequestBodyBytes`, default 2 MiB) *before* any auth or JSON.parse and
+  responds 413, so a single anonymous oversized POST can no longer OOM the
+  process. Inbound `packets` are capped at `maxBatchPackets` with per-entry size
+  filtering (matching the outbound cap), the session-token comparison is now
+  constant-time via `crypto.timingSafeEqual`, and the Node HTTP server gets
+  explicit `requestTimeout`/`headersTimeout` (slowloris defense).
+- `FileStorageAdapter.saveKey` writes the identity private-key file
+  with mode `0o600` and its containing directory with `0o700`. Node's default
+  `0o666` resolves to `0o644` after a typical umask, leaving the key that *is*
+  the node's cryptographic address world-readable to other local users.
 
 ## [0.4.4] - 2026-07-24
 

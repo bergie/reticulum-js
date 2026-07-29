@@ -52,6 +52,7 @@ The `@reticulum/core` package (`packages/core`) may only depend on the standard 
 - ✅ **Always**: fix formatting with `npm run format` (in Android/Termux `biome check --use-editorconfig=true --write packages/*/src packages/*/test examples`) after any changes to source files or tests
 - ✅ **Always**: compare implementation with how the Python reference implementation works and adapt to be compatible with it
 - ✅ **Always**: Use `git mv` instead of `mv' for renaming files
+- ✅ **Always**: document any major changes in the per-package `CHANGELOG.md`. Changes always go to the Unreleased segment
 - ✅ **Always**: Remove ambiguity and legacy support from APIs you modify. Right now there are no API consumers outside this repo so we can keep things fluid
 - ✅ **Always**: Use the logging helper from `packages/core/src/utils/log.js` instead of `console.log` (and `.warn/.error`)
 - ✅ **Always**: Keep the work document associated with current task up-to-date

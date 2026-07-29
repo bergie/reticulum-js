@@ -1,6 +1,41 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **core/node**: RNode (LoRa radio) interface (work doc #6): a port of the
+  Python `RNS.Interfaces.RNodeInterface` KISS/RNode protocol, split across a
+  transport-agnostic base and thin environment backends.
+  - **core** (`src/interfaces/rnode.js`, `RNodeInterface`): owns the full
+    KISS/RNode protocol — the byte-oriented read-loop state machine, the
+    detect → configure → validate handshake, flow control (`CMD_READY`
+    gating), radio statistics, firmware validation, and on-air bitrate
+    computation. The only transport hook is `_openTransport() →
+    { readable, write, close }`, which a backend overrides (now async, to
+    accommodate Web Serial's `port.open()`). The full KISS command table is
+    exported as a frozen `KISS` object.
+  - **node** (`@reticulum/node`, `src/interfaces/rnode-serial.js`,
+    `RNodeSerialInterface`): the Node.js serial backend, zero-dependency. Opens
+    the device non-blocking (`O_NONBLOCK`, to avoid the uninterruptible
+    carrier-detect wait that wedges blocking opens on real RNode hardware),
+    configures termios via an inherited-fd `stty` (no macOS `-f`/Linux `-F`
+    flag split), and drives the fd with `readSync`/`writeSync` — one `readSync`
+    per event-loop tick (`EAGAIN` = no data) so a continuously-trickling radio
+    can't starve the loop. Registered as `rnode-serial`. Validated live against
+    an ESP32 RNode (firmware 1.86).
+  - **core** (`src/interfaces/rnode-webserial.js`, `RNodeWebSerialInterface`):
+    the browser backend over the Web Serial API (`navigator.serial`).
+    `SerialPort` already exposes native Web Streams and handles termios
+    internally, so this maps the transport directly — no `stty`/polling.
+- **core**: RNode framebuffer / display API on `RNodeInterface`, porting the
+  Python `enable_external_framebuffer` / `disable_external_framebuffer` /
+  `write_framebuffer` / `display_image` / `read_framebuffer`. The display is
+  64×64 @ 1bpp; `writeFramebuffer(line, data)` writes one 8-byte line at a
+  time, prefixed with the line index and KISS-escaped (the firmware does not
+  accept a whole image in a single frame). `CMD_FB_EXT`/`CMD_FB_READ`/
+  `CMD_FB_WRITE` and the `FB_*` geometry constants are exported on the `KISS`
+  table and as `RNodeInterface` statics. On headless hardware (no display
+  reported) the framebuffer methods are no-ops that log a warning.
+
 ### Security
 Hardening pass from a full security audit of the `core` and `node` packages.
 All findings address untrusted input (peer-supplied wire bytes, anonymous HTTP

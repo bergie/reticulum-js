@@ -1,8 +1,79 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- RNode (LoRa radio) interface — transport-agnostic base (work doc #6): a port
+  of the Python `RNS.Interfaces.RNodeInterface` KISS/RNode protocol.
+  `src/interfaces/rnode.js` (`RNodeInterface`) owns the full protocol — the
+  byte-oriented read-loop state machine, the detect → configure → validate
+  handshake, flow control (`CMD_READY` gating), radio statistics, firmware
+  validation, and on-air bitrate computation. The only transport hook is
+  `_openTransport() → { readable, write, close }`, which a backend subclass
+  overrides (now async, to accommodate Web Serial's `port.open()`). The full
+  KISS command table is exported as a frozen `KISS` object. The Node.js serial
+  backend lives in [`@reticulum/node`](../node).
+- RNode Web Serial backend (`src/interfaces/rnode-webserial.js`,
+  `RNodeWebSerialInterface`): the browser counterpart, over the Web Serial API
+  (`navigator.serial`). `SerialPort` already exposes native Web Streams and
+  handles termios internally, so this maps the transport directly (no
+  `stty`/polling/carrier-detect workaround). Pass a `SerialPort` obtained from
+  a user gesture via `options.serialPort`, or let `_openTransport()` call
+  `requestPort()`. The serial-line flow-control open option is
+  `serialFlowControl` (kept distinct from the base LoRa `flowControl` boolean).
+- RNode framebuffer / display API on `RNodeInterface`, porting the Python
+  `enable_external_framebuffer` / `disable_external_framebuffer` /
+  `write_framebuffer` / `display_image` / `read_framebuffer`. The display is
+  64×64 @ 1bpp; `writeFramebuffer(line, data)` writes one 8-byte line at a
+  time, prefixed with the line index and KISS-escaped (the firmware does not
+  accept a whole image in a single frame). `CMD_FB_EXT`/`CMD_FB_READ`/
+  `CMD_FB_WRITE` and the `FB_*` geometry constants are exported on the `KISS`
+  table and as `RNodeInterface` statics. On headless hardware (no display
+  reported) the framebuffer methods are no-ops that log a warning.
 
 ## [0.4.5] - 2026-07-27
+### Fixed
+- `Resource.accept` now validates the advertised part count `n` before
+  allocating the receiver's `parts` array, closing a single-packet OOM. An
+  attacker could advertise a tiny encrypted size `t` (under the size cap) with a
+  huge `n` and crash the receiver via `new Array(n).fill(null)` in a single
+  RESOURCE_ADV from any peer that had established a link. `n` is now rejected
+  unless it is positive, under an absolute ceiling (`DEFAULT_MAX_PARTS`), no
+  larger than `t` (each part carries at least one byte), and consistent with the
+  negotiated link SDU (both ends share the link MTU) within a one-part margin.
+- The HDLC stream unframer (the default framing for the TCP interface,
+  the standard Reticulum transport) is now a byte-oriented state machine with a
+  capped per-frame accumulator (`maxFrameSize`, default 512 KiB = 2× Python TCP
+  `HW_MTU`), mirroring `kiss-framer.js`. Previously a peer could grow the
+  unframer's buffer without bound by streaming non-FLAG bytes, by opening a
+  frame and never closing it, or by padding a frame past the cap; the oversized
+  frame is now dropped and the unframer resyncs on the next FLAG.
+- `MicroMsgPack` (the parser fed directly with attacker-controlled
+  bytes from LXMF messages, announce `app_data`, resource advertisements and
+  propagation sync) is hardened against three untrusted-input issues: a
+  `__proto__` map key no longer hijacks the decoded object's prototype chain
+  (dangerous keys are stored as plain own data properties via
+  `Object.defineProperty`); nested arrays/maps are capped at a depth of 128 so a
+  tiny but deeply-nested payload can't exhaust the stack; and `_decodeBinary`
+  bounds-checks its length before slicing so a corrupt/malicious bin length is
+  rejected instead of silently returned as a truncated buffer.
+- `Packet.deserialize` now computes the minimum packet length per
+  header type (HEADER_2 needs 35 bytes, not the HEADER_1 floor of 19) before
+  slicing, so a truncated HEADER_2 frame is rejected instead of silently
+  producing a Packet with a short destination hash and an undefined context byte
+  coerced to NONE. It also rejects packets whose hop count has reached
+  `PATHFINDER_M` (128), mirroring Python `Packet.unpack()`'s loop-prevention
+- `Identity.validate` returns `false` on a non-64-byte signature
+  instead of constructing an out-of-bounds view that throws an uncaught
+  RangeError, so the public method fails closed on arbitrary input. Dead
+  `keyData` export removed.
+- `Identity.loadOrGenerate` no longer silently mints a brand-new
+  identity over an existing one. A read error from the storage adapter, or a
+  stored key that is the wrong length or fails to import, now throws (with a
+  loud ERROR log) rather than falling through to generate-and-overwrite — since
+  the identity *is* the node's cryptographic address, silently replacing it
+  would break every peer that has cached the old public key. A genuinely absent
+  key file (the adapter returns `null`) still generates and persists as before.
+- Removed the dead `pkcs7` import from `Token` (Web Crypto's AES-CBC
 
 ## [0.4.4] - 2026-07-24
 ### Fixed
