@@ -56,6 +56,7 @@
   `Destination.cleanKnownRatchets` drops expired entries and ratchets whose
   destination has been forgotten, run once on `Persistor.load`. The persisted
   ratchet record changes from a msgpack array to `{ratchet, received}`.
+- `@reticulum/core` is now also tested on Deno
 
 ## [0.4.5] - 2026-07-27
 ### Fixed
