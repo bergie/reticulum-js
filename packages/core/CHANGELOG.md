@@ -6,6 +6,12 @@
   reference in `RNodeInterface`'s class doc with the bare specifier
   `import("@reticulum/node")`, fixing the JSR
   `relative-package-import` release error.
+- The reconnect backoff timer in `Interface._sleepInterruptible` no longer
+  calls `timer.unref()`. An interface that is actively reconnecting keeps the
+  event loop alive (it is doing real work), and the previous `unref()` made
+  Deno's test runner report the reconnect-loop tests as
+  "Promise resolution is still pending but the event loop has already
+  resolved". `disconnect()` still aborts the in-flight backoff immediately.
 
 ## [0.5.0] - 2026-07-31
 ### Added

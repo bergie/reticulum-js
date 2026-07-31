@@ -598,10 +598,14 @@ export class Interface extends EventTarget {
         signal.removeEventListener("abort", onAbort);
         resolve();
       }, ms);
-      // A background reconnect backoff is daemon-like: it must not keep the
-      // process alive on its own (e.g. after an app has otherwise finished, or
-      // in a test that exercises a failed-connect path without detaching).
-      if (timer && typeof timer.unref === "function") timer.unref();
+      // The backoff timer intentionally keeps the event loop alive. An
+      // interface that is actively reconnecting is doing real work: the
+      // process should not exit while it still has a live transport retrying.
+      // Earlier this was `timer.unref()`'d to be "daemon-like", but that made
+      // Deno's test runner treat the loop as idle and bail out of tests that
+      // `await` the terminal `closed`/`connected` event ("Promise resolution
+      // is still pending but the event loop has already resolved"). Cancelling
+      // via `disconnect()` aborts `signal` and clears the timer regardless.
       const onAbort = () => {
         clearTimeout(timer);
         resolve();
