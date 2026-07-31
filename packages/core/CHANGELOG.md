@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-07-31
 ### Added
 - RNode ID callsign beacon, hard reset, and display read (work doc #6): the
   remaining transport-agnostic protocol pieces of `RNodeInterface`, ported from

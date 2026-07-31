@@ -120,6 +120,141 @@ POSTs, identity key files on disk). No behaviour change for well-formed traffic.
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.5.0] - 2026-07-31
+### Added
+- **core**: RNode ID callsign beacon, hard reset, and display read (work doc #6): the
+  remaining transport-agnostic protocol pieces of `RNodeInterface`, ported from
+  the Python reference.
+  - **ID beacon** — `idInterval`/`idCallsign` options (string or bytes; max 32
+    encoded bytes) make the interface transmit its callsign as a raw KISS
+    `CMD_DATA` frame `idInterval` seconds after its first outbound packet, then
+    again after each subsequent first transmission in a quiet window. The beacon
+    honours flow control (queues behind `CMD_READY`) exactly like an ordinary
+    packet, and transmitting it clears the first-TX timestamp so it re-arms only
+    on the next real packet (Python `first_tx`/`should_id`).
+  - **`hardReset()`** — sends `CMD_RESET 0xF8` and waits 2.25 s for the radio to
+    reboot (Python `hard_reset`).
+  - **`readDisplay()` / `startDisplayUpdates()` / `stopDisplayUpdates()`** — the
+    1024-byte on-device display snapshot via `CMD_DISP_READ` (Python
+    `read_display`), distinct from the 512-byte host-writable framebuffer
+    (`CMD_FB_READ`). Populates `rDisp`/`rDispLatency`; no-op on headless devices.
+  New constants `DISPLAY_READ_SIZE`, `DISPLAY_READ_INTERVAL`, `CALLSIGN_MAX_LEN`
+  join the exported `KISS` table and the `RNodeInterface` statics.
+- **core**: Periodic re-announce scheduler (PROTOCOL-SPEC.md §7.5 / §9.7 —
+  "non-optional": without it transit relays evict the path within minutes and
+  peers can no longer reach you). `Destination.startAnnouncing({ intervalMs })`
+  / `stopAnnouncing()` drive a `setInterval` loop that re-announces on a fixed
+  cadence — the Python reference has no application-destination default, so the
+  default is 30 min (matching Sideband and the manual's desktop recommendation).
+  The first announce fires immediately so the destination is reachable right
+  away; the cadence is clamped to a 60 s floor (sub-minute intervals trigger
+  ingress rate limiting and burn ratchet-ring slots, §9.7); a failed fire is
+  logged and does not stop the loop; re-calling `startAnnouncing` updates the
+  interval without an extra immediate burst. `LXMRouter.startAnnouncing(name,
+  { stampCost, intervalMs })` / `stopAnnouncing()` wrap it for the
+  `lxmf.delivery` destination, replacing the one-shot `announce()` for the
+  common "announce and keep announcing" case.
+- **core**: Interface statistics for observability/UIs. The base `Interface` now carries
+  the Python reference's cumulative byte counters (`rxb`/`txb`, counted as the
+  on-the-wire RNS packet length, matching `self.rxb`/`self.txb`) and a
+  `created` epoch timestamp, plus a `getStats()` snapshot returning
+  `{ name, online, bitrate, rxb, txb, created }`. Apps derive a transfer rate
+  by sampling `rxb`/`txb` over time. Counting is wired into every interface's
+  single TX/RX chokepoint (`_recordOutbound` / `_dispatchPacket` helpers), so
+  it covers both transport-routed and direct `send()` traffic. RNode keeps its
+  own IFAC-aware counting.
+- **core**: RNode radio telemetry is now fully parsed and exposed. `CMD_STAT_CHTM`
+  previously discarded bytes 0–7 and only kept signal readings; it now also
+  populates `rAirtimeShort`/`rAirtimeLong` (transmit airtime, %) and
+  `rChannelLoadShort`/`rChannelLoadLong` (channel utilization, %) — the
+  channel-utilization figure apps want to show. `CMD_STAT_PHYPRM` now
+  populates the pre-amble and CSMA timing fields (`rPreambleSymbols`,
+  `rPreambleTimeMs`, `rCsmaSlotTimeMs`, `rCsmaDifsMs`), the new
+  `CMD_STAT_CSMA` handler populates the contention window
+  (`rCsmaCwBand`/`rCsmaCwMin`/`rCsmaCwMax`), and the echoed
+  `CMD_ST_ALOCK`/`CMD_LT_ALOCK` limits are stored as `rStAlock`/`rLtAlock`.
+  `RNodeInterface.getStats()` extends the base snapshot with all of this plus
+  signal quality (RSSI/SNR/Q), battery and temperature.
+- **core**: RNode (LoRa radio) interface — transport-agnostic base (work doc #6): a port
+  of the Python `RNS.Interfaces.RNodeInterface` KISS/RNode protocol.
+  `src/interfaces/rnode.js` (`RNodeInterface`) owns the full protocol — the
+  byte-oriented read-loop state machine, the detect → configure → validate
+  handshake, flow control (`CMD_READY` gating), radio statistics, firmware
+  validation, and on-air bitrate computation. The only transport hook is
+  `_openTransport() → { readable, write, close }`, which a backend subclass
+  overrides (now async, to accommodate Web Serial's `port.open()`). The full
+  KISS command table is exported as a frozen `KISS` object. The Node.js serial
+  backend lives in [`@reticulum/node`](../node).
+- **core**: RNode Web Serial backend (`src/interfaces/rnode-webserial.js`,
+  `RNodeWebSerialInterface`): the browser counterpart, over the Web Serial API
+  (`navigator.serial`). `SerialPort` already exposes native Web Streams and
+  handles termios internally, so this maps the transport directly (no
+  `stty`/polling/carrier-detect workaround). Pass a `SerialPort` obtained from
+  a user gesture via `options.serialPort`, or let `_openTransport()` call
+  `requestPort()`. The serial-line flow-control open option is
+  `serialFlowControl` (kept distinct from the base LoRa `flowControl` boolean).
+- **core**: RNode framebuffer / display API on `RNodeInterface`, porting the Python
+  `enable_external_framebuffer` / `disable_external_framebuffer` /
+  `write_framebuffer` / `display_image` / `read_framebuffer`. The display is
+  64×64 @ 1bpp; `writeFramebuffer(line, data)` writes one 8-byte line at a
+  time, prefixed with the line index and KISS-escaped (the firmware does not
+  accept a whole image in a single frame). `CMD_FB_EXT`/`CMD_FB_READ`/
+  `CMD_FB_WRITE` and the `FB_*` geometry constants are exported on the `KISS`
+  table and as `RNodeInterface` statics. On headless hardware (no display
+  reported) the framebuffer methods are no-ops that log a warning.
+- **core**: Owned ratchet private-key rings are now persisted across restarts (§7.4),
+  fixing opportunistic-delivery decryption failures after a restart. A local
+  `SINGLE` destination with ratchets enabled (`Destination.enableRatchets`,
+  used by `LXMRouter` for `lxmf.delivery`) writes its private-key ring — signed
+  by the destination's identity — to the `StorageAdapter` on every rotation and
+  reloads it (signature-verified) on `enableRatchets`, so messages encrypted to
+  a pre-restart ratchet still decrypt. The `StorageAdapter` contract gains a
+  secret-slot pair `loadOwnedRatchets`/`saveOwnedRatchets` (backends MUST store
+  owner-only, like `loadKey`/`saveKey`); `MemoryStorageAdapter` implements it
+  in-memory. On a decrypt failure the owned ring is reloaded from storage and
+  retried once (handles a concurrent process having rotated). The persisted
+  layout mirrors `RNS.Destination._persist_ratchets`:
+  `msgpack({ signature, ratchets: msgpack([[priv32, pub32], ...]) })`.
+  `Destination.MAX_RATCHETS` is raised 128 → 512 to match the Python
+  `RATCHET_COUNT`.
+- **core**: Learned peer ratchets (`Destination.knownRatchets`, the *public* keys used
+  to encrypt outbound) now retain only the single newest ratchet per
+  destination with a 30-day expiry, matching `RNS.Identity` (`RATCHET_EXPIRY`,
+  `_remember_ratchet`, `_clean_ratchets`). Previously every distinct ratchet
+  heard was accumulated into an ever-growing, never-expiring ring (unbounded
+  memory/disk growth, stale keys never dropped). A newer announce overwrites;
+  re-announcing the same ratchet is a no-op (the receipt time is not
+  refreshed); `Destination.recallRatchets` is replaced by `recallRatchet`
+  (single value, drops expired entries on read); and the new
+  `Destination.cleanKnownRatchets` drops expired entries and ratchets whose
+  destination has been forgotten, run once on `Persistor.load`. The persisted
+  ratchet record changes from a msgpack array to `{ratchet, received}`.
+- **core**: `@reticulum/core` is now also tested on Deno
+- **node**: Per-interface traffic counting for the Node.js interfaces. `TCPClientInterface`,
+  `LocalClientInterface`, `HTTPClientInterface`, `HTTPServerExchangeClient` and
+  the `AutoInterface` spawned peers now record cumulative `rxb`/`txb` byte
+  counters (and expose `getStats()`) inherited from the base `Interface`, so
+  apps can show transfer rates for any transport. See the `@reticulum/core`
+  changelog for the base-class statistics API.
+- **node**: RNode serial backend (`src/interfaces/rnode-serial.js`,
+  `RNodeSerialInterface`, work doc #6): the Node.js serial transport for the
+  `RNodeInterface` base (in [`@reticulum/core`](../core)). Zero-dependency: it
+  opens the device non-blocking (`O_NONBLOCK` — a blocking `open()` wedges in
+  uninterruptible sleep waiting for carrier detect on real RNode hardware),
+  configures termios via an inherited-fd `stty` (so `stty` never re-opens the
+  device, avoiding both the carrier wait and the macOS `-f`/Linux `-F` flag
+  split), and drives the fd with `readSync`/`writeSync` — one `readSync` per
+  event-loop tick (treating `EAGAIN` as no data) so a continuously-trickling
+  radio can't starve the loop. Registered in the interface registry as
+  `rnode-serial`; re-exported from the package index (also as `RNodeInterface`).
+  Validated live against an ESP32 RNode (firmware 1.86).
+- **node**: `FileStorageAdapter` implements the new secret-slot pair
+  `loadOwnedRatchets`/`saveOwnedRatchets` for a local destination's owned
+  ratchet private-key ring, written at `<dir>/owned_ratchets/<hash>.key`. Like
+  `identity.key`, the file is mode `0o600` and its directory `0o700`, so the
+  secret key material is owner-only regardless of the process umask.
+- **node**: `@reticulum/node` is now also tested on Deno
+
 ## [0.4.5] - 2026-07-27
 
 ## [0.4.4] - 2026-07-24

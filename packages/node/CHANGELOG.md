@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.5.0] - 2026-07-31
 ### Added
 - Per-interface traffic counting for the Node.js interfaces. `TCPClientInterface`,
   `LocalClientInterface`, `HTTPClientInterface`, `HTTPServerExchangeClient` and
