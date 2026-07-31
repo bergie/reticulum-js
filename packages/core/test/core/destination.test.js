@@ -268,3 +268,178 @@ test("Destination.cleanKnownRatchets drops expired and unknown-destination entri
   assert.ok(!knownRatchets.has(expiredHash));
   assert.ok(!knownRatchets.has(unknownHash));
 });
+
+// --- periodic re-announce scheduler (PROTOCOL-SPEC.md §7.5 / §9.7) ----------
+
+/**
+ * Builds a SINGLE IN destination with a capturing broadcast fake layer.
+ * @returns {Promise<{ dest: Destination, captured: import("../../src/core/packet.js").Packet[] }>}>
+ */
+async function makeAnnounceableDest() {
+  const identity = await Identity.generate();
+  /** @type {import("../../src/core/packet.js").Packet[]} */
+  const captured = [];
+  /** @type {any} */
+  const fakeLayer = { broadcast: (pkt) => captured.push(pkt) };
+  const dest = await Destination.IN(
+    "myapp",
+    DestType.SINGLE,
+    identity,
+    /** @type {any} */ (fakeLayer),
+  );
+  return { dest, captured };
+}
+
+/** Waits ms milliseconds. */
+const wait = (/** @type {number} */ ms) =>
+  new Promise((r) => setTimeout(r, ms));
+
+test("startAnnouncing fires an immediate announce then repeats periodically", async () => {
+  // Allow tiny intervals for the test (the §9.7 60 s floor would otherwise
+  // make periodic fires unobservable).
+  const originalMin = Destination.MIN_ANNOUNCE_INTERVAL_MS;
+  Destination.MIN_ANNOUNCE_INTERVAL_MS = 1;
+  /** @type {Destination|null} */
+  let dest = null;
+  /** @type {any[]} */
+  let captured = [];
+  try {
+    ({ dest, captured } = await makeAnnounceableDest());
+    dest.startAnnouncing({ intervalMs: 5 });
+    assert.ok(dest.isAnnouncing());
+    await wait(10);
+    assert.ok(captured.length >= 1, "at least the immediate announce landed");
+    await wait(50);
+    assert.ok(
+      captured.length >= 2,
+      `expected periodic fires, got ${captured.length}`,
+    );
+  } finally {
+    dest?.stopAnnouncing();
+    Destination.MIN_ANNOUNCE_INTERVAL_MS = originalMin;
+  }
+});
+
+test("stopAnnouncing halts the periodic loop", async () => {
+  const originalMin = Destination.MIN_ANNOUNCE_INTERVAL_MS;
+  Destination.MIN_ANNOUNCE_INTERVAL_MS = 1;
+  /** @type {Destination|null} */
+  let dest = null;
+  /** @type {any[]} */
+  let captured = [];
+  try {
+    ({ dest, captured } = await makeAnnounceableDest());
+    dest.startAnnouncing({ intervalMs: 5 });
+    await wait(10);
+    dest.stopAnnouncing();
+    assert.ok(!dest.isAnnouncing());
+    const countAtStop = captured.length;
+    await wait(50);
+    assert.strictEqual(
+      captured.length,
+      countAtStop,
+      "no further announces after stop",
+    );
+  } finally {
+    dest?.stopAnnouncing();
+    Destination.MIN_ANNOUNCE_INTERVAL_MS = originalMin;
+  }
+});
+
+test("startAnnouncing clamps sub-minute intervals to the §9.7 floor", async () => {
+  /** @type {Destination|null} */
+  let dest = null;
+  try {
+    ({ dest } = await makeAnnounceableDest());
+    // 1 s is below the default 60 s floor.
+    dest.startAnnouncing({ intervalMs: 1000 });
+    assert.strictEqual(
+      dest.announceIntervalMs,
+      Destination.MIN_ANNOUNCE_INTERVAL_MS,
+    );
+    assert.ok(dest.isAnnouncing());
+  } finally {
+    dest?.stopAnnouncing();
+  }
+});
+
+test("re-calling startAnnouncing updates the cadence without an extra immediate burst", async () => {
+  const originalMin = Destination.MIN_ANNOUNCE_INTERVAL_MS;
+  Destination.MIN_ANNOUNCE_INTERVAL_MS = 1;
+  /** @type {Destination|null} */
+  let dest = null;
+  /** @type {any[]} */
+  let captured = [];
+  try {
+    ({ dest, captured } = await makeAnnounceableDest());
+    dest.startAnnouncing({ intervalMs: 5 });
+    await wait(10);
+    const afterFirst = captured.length;
+    // Update the cadence while running — must not emit an extra immediate fire.
+    dest.startAnnouncing({ intervalMs: 5 });
+    await wait(2);
+    assert.strictEqual(
+      captured.length,
+      afterFirst,
+      "restart must not burst an immediate announce",
+    );
+    assert.strictEqual(dest.announceIntervalMs, 5);
+  } finally {
+    dest?.stopAnnouncing();
+    Destination.MIN_ANNOUNCE_INTERVAL_MS = originalMin;
+  }
+});
+
+test("a failed periodic announce does not stop the loop", async () => {
+  const originalMin = Destination.MIN_ANNOUNCE_INTERVAL_MS;
+  Destination.MIN_ANNOUNCE_INTERVAL_MS = 1;
+  /** @type {Destination|null} */
+  let dest = null;
+  /** @type {any[]} */
+  let captured = [];
+  try {
+    ({ dest, captured } = await makeAnnounceableDest());
+    // Force every announce to fail by making broadcast throw.
+    /** @type {any} */ (dest.interfaceLayer).broadcast = () => {
+      throw new Error("transient broadcast failure");
+    };
+    dest.startAnnouncing({ intervalMs: 5 });
+    await wait(20);
+    assert.ok(dest.isAnnouncing(), "loop survives repeated failed announces");
+    assert.strictEqual(captured.length, 0, "no announce landed while failing");
+
+    // Restore broadcast; subsequent periodic fires must now succeed.
+    /** @type {any} */ (dest.interfaceLayer).broadcast = (
+      /** @type {any} */ pkt,
+    ) => captured.push(pkt);
+    await wait(20);
+    assert.ok(captured.length >= 1, "announces resumed after recovery");
+  } finally {
+    dest?.stopAnnouncing();
+    Destination.MIN_ANNOUNCE_INTERVAL_MS = originalMin;
+  }
+});
+
+test("startAnnouncing throws without an identity or interface layer", async () => {
+  const identity = await Identity.generate();
+  const dest = new Destination(
+    "myapp",
+    Direction.IN,
+    DestType.SINGLE,
+    identity,
+    null,
+  );
+  await dest._computeHashes();
+  assert.throws(() => dest.startAnnouncing(), /not bound to an RNS instance/);
+
+  // A PLAIN destination has no identity.
+  /** @type {any} */
+  const fakeLayer = { broadcast: () => {} };
+  const plainDest = await Destination.IN(
+    "myapp",
+    DestType.PLAIN,
+    null,
+    /** @type {any} */ (fakeLayer),
+  );
+  assert.throws(() => plainDest.startAnnouncing(), /requires an identity/);
+});

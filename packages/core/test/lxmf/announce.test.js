@@ -11,6 +11,7 @@
  */
 import assert from "node:assert";
 import test from "node:test";
+import { Destination } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import {
   buildAnnounceAppData,
@@ -85,6 +86,44 @@ test("LXMRouter.announce with a Unicode name round-trips losslessly", async () =
   const parsed = parseAnnounceAppData(result.appData);
   assert.ok(parsed);
   assert.strictEqual(parsed.displayName, name);
+});
+
+test("LXMRouter.startAnnouncing schedules periodic delivery announces; stopAnnouncing halts them", async () => {
+  // Lower the §9.7 floor so the periodic cadence is observable in a test.
+  const originalMin = Destination.MIN_ANNOUNCE_INTERVAL_MS;
+  Destination.MIN_ANNOUNCE_INTERVAL_MS = 1;
+  /** @type {LXMRouter|null} */
+  let router = null;
+  try {
+    const identity = await Identity.generate();
+    /** @type {import("../../src/core/packet.js").Packet[]} */
+    const captured = [];
+    router = new LXMRouter(identity, mockRns(captured));
+    await router.init();
+
+    await router.startAnnouncing("TestNode", { stampCost: 4, intervalMs: 5 });
+    // The immediate fire is async; let it land.
+    await new Promise((r) => setTimeout(r, 10));
+    assert.ok(captured.length >= 1, "immediate announce on start");
+
+    // The first announce carries the §4.3 app_data we set.
+    const result = await Identity.validateAnnounce(
+      /** @type {Uint8Array} */ (captured[0].destinationHash),
+      captured[0].contextFlag,
+      captured[0].payload,
+    );
+    assert.ok(result);
+    const parsed = parseAnnounceAppData(result.appData);
+    assert.ok(parsed);
+    assert.strictEqual(parsed.displayName, "TestNode");
+    assert.strictEqual(parsed.stampCost, 4);
+
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(captured.length >= 2, "periodic announces fired");
+  } finally {
+    router?.stopAnnouncing();
+    Destination.MIN_ANNOUNCE_INTERVAL_MS = originalMin;
+  }
 });
 
 test("LXMRouter fires a `peer` event with decoded app_data on inbound announce", async () => {

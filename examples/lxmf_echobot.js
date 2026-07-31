@@ -54,11 +54,18 @@ async function startEchoBot() {
     `Bot Destination Hash: ${toHex(lxmf.deliveryDest.destinationHash)}`,
   );
 
-  // Announce the bot's presence to the mesh. LXMRouter.announce attaches the
-  // §4.3 msgpack app_data (display name as bin8 + stamp cost + capability
-  // list) so peers like Sideband/Nomadnet display our name correctly.
-  await lxmf.announce(`JS echo bot (${data.version})`);
-  console.log("Bot announced to the mesh. Listening for messages...");
+  // Announce the bot's presence to the mesh and keep the cached path fresh by
+  // re-announcing periodically (PROTOCOL-SPEC.md §9.7 — without a re-announce
+  // loop, transit relays evict our path within minutes and peers can no longer
+  // reach us). LXMRouter.startAnnouncing attaches the §4.3 msgpack app_data
+  // (display name as bin8 + stamp cost + capability list) so peers like
+  // Sideband/Nomadnet display our name correctly, fires the first announce
+  // immediately, and repeats on the default 30 min cadence. Call
+  // lxmf.stopAnnouncing() to halt the loop.
+  await lxmf.startAnnouncing(`JS echo bot (${data.version})`);
+  console.log(
+    "Bot announced to the mesh and re-announcing periodically. Listening for messages...",
+  );
 
   // --------------------------------------------------------------------------
   // Propagation node role (store-and-forward, LXMF.md §5.8)

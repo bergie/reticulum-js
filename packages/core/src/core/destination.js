@@ -155,6 +155,25 @@ export class Destination extends EventTarget {
   static RATCHET_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
   /**
+   * Default periodic re-announce interval. The Python reference has no
+   * upstream-mandated default for application destinations — its
+   * `Transport.mgmt_announce_interval` (2 h) and interface-discovery cadence
+   * (6 h) are transport-internal, not what end-user destinations announce at.
+   * PROTOCOL-SPEC.md §9.7 recommends 30–60 min for a desktop client and notes
+   * Sideband emits roughly every 30 min; 30 min keeps cached mesh paths fresh
+   * against transit-relay TTLs without dominating airtime.
+   */
+  static DEFAULT_ANNOUNCE_INTERVAL_MS = 30 * 60 * 1000;
+
+  /**
+   * Floor below which a requested interval is clamped. PROTOCOL-SPEC.md §9.7:
+   * "AVOID < 60 s — short intervals trigger ingress rate limiting (§4.5 step
+   * 8) and burn ratchet-ring slots without benefit". Sub-minute intervals are
+   * clamped to this value with a warning rather than rejected outright.
+   */
+  static MIN_ANNOUNCE_INTERVAL_MS = 60 * 1000;
+
+  /**
    * Low-level constructor. Prefer the static factories (`Destination.IN`,
    * `Destination.OUT`, etc.) which also compute the destination hashes.
    * @param {string} name - The application name.
@@ -201,6 +220,13 @@ export class Destination extends EventTarget {
     this.ratchets = null;
     this.latestRatchetTime = 0;
     this.ratchetInterval = Destination.RATCHET_INTERVAL_MS;
+
+    // §9.7 periodic re-announce scheduler state. `setInterval`-driven; the
+    // loop survives individual announce failures so a transient crypto /
+    // broadcast error doesn't permanently silence the destination.
+    /** @type {ReturnType<typeof setInterval>|null} */
+    this._announceTimer = null;
+    this._announceIntervalMs = Destination.DEFAULT_ANNOUNCE_INTERVAL_MS;
   }
 
   /**
@@ -233,6 +259,115 @@ export class Destination extends EventTarget {
    */
   async announcePathResponse() {
     await this._emitAnnounce(ContextType.PATH_RESPONSE);
+  }
+
+  /**
+   * Whether the periodic re-announce loop is currently running.
+   * @returns {boolean}
+   */
+  isAnnouncing() {
+    return this._announceTimer !== null;
+  }
+
+  /**
+   * The active re-announce interval in milliseconds. This is the default
+   * ({@link DEFAULT_ANNOUNCE_INTERVAL_MS}) until {@link startAnnouncing} is
+   * called with an explicit `intervalMs`, after which it reflects the
+   * (clamped) requested value.
+   * @returns {number}
+   */
+  get announceIntervalMs() {
+    return this._announceIntervalMs;
+  }
+
+  /**
+   * Starts periodically re-announcing this destination so cached mesh paths
+   * stay fresh (PROTOCOL-SPEC.md §7.5 / §9.7 — "non-optional": without it,
+   * transit relays evict the path within minutes and peers can no longer
+   * reach you).
+   *
+   * The first announce fires immediately (so the destination becomes
+   * reachable as soon as the loop starts), then repeats every `intervalMs`.
+   * Each fire calls {@link announce}; a failed fire is logged and does not
+   * stop the loop.
+   *
+   * Calling this while the loop is already running updates the cadence: the
+   * existing timer is cleared and a new one armed at the (possibly new)
+   * interval, without emitting an extra immediate announce.
+   *
+   * `intervalMs` defaults to {@link DEFAULT_ANNOUNCE_INTERVAL_MS} and is
+   * clamped to {@link MIN_ANNOUNCE_INTERVAL_MS} (sub-minute intervals trigger
+   * ingress rate limiting and waste airtime — §9.7).
+   *
+   * @param {Object} [options]
+   * @param {number} [options.intervalMs] Cadence in ms (clamped to the floor).
+   * @returns {void}
+   */
+  startAnnouncing(options = {}) {
+    if (!this.identity) {
+      throw new Error("Destination requires an identity to announce.");
+    }
+    if (!this.interfaceLayer) {
+      throw new Error("Destination not bound to an RNS instance.");
+    }
+
+    const requested = options.intervalMs ?? this._announceIntervalMs;
+    if (requested < Destination.MIN_ANNOUNCE_INTERVAL_MS) {
+      log(
+        "Destination",
+        `Requested announce interval ${requested}ms is below the ${Destination.MIN_ANNOUNCE_INTERVAL_MS}ms floor (§9.7); clamping`,
+        LogLevel.WARNING,
+      );
+    }
+    this._announceIntervalMs = Math.max(
+      requested,
+      Destination.MIN_ANNOUNCE_INTERVAL_MS,
+    );
+
+    const wasRunning = this._announceTimer !== null;
+    if (this._announceTimer) {
+      clearInterval(this._announceTimer);
+      this._announceTimer = null;
+    }
+    // Emit the first announce only on a fresh start, so updating the cadence
+    // via a second startAnnouncing() call doesn't burst extra announces.
+    if (!wasRunning) {
+      this._scheduledAnnounce();
+    }
+    this._announceTimer = setInterval(
+      () => this._scheduledAnnounce(),
+      this._announceIntervalMs,
+    );
+    log(
+      "Destination",
+      `Periodic re-announce every ${this._announceIntervalMs}ms`,
+      LogLevel.NOTICE,
+    );
+  }
+
+  /**
+   * Stops the periodic re-announce loop started by {@link startAnnouncing}.
+   * Safe to call when not running (no-op).
+   */
+  stopAnnouncing() {
+    if (this._announceTimer) {
+      clearInterval(this._announceTimer);
+      this._announceTimer = null;
+      log("Destination", "Periodic re-announce stopped", LogLevel.NOTICE);
+    }
+  }
+
+  /**
+   * One periodic-announce tick. Errors are caught and logged so a transient
+   * failure (e.g. no interface attached yet) doesn't tear down the loop.
+   * @private
+   */
+  async _scheduledAnnounce() {
+    try {
+      await this.announce();
+    } catch (/** @type {any} */ e) {
+      log("Destination", `Scheduled announce failed: ${e}`, LogLevel.ERROR);
+    }
   }
 
   /**

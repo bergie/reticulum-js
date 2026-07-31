@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 ### Added
+- Periodic re-announce scheduler (PROTOCOL-SPEC.md §7.5 / §9.7 —
+  "non-optional": without it transit relays evict the path within minutes and
+  peers can no longer reach you). `Destination.startAnnouncing({ intervalMs })`
+  / `stopAnnouncing()` drive a `setInterval` loop that re-announces on a fixed
+  cadence — the Python reference has no application-destination default, so the
+  default is 30 min (matching Sideband and the manual's desktop recommendation).
+  The first announce fires immediately so the destination is reachable right
+  away; the cadence is clamped to a 60 s floor (sub-minute intervals trigger
+  ingress rate limiting and burn ratchet-ring slots, §9.7); a failed fire is
+  logged and does not stop the loop; re-calling `startAnnouncing` updates the
+  interval without an extra immediate burst. `LXMRouter.startAnnouncing(name,
+  { stampCost, intervalMs })` / `stopAnnouncing()` wrap it for the
+  `lxmf.delivery` destination, replacing the one-shot `announce()` for the
+  common "announce and keep announcing" case.
 - Interface statistics for observability/UIs. The base `Interface` now carries
   the Python reference's cumulative byte counters (`rxb`/`txb`, counted as the
   on-the-wire RNS packet length, matching `self.rxb`/`self.txb`) and a

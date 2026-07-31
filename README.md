@@ -29,7 +29,7 @@ The web platform has a very strong commitment and tradition for backwards compat
 
 ## Status
 
-Early stages, but we are able to send and receive LXMF messages, and make NomadNet page requests.
+Early stages, but we are able to send and receive LXMF messages, and make and serve NomadNet page requests.
 
 At this point the aim is for JavaScript applications to be able to be _leaf nodes_ in a Reticulum mesh, meaning that they will not route traffic for others. Full capability of acting as a _transport node_ would be great to have and is on the roadmap.
 

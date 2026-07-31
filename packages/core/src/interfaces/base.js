@@ -598,6 +598,10 @@ export class Interface extends EventTarget {
         signal.removeEventListener("abort", onAbort);
         resolve();
       }, ms);
+      // A background reconnect backoff is daemon-like: it must not keep the
+      // process alive on its own (e.g. after an app has otherwise finished, or
+      // in a test that exercises a failed-connect path without detaching).
+      if (timer && typeof timer.unref === "function") timer.unref();
       const onAbort = () => {
         clearTimeout(timer);
         resolve();
