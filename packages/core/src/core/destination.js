@@ -227,6 +227,11 @@ export class Destination extends EventTarget {
     /** @type {ReturnType<typeof setInterval>|null} */
     this._announceTimer = null;
     this._announceIntervalMs = Destination.DEFAULT_ANNOUNCE_INTERVAL_MS;
+    // Monotonic token bumped on every (re)start/stop so an announce whose
+    // cadence was superseded while it was mid-flight (between a setInterval
+    // tick and its eventual broadcast) can detect it is stale and abort before
+    // going on air. Keeps restart/stop from emitting a straggler announce.
+    this._announceGeneration = 0;
   }
 
   /**
@@ -288,8 +293,10 @@ export class Destination extends EventTarget {
    *
    * The first announce fires immediately (so the destination becomes
    * reachable as soon as the loop starts), then repeats every `intervalMs`.
-   * Each fire calls {@link announce}; a failed fire is logged and does not
-   * stop the loop.
+   * Each tick emits an announce (context NONE); a failed tick is logged and
+   * does not stop the loop. An announce whose cadence is superseded while it
+   * is mid-flight (restart/stop) is dropped before broadcasting, so updating
+   * the cadence never emits a straggler.
    *
    * Calling this while the loop is already running updates the cadence: the
    * existing timer is cleared and a new one armed at the (possibly new)
@@ -329,6 +336,11 @@ export class Destination extends EventTarget {
       clearInterval(this._announceTimer);
       this._announceTimer = null;
     }
+    // Bump the generation first: any announce still in flight from the
+    // previous cadence is now stale and will abort before broadcasting, and
+    // the fresh-start immediate fire (and all future ticks) stamp themselves
+    // with the new generation.
+    this._announceGeneration++;
     // Emit the first announce only on a fresh start, so updating the cadence
     // via a second startAnnouncing() call doesn't burst extra announces.
     if (!wasRunning) {
@@ -353,6 +365,9 @@ export class Destination extends EventTarget {
     if (this._announceTimer) {
       clearInterval(this._announceTimer);
       this._announceTimer = null;
+      // Invalidate any announce still in flight so a tick that fired just
+      // before stop doesn't broadcast after we've supposedly halted.
+      this._announceGeneration++;
       log("Destination", "Periodic re-announce stopped", LogLevel.NOTICE);
     }
   }
@@ -363,8 +378,12 @@ export class Destination extends EventTarget {
    * @private
    */
   async _scheduledAnnounce() {
+    // Stamp this tick with the generation active when it fired; if the cadence
+    // is restarted or stopped while the announce is mid-flight, _emitAnnounce
+    // sees a mismatch and drops it instead of emitting a straggler.
+    const generation = this._announceGeneration;
     try {
-      await this.announce();
+      await this._emitAnnounce(ContextType.NONE, generation);
     } catch (/** @type {any} */ e) {
       log("Destination", `Scheduled announce failed: ${e}`, LogLevel.ERROR);
     }
@@ -375,10 +394,17 @@ export class Destination extends EventTarget {
    * Shared by {@link announce} (NONE) and {@link announcePathResponse}
    * (PATH_RESPONSE).
    *
+   * The periodic loop passes the generation token active when its tick fired;
+   * if the cadence has since been restarted or stopped, the in-flight announce
+   * aborts right before broadcasting so restart/stop never emit a straggler.
+   * Direct ({@link announce} / {@link announcePathResponse}) callers omit it
+   * and always emit.
+   *
    * @param {number} contextByte
+   * @param {number} [generation] Generation token (periodic path only).
    * @private
    */
-  async _emitAnnounce(contextByte) {
+  async _emitAnnounce(contextByte, generation) {
     if (!this.interfaceLayer)
       throw new Error("Destination not bound to an RNS instance.");
 
@@ -471,6 +497,17 @@ export class Destination extends EventTarget {
       );
     }
 
+    // If this fire was scheduled by the periodic loop and its cadence has
+    // since been restarted or stopped, drop the straggler before it goes on
+    // air — the new loop (if any) emits on its own schedule.
+    if (generation !== undefined && generation !== this._announceGeneration) {
+      log(
+        "Destination",
+        "Dropping stale in-flight announce (cadence restarted/stopped)",
+        LogLevel.DEBUG,
+      );
+      return;
+    }
     this.interfaceLayer.broadcast(announcePacket);
   }
 

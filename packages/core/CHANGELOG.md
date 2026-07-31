@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 ### Fixed
+- Restarting or stopping `Destination.startAnnouncing` no longer emits a
+  "straggler" announce. Previously, a periodic tick that fired just before a
+  restart/stop could still broadcast after the cadence was replaced (the
+  announce is async, with `await`s for `getPublicKey`/`sign` between the tick
+  and the broadcast), which made the restart-burst test flaky (`3 !== 2`) and
+  violated the documented "no extra immediate announce" contract. A monotonic
+  generation token is now bumped on every (re)start/stop; `_emitAnnounce`
+  stamps each periodic fire with the token active when it ticked and aborts
+  right before broadcasting if the cadence has since changed. Direct
+  `announce()` / `announcePathResponse()` calls are unaffected (always emit).
 - Replaced the cross-package relative `{@link import("../../../node/…")}`
   reference in `RNodeInterface`'s class doc with the bare specifier
   `import("@reticulum/node")`, fixing the JSR
