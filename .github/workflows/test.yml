@@ -21,9 +21,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-deno@v2
+      - uses: denoland/setup-deno@v2
         with:
           deno-version: 'v2.x'
           cache: true
-      - run: deno ci
-      - run: deno test:deno
+      - run: deno install
+      - run: deno run test:deno
