@@ -25,6 +25,7 @@
   ratchet private-key ring, written at `<dir>/owned_ratchets/<hash>.key`. Like
   `identity.key`, the file is mode `0o600` and its directory `0o700`, so the
   secret key material is owner-only regardless of the process umask.
+- `@reticulum/node` is now also tested on Deno
 
 ## [0.4.5] - 2026-07-27
 - The HTTP POST exchange server (the PHP-router replacement, listening
