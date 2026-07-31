@@ -32,13 +32,14 @@ Every API interface needs to have TypeScript definitions in JsDoc format. Run `n
 
 ## Tests
 
-We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should recide in corresponding file under `test` folder, so that for instance tests for Identity (implementation `packages/core/src/core/identity.js` are in `packages/core/test/core/identity.js`.
+We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should recide in corresponding file under `test` folder, so that for instance tests for Identity (implementation `packages/core/src/core/identity.js` are in `packages/core/test/core/identity.test.js`.
 
 All tests should be verified against the Python reference implementation to make sure we are testing Reticulum compatibility instead of just quirks of our local implementation.
 
 In the end of implementing something, we need to ensure the whole suite works by:
 * Running tests with Node.js (`npm test`)
-* Running tests with Deno (`npm run test:deno`)
+* Running tests with Deno (`npm run test:deno`) if `deno` command is available on the system
+* Running tests with Bun (`npm run test:bun`) if `bun` command is available on the system
 
 ## Dependencies
 
