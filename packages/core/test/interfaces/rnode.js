@@ -366,6 +366,125 @@ test("stats commands update radio state", async () => {
   await iface.disconnect();
 });
 
+test("CMD_STAT_CHTM reports airtime, channel load and signal telemetry", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+
+  // 11-byte channel-time report (Python CMD_STAT_CHTM):
+  //   ats=1234 (12.34%), atl=5678 (56.78%), cus=910 (9.10%), cul=1234 (12.34%)
+  //   crs = current rssi byte, nfl = noise floor byte, ntf = interference
+  // RSSI bytes are offset by RSSI_OFFSET; interference 0xff means none.
+  const chm = [
+    (1234 >> 8) & 0xff,
+    1234 & 0xff, // ats
+    (5678 >> 8) & 0xff,
+    5678 & 0xff, // atl
+    (910 >> 8) & 0xff,
+    910 & 0xff, // cus
+    (1234 >> 8) & 0xff,
+    1234 & 0xff, // cul
+    -50 + C.RSSI_OFFSET, // crs  (current rssi -50 dBm)
+    -110 + C.RSSI_OFFSET, // nfl  (noise floor -110 dBm)
+    0xff, // ntf  (no interference)
+  ];
+  iface.push(cmdFrame(C.CMD_STAT_CHTM, chm));
+  await waitFor(() => iface.rAirtimeShort !== 0);
+
+  assert.equal(iface.rAirtimeShort, 12.34);
+  assert.equal(iface.rAirtimeLong, 56.78);
+  assert.equal(iface.rChannelLoadShort, 9.1);
+  assert.equal(iface.rChannelLoadLong, 12.34);
+  assert.equal(iface.rCurrentRssi, -50);
+  assert.equal(iface.rNoiseFloor, -110);
+  assert.equal(iface.rInterference, null);
+  await iface.disconnect();
+});
+
+test("CMD_STAT_PHYPRM reports symbol/pre-amble/CSMA timing", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+
+  // 12-byte physical-parameters report (Python CMD_STAT_PHYPRM).
+  const phy = [
+    6,
+    136, // lst = 1672 → 1.672 ms
+    3,
+    232, // lsr = 1000 baud
+    0,
+    8, // prs = 8 pre-amble symbols
+    0,
+    13, // prt = 13 ms
+    0,
+    5, // cst = 5 ms CSMA slot time
+    0,
+    10, // dft = 10 ms DIFS
+  ];
+  iface.push(cmdFrame(C.CMD_STAT_PHYPRM, phy));
+  await waitFor(() => iface.rPreambleSymbols !== null);
+
+  assert.equal(iface.rSymbolTimeMs, 1.672);
+  assert.equal(iface.rSymbolRate, 1000);
+  assert.equal(iface.rPreambleSymbols, 8);
+  assert.equal(iface.rPreambleTimeMs, 13);
+  assert.equal(iface.rCsmaSlotTimeMs, 5);
+  assert.equal(iface.rCsmaDifsMs, 10);
+  await iface.disconnect();
+});
+
+test("CMD_STAT_CSMA reports the contention window", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+
+  iface.push(cmdFrame(C.CMD_STAT_CSMA, [3, 31, 255]));
+  await waitFor(() => iface.rCsmaCwBand !== null);
+
+  assert.equal(iface.rCsmaCwBand, 3);
+  assert.equal(iface.rCsmaCwMin, 31);
+  assert.equal(iface.rCsmaCwMax, 255);
+  await iface.disconnect();
+});
+
+test("CMD_ST/LT_ALOCK echoes are stored as percent", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+
+  // 2-byte airtime limits, scaled by 100 (Python stores at/100.0).
+  iface.push(
+    new Uint8Array([
+      ...cmdFrame(C.CMD_ST_ALOCK, [0x03, 0xe8]), // 1000 → 10%
+      ...cmdFrame(C.CMD_LT_ALOCK, [0x27, 0x10]), // 10000 → 100%
+    ]),
+  );
+  await waitFor(() => iface.rStAlock !== null);
+  assert.equal(iface.rStAlock, 10);
+  assert.equal(iface.rLtAlock, 100);
+  await iface.disconnect();
+});
+
+test("getStats() surfaces traffic counters and radio telemetry", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+
+  // Round-trip one packet so rxb/txb are non-zero and rStatRssi gets set.
+  const payload = new TextEncoder().encode("stats probe");
+  const packet = mkPacket(payload);
+  iface.push(cmdFrame(C.CMD_DATA, Array.from(packet.serialize())));
+  iface.push(cmdFrame(C.CMD_STAT_RSSI, [97]));
+  await waitFor(() => iface.rStatRssi !== null);
+
+  const stats = iface.getStats();
+  assert.equal(stats.name, "rnode");
+  assert.equal(stats.online, true);
+  assert.ok(stats.bitrate > 0, "on-air bitrate should be computed");
+  assert.equal(stats.rxb, packet.serialize().length);
+  assert.equal(stats.txb, 0); // nothing sent from this side
+  assert.ok(stats.created > 0);
+  assert.equal(stats.rssi, 97 - C.RSSI_OFFSET);
+  assert.equal(stats.airtimeShort, 0); // no CHTM report yet
+  assert.equal(stats.channelLoadShort, 0);
+  await iface.disconnect();
+});
+
 test("CMD_ERROR initradio aborts the read loop", async () => {
   const iface = new FakeTransport(RADIO);
   await bringOnline(iface);

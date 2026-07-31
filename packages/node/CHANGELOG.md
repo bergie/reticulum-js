@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 ### Added
+- Per-interface traffic counting for the Node.js interfaces. `TCPClientInterface`,
+  `LocalClientInterface`, `HTTPClientInterface`, `HTTPServerExchangeClient` and
+  the `AutoInterface` spawned peers now record cumulative `rxb`/`txb` byte
+  counters (and expose `getStats()`) inherited from the base `Interface`, so
+  apps can show transfer rates for any transport. See the `@reticulum/core`
+  changelog for the base-class statistics API.
 - RNode serial backend (`src/interfaces/rnode-serial.js`,
   `RNodeSerialInterface`, work doc #6): the Node.js serial transport for the
   `RNodeInterface` base (in [`@reticulum/core`](../core)). Zero-dependency: it

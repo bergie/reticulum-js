@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 ### Added
+- Interface statistics for observability/UIs. The base `Interface` now carries
+  the Python reference's cumulative byte counters (`rxb`/`txb`, counted as the
+  on-the-wire RNS packet length, matching `self.rxb`/`self.txb`) and a
+  `created` epoch timestamp, plus a `getStats()` snapshot returning
+  `{ name, online, bitrate, rxb, txb, created }`. Apps derive a transfer rate
+  by sampling `rxb`/`txb` over time. Counting is wired into every interface's
+  single TX/RX chokepoint (`_recordOutbound` / `_dispatchPacket` helpers), so
+  it covers both transport-routed and direct `send()` traffic. RNode keeps its
+  own IFAC-aware counting.
+- RNode radio telemetry is now fully parsed and exposed. `CMD_STAT_CHTM`
+  previously discarded bytes 0–7 and only kept signal readings; it now also
+  populates `rAirtimeShort`/`rAirtimeLong` (transmit airtime, %) and
+  `rChannelLoadShort`/`rChannelLoadLong` (channel utilization, %) — the
+  channel-utilization figure apps want to show. `CMD_STAT_PHYPRM` now
+  populates the pre-amble and CSMA timing fields (`rPreambleSymbols`,
+  `rPreambleTimeMs`, `rCsmaSlotTimeMs`, `rCsmaDifsMs`), the new
+  `CMD_STAT_CSMA` handler populates the contention window
+  (`rCsmaCwBand`/`rCsmaCwMin`/`rCsmaCwMax`), and the echoed
+  `CMD_ST_ALOCK`/`CMD_LT_ALOCK` limits are stored as `rStAlock`/`rLtAlock`.
+  `RNodeInterface.getStats()` extends the base snapshot with all of this plus
+  signal quality (RSSI/SNR/Q), battery and temperature.
 - RNode (LoRa radio) interface — transport-agnostic base (work doc #6): a port
   of the Python `RNS.Interfaces.RNodeInterface` KISS/RNode protocol.
   `src/interfaces/rnode.js` (`RNodeInterface`) owns the full protocol — the

@@ -176,6 +176,7 @@ export class AutoInterfacePeer extends Interface {
    */
   _processOutgoing(packet) {
     if (!this.online) return;
+    this._recordOutbound(packet);
     const data = packet.serialize();
     this.parentInterface._sendData(this.address, this.ifname, data);
   }
@@ -199,7 +200,7 @@ export class AutoInterfacePeer extends Interface {
           }
           break;
         }
-        this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
+        this._dispatchPacket(packet);
       }
     } catch (e) {
       if (

@@ -293,6 +293,7 @@ export class WebRTCInterface extends Interface {
         if (channel.readyState !== STATE_OPEN) {
           throw new Error("RTCDataChannel is not open");
         }
+        this._recordOutbound(packet);
         channel.send(packet.serialize());
       },
       close: () => {
@@ -329,7 +330,7 @@ export class WebRTCInterface extends Interface {
           lost = true;
           break;
         }
-        this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
+        this._dispatchPacket(packet);
       }
     } catch (e) {
       lost = true;

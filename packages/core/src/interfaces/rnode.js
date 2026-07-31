@@ -174,6 +174,36 @@ export const KISS = Object.freeze({
  */
 
 /**
+ * @typedef {import("./base.js").InterfaceStats & {
+ *   bitrateKbps: number,
+ *   frequency: number | null,
+ *   bandwidth: number | null,
+ *   txPower: number | null,
+ *   spreadingFactor: number | null,
+ *   codingRate: number | null,
+ *   rssi: number | null,
+ *   snr: number | null,
+ *   signalQuality: number | null,
+ *   airtimeShort: number,
+ *   airtimeLong: number,
+ *   channelLoadShort: number,
+ *   channelLoadLong: number,
+ *   currentRssi: number | null,
+ *   noiseFloor: number | null,
+ *   interference: number | null,
+ *   batteryPercent: number,
+ *   temperature: number | null,
+ * }} RNodeStats
+ *   RNode {@link RNodeInterface#getStats} snapshot. Extends the base traffic
+ *   counters with the LoRa radio telemetry the firmware reports over KISS.
+ *   `airtimeShort`/`airtimeLong` are the share of time the radio itself has
+ *   been transmitting (percent); `channelLoadShort`/`channelLoadLong` are the
+ *   share of time the channel was occupied by anyone (percent). `rssi` is the
+ *   last received packet's RSSI; `currentRssi` is the live carrier-sense
+ *   reading. Mirrors the Python reference `r_*` fields.
+ */
+
+/**
  * @typedef {Object} RNodeBaseOptions
  * @property {number} frequency - Centre frequency in Hz (Python: frequency).
  * @property {number} bandwidth - LoRa bandwidth in Hz (Python: bandwidth).
@@ -430,9 +460,30 @@ export class RNodeInterface extends Interface {
     this.rRandom = null;
     this.rSymbolTimeMs = null;
     this.rSymbolRate = null;
+    // §CMD_STAT_CHTM telemetry (Python `r_airtime_*` / `r_channel_load_*` /
+    // `r_current_rssi` / `r_noise_floor` / `r_interference`). Airtime is the
+    // share of time the radio itself has been transmitting; channel load is
+    // the share of time the channel was occupied (by us, peers, or noise).
+    // Both are reported as percent in short/long windows.
+    this.rAirtimeShort = 0;
+    this.rAirtimeLong = 0;
+    this.rChannelLoadShort = 0;
+    this.rChannelLoadLong = 0;
     this.rCurrentRssi = null;
     this.rNoiseFloor = null;
     this.rInterference = null;
+    // §CMD_STAT_PHYPRM (Python `r_preamble_*` / `r_csma_*`).
+    this.rPreambleSymbols = null;
+    this.rPreambleTimeMs = null;
+    this.rCsmaSlotTimeMs = null;
+    this.rCsmaDifsMs = null;
+    this.rCsmaCwBand = null;
+    this.rCsmaCwMin = null;
+    this.rCsmaCwMax = null;
+    // Echoed configured airtime limits (Python `r_st_alock` / `r_lt_alock`),
+    // percent.
+    this.rStAlock = null;
+    this.rLtAlock = null;
     this.rBatteryState = 0;
     this.rBatteryPercent = 0;
     this.rTemperature = null;
@@ -1010,6 +1061,27 @@ export class RNodeInterface extends Interface {
     this.rCr = null;
     this.rState = null;
     this.rLock = null;
+    // Reset telemetry so a reconnect doesn't surface stale readings until the
+    // radio reports fresh ones.
+    this.rStatRssi = null;
+    this.rStatSnr = null;
+    this.rStatQ = null;
+    this.rAirtimeShort = 0;
+    this.rAirtimeLong = 0;
+    this.rChannelLoadShort = 0;
+    this.rChannelLoadLong = 0;
+    this.rCurrentRssi = null;
+    this.rNoiseFloor = null;
+    this.rInterference = null;
+    this.rPreambleSymbols = null;
+    this.rPreambleTimeMs = null;
+    this.rCsmaSlotTimeMs = null;
+    this.rCsmaDifsMs = null;
+    this.rCsmaCwBand = null;
+    this.rCsmaCwMin = null;
+    this.rCsmaCwMax = null;
+    this.rStAlock = null;
+    this.rLtAlock = null;
     this.detected = false;
     this.fwVersionReceived = false;
     this.majVersion = 0;
@@ -1410,16 +1482,43 @@ export class RNodeInterface extends Interface {
         return;
       case CMD_STAT_CHTM:
         if (buf.length === 11) {
+          // 11-byte channel-time report (Python `CMD_STAT_CHTM`):
+          //   [0:2] ats = airtime short   [2:4] atl = airtime long
+          //   [4:6] cus = channel load short   [6:8] cul = channel load long
+          //   [8]   crs = current rssi   [9] nfl = noise floor
+          //   [10]  ntf = interference (0xff = none)
+          this.rAirtimeShort = uint16(buf, 0) / 100.0;
+          this.rAirtimeLong = uint16(buf, 2) / 100.0;
+          this.rChannelLoadShort = uint16(buf, 4) / 100.0;
+          this.rChannelLoadLong = uint16(buf, 6) / 100.0;
           this.rCurrentRssi = buf[8] - RNodeInterface.RSSI_OFFSET;
           this.rNoiseFloor = buf[9] - RNodeInterface.RSSI_OFFSET;
           this.rInterference =
             buf[10] === 0xff ? null : buf[10] - RNodeInterface.RSSI_OFFSET;
+          if (this.rInterference !== null) {
+            log(
+              this.name,
+              `Radio detected interference at ${this.rInterference} dBm`,
+              LogLevel.DEBUG,
+            );
+          }
         }
         return;
       case CMD_STAT_PHYPRM:
         if (buf.length === 12) {
           this.rSymbolTimeMs = uint16(buf, 0) / 1000.0;
           this.rSymbolRate = uint16(buf, 2);
+          this.rPreambleSymbols = uint16(buf, 4);
+          this.rPreambleTimeMs = uint16(buf, 6);
+          this.rCsmaSlotTimeMs = uint16(buf, 8);
+          this.rCsmaDifsMs = uint16(buf, 10);
+        }
+        return;
+      case CMD_STAT_CSMA:
+        if (buf.length === 3) {
+          this.rCsmaCwBand = buf[0];
+          this.rCsmaCwMin = buf[1];
+          this.rCsmaCwMax = buf[2];
         }
         return;
       case CMD_STAT_BAT:
@@ -1436,18 +1535,20 @@ export class RNodeInterface extends Interface {
         return;
       case CMD_ST_ALOCK:
         if (buf.length === 2) {
+          this.rStAlock = uint16(buf, 0) / 100.0;
           log(
             this.name,
-            `Radio reporting short-term airtime limit is ${uint16(buf, 0) / 100}%`,
+            `Radio reporting short-term airtime limit is ${this.rStAlock}%`,
             LogLevel.DEBUG,
           );
         }
         return;
       case CMD_LT_ALOCK:
         if (buf.length === 2) {
+          this.rLtAlock = uint16(buf, 0) / 100.0;
           log(
             this.name,
-            `Radio reporting long-term airtime limit is ${uint16(buf, 0) / 100}%`,
+            `Radio reporting long-term airtime limit is ${this.rLtAlock}%`,
             LogLevel.DEBUG,
           );
         }
@@ -1593,6 +1694,38 @@ export class RNodeInterface extends Interface {
     let quality = ((this.rStatSnr - qSnrMin) / (qSnrMax - qSnrMin)) * 100;
     quality = Math.max(0, Math.min(100, quality));
     this.rStatQ = Math.round(quality * 10) / 10;
+  }
+
+  /**
+   * Returns a stats snapshot for this RNode, extending the base traffic
+   * counters with the LoRa radio telemetry the firmware reports over KISS:
+   * on-air bitrate, active radio parameters, signal quality (RSSI/SNR/Q),
+   * channel airtime & load, and battery/temperature. Fields are `null` until
+   * the radio has reported them.
+   * @returns {RNodeStats}
+   */
+  getStats() {
+    return {
+      ...super.getStats(),
+      bitrateKbps: this.bitrate ? Math.round(this.bitrate / 100) / 10 : 0,
+      frequency: this.rFrequency,
+      bandwidth: this.rBandwidth,
+      txPower: this.rTxPower,
+      spreadingFactor: this.rSf,
+      codingRate: this.rCr,
+      rssi: this.rStatRssi,
+      snr: this.rStatSnr,
+      signalQuality: this.rStatQ,
+      airtimeShort: this.rAirtimeShort,
+      airtimeLong: this.rAirtimeLong,
+      channelLoadShort: this.rChannelLoadShort,
+      channelLoadLong: this.rChannelLoadLong,
+      currentRssi: this.rCurrentRssi,
+      noiseFloor: this.rNoiseFloor,
+      interference: this.rInterference,
+      batteryPercent: this.rBatteryPercent,
+      temperature: this.rTemperature,
+    };
   }
 
   /**

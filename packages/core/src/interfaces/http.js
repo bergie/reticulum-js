@@ -290,6 +290,7 @@ export class HttpPostClientInterface extends Interface {
 
     this._writable = new WritableStream({
       write: (/** @type {import("../core/packet.js").Packet} */ packet) => {
+        this._recordOutbound(packet);
         this._pushOutbound(packet);
       },
     });
@@ -339,7 +340,7 @@ export class HttpPostClientInterface extends Interface {
           }
           break;
         }
-        this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
+        this._dispatchPacket(packet);
       }
     } catch (e) {
       if (

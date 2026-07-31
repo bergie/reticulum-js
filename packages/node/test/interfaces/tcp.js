@@ -82,6 +82,28 @@ test("TCP interface connection and packet transfer", async () => {
     "Hello Reticulum!",
   );
 
+  // Statistics: each interface sent and received exactly one packet, so the
+  // cumulative byte counters must equal one serialized packet length each.
+  const wireLen = packet.serialize().length;
+  assert.equal(client.txb, wireLen, "client should count its outbound packet");
+  assert.equal(client.rxb, wireLen, "client should count its inbound packet");
+  assert.equal(
+    connectedClient.txb,
+    wireLen,
+    "spawned server client should count its outbound packet",
+  );
+  assert.equal(
+    connectedClient.rxb,
+    wireLen,
+    "spawned server client should count its inbound packet",
+  );
+  const stats = client.getStats();
+  assert.equal(stats.name, client.name);
+  assert.equal(stats.online, true);
+  assert.equal(stats.rxb, wireLen);
+  assert.equal(stats.txb, wireLen);
+  assert.ok(stats.created > 0);
+
   await client.disconnect();
   await server.disconnect();
 });

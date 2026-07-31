@@ -367,12 +367,29 @@ export class TCPClientInterface extends Interface {
         ? createKissFramerStream()
         : createHdlcFramerStream();
 
+    // Count every outbound packet (the single TX chokepoint for this
+    // interface: both routed writes via the transport and direct `send()`
+    // calls land here). Piped ahead of the framer so it sees Packet objects.
+    const txCounter = new TransformStream({
+      transform: (
+        /** @type {import("@reticulum/core/src/core/packet.js").Packet} */ packet,
+        controller,
+      ) => {
+        this._recordOutbound(packet);
+        controller.enqueue(packet);
+      },
+    });
+    txCounter.readable
+      .pipeTo(framer.writable)
+      .catch((/** @type {any} */ err) => {
+        log("TCP", `TX counter pipeTo error: ${err}`, LogLevel.ERROR);
+      });
     framer.readable
       .pipeTo(Writable.toWeb(nodeWritable))
       .catch((/** @type {any} */ err) => {
         log("TCP", `Framer pipeTo error: ${err}`, LogLevel.ERROR);
       });
-    this._writable = framer.writable;
+    this._writable = txCounter.writable;
     this._loopPromise = this._startInboundLoop();
   }
 
@@ -390,7 +407,7 @@ export class TCPClientInterface extends Interface {
           lost = true;
           break;
         }
-        this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
+        this._dispatchPacket(packet);
       }
     } catch (e) {
       lost = true;

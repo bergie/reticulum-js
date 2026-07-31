@@ -119,6 +119,7 @@ export class HttpPostPeerInterface extends Interface {
       write: (
         /** @type {import("@reticulum/core/src/core/packet.js").Packet} */ packet,
       ) => {
+        this._recordOutbound(packet);
         this._outboundQueue.push(packet.serialize());
       },
     });
@@ -212,7 +213,7 @@ export class HttpPostPeerInterface extends Interface {
           }
           break;
         }
-        this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
+        this._dispatchPacket(packet);
       }
     } catch (e) {
       if (

@@ -451,6 +451,7 @@ export class WebSocketClientInterface extends Interface {
         if (ws.readyState !== WebSocket.OPEN) {
           throw new Error("WebSocket is not open");
         }
+        this._recordOutbound(packet);
         ws.send(
           framing === "kiss"
             ? kissFrame(packet.serialize())
@@ -491,7 +492,7 @@ export class WebSocketClientInterface extends Interface {
           lost = true;
           break;
         }
-        this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
+        this._dispatchPacket(packet);
       }
     } catch (e) {
       lost = true;

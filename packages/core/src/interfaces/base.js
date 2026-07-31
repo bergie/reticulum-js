@@ -16,6 +16,19 @@ import { LogLevel, log } from "../utils/log.js";
  */
 
 /**
+ * @typedef {Object} InterfaceStats
+ * @property {string} name - Human-readable interface name.
+ * @property {boolean} online - Whether the interface is currently connected.
+ * @property {number} bitrate - Nominal physical bitrate in bits/s.
+ * @property {number} rxb - Total bytes received (post-framing RNS packet
+ *   bytes), mirroring the Python reference `self.rxb`. Apps derive a transfer
+ *   rate by sampling this over time.
+ * @property {number} txb - Total bytes transmitted, mirroring `self.txb`.
+ * @property {number} created - Epoch milliseconds when the interface was
+ *   constructed (Python `self.created`).
+ */
+
+/**
  * @typedef {Object} ReconnectingEventDetail
  * @property {number} attempt - The upcoming attempt number (1-based).
  * @property {number} waitSeconds - Seconds waited before this attempt.
@@ -182,6 +195,29 @@ export class Interface extends EventTarget {
   bitrate = 62500;
 
   /**
+   * Total bytes received on this interface (`self.rxb` on
+   * `RNS.Interfaces.Interface` in the Python reference). Counted as the
+   * deserialized RNS packet length — matching Python's `len(data)` in each
+   * interface's `process_incoming` — so it reflects the on-the-wire RNS
+   * payload, not framing overhead. Apps derive a transfer rate by sampling
+   * this counter over time.
+   * @type {number}
+   */
+  rxb = 0;
+  /**
+   * Total bytes transmitted on this interface (`self.txb` in the Python
+   * reference).
+   * @type {number}
+   */
+  txb = 0;
+  /**
+   * Epoch milliseconds when the interface was constructed (`self.created` in
+   * the Python reference, which uses `time.time()`).
+   * @type {number}
+   */
+  created = Date.now();
+
+  /**
    * Whether this interface is currently open/online.
    * @type {boolean}
    */
@@ -273,6 +309,67 @@ export class Interface extends EventTarget {
       // This forces Node to push the buffered data out of the NIC
       await new Promise((resolve) => socket.write("", resolve));
     }
+  }
+
+  // ------------------------------------------------------------------
+  // Statistics (Python `self.rxb` / `self.txb` / `self.created`)
+  // ------------------------------------------------------------------
+
+  /**
+   * Records an outbound packet against {@link txb}. Subclasses (or the
+   * interface's outbound stream `write` callback) call this at the point a
+   * packet is handed to the medium — the single chokepoint where every
+   * transmitted packet passes, whether sent via {@link send}, the transport
+   * router, or a broadcast. Mirrors the `self.txb += len(data)` line in each
+   * Python interface's `process_outgoing`.
+   *
+   * RNodeInterface overrides its own counting (it measures the IFAC-inclusive
+   * wire payload) and does not call this.
+   * @param {import("../core/packet.js").Packet} packet
+   * @protected
+   */
+  _recordOutbound(packet) {
+    this.txb += packet.serialize().length;
+  }
+
+  /**
+   * Counts an inbound packet against {@link rxb} and dispatches the `"packet"`
+   * event, the single inbound chokepoint each interface's read loop funnels
+   * through. Mirrors the `self.rxb += len(data)` + `self.owner.inbound(...)`
+   * pairing in each Python interface's `process_incoming`.
+   *
+   * Uses the deserialized packet's cached raw bytes when available (set by
+   * `Packet.deserialize`), avoiding a re-serialize. RNodeInterface dispatches
+   * its own packets (it counts the IFAC-inclusive payload) and does not call
+   * this.
+   * @param {import("../core/packet.js").Packet} packet
+   * @protected
+   */
+  _dispatchPacket(packet) {
+    const raw = /** @type {Uint8Array | undefined} */ (packet.raw);
+    this.rxb += raw && raw.length > 0 ? raw.length : packet.serialize().length;
+    this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
+  }
+
+  /**
+   * Returns a snapshot of traffic and link statistics for this interface, for
+   * observability and UIs. Mirrors the fields apps derive from the Python
+   * reference's `self.rxb` / `self.txb` / `self.bitrate` / `self.created`.
+   *
+   * Subclasses that carry medium-specific telemetry (notably
+   * {@link import("./rnode.js").RNodeInterface}, which exposes RNode airtime,
+   * channel load and signal quality) override this to extend the snapshot.
+   * @returns {InterfaceStats}
+   */
+  getStats() {
+    return {
+      name: this.name,
+      online: this.online,
+      bitrate: this.bitrate,
+      rxb: this.rxb,
+      txb: this.txb,
+      created: this.created,
+    };
   }
 
   // ------------------------------------------------------------------
