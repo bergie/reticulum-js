@@ -163,6 +163,49 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
+   * Starts periodic re-announcement of the `lxmf.delivery` destination
+   * (PROTOCOL-SPEC.md §9.7) so cached mesh paths stay fresh and peers can
+   * reach you after transit-relay TTLs lapse.
+   *
+   * Sets the announce `app_data` from `displayName`/`stampCost` (so every
+   * periodic announce advertises the same name), then delegates to
+   * {@link Destination.startAnnouncing} on the delivery destination — which
+   * fires the first announce immediately and repeats every `intervalMs`.
+   *
+   * This replaces the one-shot {@link announce} for the common "announce and
+   * keep announcing" case. Call {@link stopAnnouncing} to halt the loop.
+   *
+   * @param {string} displayName - Human-readable node name shown to peers.
+   * @param {Object} [options]
+   * @param {number|null} [options.stampCost=null] - Active stamp cost (1-254),
+   *   or null to advertise stamping as disabled.
+   * @param {number} [options.intervalMs] - Override the default cadence
+   *   (clamped to the §9.7 60 s floor).
+   * @returns {Promise<void>}
+   */
+  async startAnnouncing(displayName, options = {}) {
+    if (!this.deliveryDest) {
+      throw new Error("Router not initialized; call init() first.");
+    }
+    const { stampCost = null, intervalMs } = options;
+    this.displayName = displayName;
+    this.stampCost = stampCost;
+    this.identity.appData = buildAnnounceAppData(
+      displayName,
+      stampCost,
+    ).slice();
+    this.deliveryDest.startAnnouncing({ intervalMs });
+  }
+
+  /**
+   * Stops the periodic delivery-destination re-announce loop started by
+   * {@link startAnnouncing}. Safe to call when not running (no-op).
+   */
+  stopAnnouncing() {
+    this.deliveryDest?.stopAnnouncing();
+  }
+
+  /**
    * Enables the propagation-node role (§5.3): creates the `lxmf.propagation`
    * destination, registers the `/get` message-download handler, and ingests
    * submitted messages received via link Resources.

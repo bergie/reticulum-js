@@ -101,9 +101,8 @@ describe("FileStorageAdapter — owned ratchet rings", () => {
       const a = new FileStorageAdapter(dir);
       const hash = "bb".repeat(16);
       await a.saveOwnedRatchets(hash, fromHex("cafe"));
-      const fileMode = statSync(
-        join(dir, "owned_ratchets", `${hash}.key`),
-      ).mode & 0o777;
+      const fileMode =
+        statSync(join(dir, "owned_ratchets", `${hash}.key`)).mode & 0o777;
       const dirMode = statSync(join(dir, "owned_ratchets")).mode & 0o777;
       assert.strictEqual(fileMode, 0o600, "ratchet file must be owner-only");
       assert.strictEqual(dirMode, 0o700, "ratchet dir must be owner-only");

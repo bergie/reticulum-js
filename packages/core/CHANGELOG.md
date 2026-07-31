@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 ### Added
+- RNode ID callsign beacon, hard reset, and display read (work doc #6): the
+  remaining transport-agnostic protocol pieces of `RNodeInterface`, ported from
+  the Python reference.
+  - **ID beacon** — `idInterval`/`idCallsign` options (string or bytes; max 32
+    encoded bytes) make the interface transmit its callsign as a raw KISS
+    `CMD_DATA` frame `idInterval` seconds after its first outbound packet, then
+    again after each subsequent first transmission in a quiet window. The beacon
+    honours flow control (queues behind `CMD_READY`) exactly like an ordinary
+    packet, and transmitting it clears the first-TX timestamp so it re-arms only
+    on the next real packet (Python `first_tx`/`should_id`).
+  - **`hardReset()`** — sends `CMD_RESET 0xF8` and waits 2.25 s for the radio to
+    reboot (Python `hard_reset`).
+  - **`readDisplay()` / `startDisplayUpdates()` / `stopDisplayUpdates()`** — the
+    1024-byte on-device display snapshot via `CMD_DISP_READ` (Python
+    `read_display`), distinct from the 512-byte host-writable framebuffer
+    (`CMD_FB_READ`). Populates `rDisp`/`rDispLatency`; no-op on headless devices.
+  New constants `DISPLAY_READ_SIZE`, `DISPLAY_READ_INTERVAL`, `CALLSIGN_MAX_LEN`
+  join the exported `KISS` table and the `RNodeInterface` statics.
 - Periodic re-announce scheduler (PROTOCOL-SPEC.md §7.5 / §9.7 —
   "non-optional": without it transit relays evict the path within minutes and
   peers can no longer reach you). `Destination.startAnnouncing({ intervalMs })`
@@ -95,6 +113,13 @@
 
 ## [0.4.5] - 2026-07-27
 ### Fixed
+- The base `Interface` reconnect backoff (`_sleepInterruptible`) now calls
+  `.unref()` on its timer. A background reconnect is daemon-like and must not
+  keep the process alive on its own — previously a single interface whose first
+  `connect()` failed (e.g. an RNode `detect` timeout) left a reconnect loop
+  sleeping via `setTimeout` that pinned the event loop forever, hanging
+  `node --test <file>` runs that exercised a failed-connect path without
+  detaching. (The workspace `npm test` masked this via `--test-force-exit`.)
 - `Resource.accept` now validates the advertised part count `n` before
   allocating the receiver's `parts` array, closing a single-packet OOM. An
   attacker could advertise a tiny encrypted size `t` (under the size cap) with a

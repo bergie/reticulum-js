@@ -104,6 +104,17 @@ const FB_BYTES_PER_LINE = FB_PIXEL_WIDTH / FB_PIXELS_PER_BYTE;
 const FB_SIZE_BYTES = 512;
 
 /**
+ * Display snapshot size in bytes, as returned by CMD_DISP_READ (1024). This is
+ * the device's own screen contents — distinct from the 512-byte framebuffer
+ * (CMD_FB_READ) the host writes via `displayImage`.
+ */
+const DISPLAY_READ_SIZE = 1024;
+/** Maximum encoded length of an ID callsign beacon, in bytes (Python parity). */
+const CALLSIGN_MAX_LEN = 32;
+/** Default display-read poll interval, in seconds (Python `DISPLAY_READ_INTERVAL`). */
+const DISPLAY_READ_INTERVAL = 1.0;
+
+/**
  * The full KISS command byte table, exported for backends, tests, and tooling
  * (e.g. a future `rnodeconf`-equivalent). Mirrors the Python `KISS` class.
  */
@@ -161,6 +172,9 @@ export const KISS = Object.freeze({
   FB_PIXELS_PER_BYTE,
   FB_BYTES_PER_LINE,
   FB_SIZE_BYTES,
+  DISPLAY_READ_SIZE,
+  DISPLAY_READ_INTERVAL,
+  CALLSIGN_MAX_LEN,
 });
 
 /**
@@ -218,6 +232,14 @@ export const KISS = Object.freeze({
  *   0–100 percent (Python: airtime_limit_short).
  * @property {number} [airtimeLimitLong] - Optional long-term airtime limit,
  *   0–100 percent (Python: airtime_limit_long).
+ * @property {number} [idInterval] - Optional ID beacon interval in seconds.
+ *   When set together with `idCallsign`, the interface transmits the callsign
+ *   as a raw KISS data frame that often after its first outbound packet, then
+ *   again `idInterval` seconds after each subsequent first transmission in a
+ *   quiet window (Python: id_interval).
+ * @property {string | Uint8Array | number[]} [idCallsign] - Optional ID
+ *   callsign to beacon. Strings are UTF-8 encoded; max 32 encoded bytes
+ *   (Python: id_callsign).
  * @property {number} [ifacSize] - Optional IFAC size in bytes. Defaults to 0.
  * @property {string} [name] - Human-readable interface name.
  * @property {number} [detectTimeout] - Seconds to wait for the detect
@@ -333,6 +355,20 @@ export class RNodeInterface extends Interface {
             "Optional long-term airtime limit, percent (Python config key: " +
             "airtime_limit_long).",
         },
+        idInterval: {
+          type: "number",
+          minimum: 0,
+          description:
+            "Optional ID beacon interval in seconds. When set with idCallsign, " +
+            "the interface transmits the callsign this often after its first " +
+            "outbound packet (Python config key: id_interval).",
+        },
+        idCallsign: {
+          type: "string",
+          description:
+            "Optional ID callsign to beacon (UTF-8; max 32 encoded bytes). " +
+            "Python config key: id_callsign.",
+        },
         detectTimeout: {
           type: "number",
           minimum: 0,
@@ -386,6 +422,12 @@ export class RNodeInterface extends Interface {
   static FB_BYTES_PER_LINE = FB_BYTES_PER_LINE;
   /** Full framebuffer size in bytes. */
   static FB_SIZE_BYTES = FB_SIZE_BYTES;
+  /** Display snapshot size in bytes (CMD_DISP_READ, Python parity). */
+  static DISPLAY_READ_SIZE = DISPLAY_READ_SIZE;
+  /** Default display-read poll interval in seconds (Python parity). */
+  static DISPLAY_READ_INTERVAL = DISPLAY_READ_INTERVAL;
+  /** Maximum encoded ID callsign beacon length in bytes (Python parity). */
+  static CALLSIGN_MAX_LEN = CALLSIGN_MAX_LEN;
 
   /**
    * Creates an RNode interface.
@@ -417,6 +459,12 @@ export class RNodeInterface extends Interface {
         : options.airtimeLimitShort;
     this.airtimeLimitLong =
       options.airtimeLimitLong === undefined ? null : options.airtimeLimitLong;
+    this.idInterval =
+      options.idInterval === undefined ? null : options.idInterval;
+    this.idCallsign = encodeCallsign(options.idCallsign);
+    // The beacon fires only when both an interval and a callsign are configured
+    // (Python: `should_id = id_interval and id_callsign`).
+    this.shouldId = this.idCallsign !== null && this.idInterval !== null;
     this.detectTimeout =
       options.detectTimeout === undefined ? 5 : options.detectTimeout;
     this.validateTimeout =
@@ -488,6 +536,15 @@ export class RNodeInterface extends Interface {
     this.rBatteryPercent = 0;
     this.rTemperature = null;
 
+    // Display snapshot (Python `r_disp`/`r_disp_readtime`/`r_disp_latency`),
+    // returned by CMD_DISP_READ as a 1024-byte image. Separate from the
+    // host-writable framebuffer (CMD_FB_READ).
+    /** @type {Uint8Array | null} */ this.rDisp = null;
+    /** @type {number | null} */ this.rDispReadTime = null;
+    /** @type {number | null} */ this.rDispLatency = null;
+    /** @type {ReturnType<typeof setInterval> | null} */
+    this._displayUpdateTimer = null;
+
     // Detect/handshake state.
     this.detected = false;
     this.fwVersionReceived = false;
@@ -505,7 +562,21 @@ export class RNodeInterface extends Interface {
 
     // Flow control / outbound queue (Python `interface_ready`/`packet_queue`).
     this.interfaceReady = false;
-    /** @type {import("../core/packet.js").Packet[]} */ this._packetQueue = [];
+    /**
+     * Outbound queue. Each entry is the already-serialized raw RNS payload plus
+     * a flag distinguishing ordinary packets from the raw id-callsign beacon
+     * (which, like Python, is framed as a CMD_DATA payload without being a real
+     * Packet).
+     * @type {{ raw: Uint8Array, isBeacon: boolean }[]}
+     */
+    this._packetQueue = [];
+
+    // ID callsign beacon (Python `first_tx`/`should_id`). The beacon arms on the
+    // first ordinary outbound transmission and fires `idInterval` seconds later;
+    // transmitting the beacon itself clears the timestamp so it re-arms only on
+    // the next ordinary packet.
+    /** @type {number | null} */ this.firstTx = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */ this._idTimer = null;
 
     // Read-loop state machine (see `_feedBytes`).
     this._inFrame = false;
@@ -526,11 +597,12 @@ export class RNodeInterface extends Interface {
     this._reader = null;
 
     // Expose a Packet WritableStream so Transport can grab a writer in
-    // `addInterface` regardless of connect ordering; writes only transmit once
-    // the transport is open (gated by `online` in `_transmitPacket`).
+    // `addInterface` regardless of connect ordering; writes are serialized and
+    // either transmitted (when online + ready) or queued for the next CMD_READY
+    // (see `send`).
     this._writable = new WritableStream({
       write: (/** @type {import("../core/packet.js").Packet} */ packet) =>
-        this._transmitPacket(packet),
+        this.send(packet),
     });
   }
 
@@ -564,6 +636,18 @@ export class RNodeInterface extends Interface {
       (this.airtimeLimitLong < 0 || this.airtimeLimitLong > 100)
     ) {
       errors.push("airtimeLimitLong");
+    }
+    if (
+      this.idInterval !== null &&
+      (typeof this.idInterval !== "number" || this.idInterval < 0)
+    ) {
+      errors.push("idInterval");
+    }
+    if (
+      this.idCallsign !== null &&
+      this.idCallsign.length > RNodeInterface.CALLSIGN_MAX_LEN
+    ) {
+      errors.push("idCallsign");
     }
     if (errors.length > 0) {
       throw new Error(
@@ -704,6 +788,12 @@ export class RNodeInterface extends Interface {
    * @private
    */
   async _closeTransportSafely() {
+    // Cancel any pending id-beacon transmission and stop display polling before
+    // tearing the transport down (otherwise a reconnect or disconnect leaks a
+    // timer that writes to a closed transport).
+    this._cancelIdTimer();
+    this.stopDisplayUpdates();
+    this.firstTx = null;
     this._stopReadLoop();
     // Wait for the read loop to finish (and release the reader) before closing
     // the transport — a Web Serial port cannot be closed while its readable is
@@ -820,6 +910,19 @@ export class RNodeInterface extends Interface {
   /** Sends the host-leave command (Python `leave()`). */
   leave() {
     this._sendCommand(CMD_LEAVE, [0xff]);
+  }
+
+  /**
+   * Forces a hardware reset of the RNode. Sends CMD_RESET with the 0xF8 reset
+   * code, then waits for the device to reboot (Python `hard_reset`, which
+   * sleeps 2.25s). A rebooting ESP32 reports CMD_RESET 0xF8 once it is back,
+   * which the read loop treats as a connection loss (→ reconnect). No-op before
+   * connect.
+   * @returns {Promise<void>}
+   */
+  async hardReset() {
+    this._sendCommand(CMD_RESET, [0xf8]);
+    await sleep(2250);
   }
 
   /**
@@ -972,6 +1075,52 @@ export class RNodeInterface extends Interface {
   }
 
   /**
+   * Requests the current 1024-byte on-device display snapshot and resolves once
+   * the device echoes it back (or after `timeoutMs`). The image is kept on
+   * {@link RNodeInterface#rDisp}; the round-trip latency is on
+   * {@link RNodeInterface#rDispLatency}. Mirrors Python `read_display`. This is
+   * distinct from {@link RNodeInterface#readFramebuffer} (the host-writable
+   * 512-byte framebuffer). No-op on headless devices.
+   * @param {number} [timeoutMs=2000]
+   * @returns {Promise<Uint8Array | null>} The display image, or null on timeout
+   *   or on a headless device.
+   */
+  async readDisplay(timeoutMs = 2000) {
+    if (!this._hasDisplay("readDisplay")) return null;
+    this.rDisp = null;
+    this.rDispReadTime = Date.now();
+    this._sendCommand(CMD_DISP_READ, [0x01]);
+    await this._waitFor(() => this.rDisp != null, timeoutMs, "display read");
+    return this.rDisp;
+  }
+
+  /**
+   * Begins periodically polling the on-device display, refreshing
+   * {@link RNodeInterface#rDisp} every `intervalSeconds`. Mirrors Python
+   * `start_display_updates`. No-op on headless devices. Call
+   * {@link RNodeInterface#stopDisplayUpdates} to stop.
+   * @param {number} [intervalSeconds] - Poll interval in seconds; defaults to
+   *   {@link RNodeInterface.DISPLAY_READ_INTERVAL} (1.0).
+   */
+  startDisplayUpdates(intervalSeconds = RNodeInterface.DISPLAY_READ_INTERVAL) {
+    if (!this._hasDisplay("startDisplayUpdates")) return;
+    this.stopDisplayUpdates();
+    this._displayUpdateTimer = setInterval(() => {
+      this.readDisplay().catch((/** @type {any} */ e) =>
+        log(this.name, `Display update failed: ${e.message}`, LogLevel.DEBUG),
+      );
+    }, intervalSeconds * 1000);
+  }
+
+  /** Stops the periodic display-update poll started by `startDisplayUpdates`. */
+  stopDisplayUpdates() {
+    if (this._displayUpdateTimer) {
+      clearInterval(this._displayUpdateTimer);
+      this._displayUpdateTimer = null;
+    }
+  }
+
+  /**
    * True once a display-capable device (ESP32/NRF52) has been detected; until
    * then framebuffer methods are no-ops. Logs a warning on each ignored call.
    * @param {string} caller
@@ -1090,6 +1239,11 @@ export class RNodeInterface extends Interface {
     this.rFrameBuffer = null;
     this.rFrameBufferReadTime = null;
     this.rFrameBufferLatency = null;
+    this.rDisp = null;
+    this.rDispReadTime = null;
+    this.rDispLatency = null;
+    this.firstTx = null;
+    this._cancelIdTimer();
   }
 
   // -----------------------------------------------------------------------
@@ -1100,50 +1254,116 @@ export class RNodeInterface extends Interface {
    * Sends a packet, honouring flow control. If the radio is online and ready
    * the packet is transmitted immediately (and, with flow control, the next one
    * is gated on CMD_READY); otherwise it is queued for later. Mirrors the
-   * Python reference `process_outgoing`.
+   * Python reference `process_outgoing`. Sending a packet also arms the ID
+   * beacon timer (see {@link RNodeInterface#_armIdBeacon}).
    * @param {import("../core/packet.js").Packet} packet
    */
   async send(packet) {
+    const raw = packet.serialize();
     if (this.online && this.interfaceReady) {
       if (this.flowControl) this.interfaceReady = false;
-      await this._transmitPacket(packet);
+      this._noteTransmission(false);
+      await this._writeRaw(raw);
     } else {
-      this._packetQueue.push(packet);
+      this._packetQueue.push({ raw, isBeacon: false });
     }
   }
 
   /**
-   * Frames a packet as a KISS data frame and writes it to the transport.
-   * @param {import("../core/packet.js").Packet} packet
+   * Frames already-serialized raw bytes as a KISS data frame and writes them to
+   * the transport, counting `txb`. Used for both ordinary packets and the raw
+   * id-callsign beacon.
+   * @param {Uint8Array} raw
    * @returns {Promise<void>}
    * @private
    */
-  async _transmitPacket(packet) {
+  async _writeRaw(raw) {
     if (!this.online || !this._transportWrite) {
       throw new Error(`RNode interface ${this.name} is not ready`);
     }
-    const raw = packet.serialize();
     this.txb += raw.length;
     await this._rawWrite(kissFrame(raw));
   }
 
   /**
-   * Drains one queued packet on CMD_READY (or marks the interface ready when the
+   * Updates the ID-beacon timestamp around a transmission, matching the Python
+   * `process_outgoing` first_tx logic: an ordinary packet arms the beacon on
+   * its first transmission; the beacon itself clears the timestamp (so it
+   * re-arms only on the next ordinary packet).
+   * @param {boolean} isBeacon
+   * @private
+   */
+  _noteTransmission(isBeacon) {
+    if (isBeacon) {
+      this.firstTx = null;
+      this._cancelIdTimer();
+    } else {
+      this._armIdBeacon();
+    }
+  }
+
+  /**
+   * Drains one queued item on CMD_READY (or marks the interface ready when the
    * queue is empty). Mirrors the Python reference `process_queue`.
    * @private
    */
   _processQueue() {
     if (this._packetQueue.length > 0) {
-      const packet = /** @type {import("../core/packet.js").Packet} */ (
+      const item = /** @type {{ raw: Uint8Array, isBeacon: boolean }} */ (
         this._packetQueue.shift()
       );
       this.interfaceReady = true;
+      this._noteTransmission(item.isBeacon);
       // Fire-and-forget: a failure here surfaces via the read-loop error path.
-      this._transmitPacket(packet).catch((/** @type {any} */ e) =>
+      this._writeRaw(item.raw).catch((/** @type {any} */ e) =>
         log(this.name, `Queue transmit failed: ${e.message}`, LogLevel.ERROR),
       );
     } else {
       this.interfaceReady = true;
+    }
+  }
+
+  /**
+   * Transmits the configured id-callsign beacon as a raw KISS data frame,
+   * honouring flow control exactly like an ordinary packet (Python
+   * `process_outgoing(self.id_callsign)`). No-op unless `idCallsign` is set.
+   * @private
+   */
+  _sendIdBeacon() {
+    if (this.idCallsign === null) return;
+    if (this.online && this.interfaceReady) {
+      if (this.flowControl) this.interfaceReady = false;
+      this._noteTransmission(true);
+      this._writeRaw(this.idCallsign).catch((/** @type {any} */ e) =>
+        log(this.name, `Beacon transmit failed: ${e.message}`, LogLevel.ERROR),
+      );
+    } else {
+      this._packetQueue.push({ raw: this.idCallsign, isBeacon: true });
+    }
+  }
+
+  /**
+   * Arms the id beacon to fire `idInterval` seconds after the first ordinary
+   * outbound transmission. No-op if beacons are disabled or already armed
+   * (Python only sets `first_tx` when it is `None`).
+   * @private
+   */
+  _armIdBeacon() {
+    if (!this.shouldId || this.idInterval === null) return;
+    if (this.firstTx !== null) return;
+    this.firstTx = Date.now();
+    this._cancelIdTimer();
+    this._idTimer = setTimeout(
+      () => this._sendIdBeacon(),
+      this.idInterval * 1000,
+    );
+  }
+
+  /** Cancels any pending id-beacon transmission. @private */
+  _cancelIdTimer() {
+    if (this._idTimer) {
+      clearTimeout(this._idTimer);
+      this._idTimer = null;
     }
   }
 
@@ -1563,6 +1783,15 @@ export class RNodeInterface extends Interface {
           this.rFrameBuffer = new Uint8Array(buf);
         }
         return;
+      case CMD_DISP_READ:
+        // The device echoes the 1024-byte display snapshot back as an escaped
+        // payload; capture it once complete and measure the round-trip latency
+        // (Python: `r_disp` / `r_disp_latency`).
+        if (buf.length === DISPLAY_READ_SIZE) {
+          this.rDispLatency = Date.now() - (this.rDispReadTime ?? Date.now());
+          this.rDisp = new Uint8Array(buf);
+        }
+        return;
       default:
       // Unknown multi-byte command: nothing to do.
     }
@@ -1814,4 +2043,17 @@ function int8(byte) {
  */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Encodes an id-callsign option (string | bytes | number[]) to a UTF-8
+ * `Uint8Array`, or `null` when none is configured. Mirrors Python
+ * `id_callsign.encode("utf-8")`.
+ * @param {string | Uint8Array | number[] | undefined | null} callsign
+ * @returns {Uint8Array | null}
+ */
+function encodeCallsign(callsign) {
+  if (callsign === undefined || callsign === null) return null;
+  if (typeof callsign === "string") return new TextEncoder().encode(callsign);
+  return new Uint8Array(callsign);
 }

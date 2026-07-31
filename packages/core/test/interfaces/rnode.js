@@ -68,7 +68,7 @@ function be32(value) {
 }
 
 /** Inverse of `cmdFrame` escaping: FESC TFEND→FEND, FESC TFESC→FESC. */
-function unescape(bytes) {
+function kissUnescape(bytes) {
   const out = [];
   let esc = false;
   for (const b of bytes) {
@@ -556,7 +556,7 @@ test("writeFramebuffer frames a CMD_FB_WRITE line with line-number prefix", asyn
   const frame = iface.written[before];
   assert.equal(frame[0], C.FEND);
   assert.equal(frame[1], C.CMD_FB_WRITE);
-  const body = unescape(frame.slice(2, frame.length - 1));
+  const body = kissUnescape(frame.slice(2, frame.length - 1));
   assert.deepEqual(body, [3, 1, 2, 3, 4, 5, 6, 7, 8]);
   assert.equal(frame[frame.length - 1], C.FEND);
   await iface.disconnect();
@@ -573,7 +573,7 @@ test("writeFramebuffer escapes FEND/FESC bytes in line and data", async () => {
   );
   const frame = iface.written[before];
   assert.ok(frame.includes(C.FESC), "payload should have been KISS-escaped");
-  const body = unescape(frame.slice(2, frame.length - 1));
+  const body = kissUnescape(frame.slice(2, frame.length - 1));
   assert.deepEqual(
     body,
     [0xc0, 0xc0, 0xdb, 0x00, 0xc0, 0x01, 0x02, 0x03, 0x04],
@@ -593,8 +593,14 @@ test("displayImage writes one CMD_FB_WRITE per 8-byte line", async () => {
     .slice(before)
     .filter((w) => w[1] === C.CMD_FB_WRITE);
   assert.equal(fbWrites.length, 2);
-  assert.equal(unescape(fbWrites[0].slice(2, fbWrites[0].length - 1))[0], 0);
-  assert.equal(unescape(fbWrites[1].slice(2, fbWrites[1].length - 1))[0], 1);
+  assert.equal(
+    kissUnescape(fbWrites[0].slice(2, fbWrites[0].length - 1))[0],
+    0,
+  );
+  assert.equal(
+    kissUnescape(fbWrites[1].slice(2, fbWrites[1].length - 1))[0],
+    1,
+  );
   await iface.disconnect();
 });
 
@@ -644,4 +650,255 @@ test("framebuffer methods are no-ops on a headless (undetected) device", async (
     before,
     "nothing should have been written",
   );
+});
+
+// ---------------------------------------------------------------------------
+// ID callsign beacon (Python `id_interval`/`id_callsign`/`first_tx`)
+// ---------------------------------------------------------------------------
+
+/** UTF-8 encoder reused across the beacon tests. */
+const enc = new TextEncoder();
+
+/**
+ * Extracts the unescaped CMD_DATA payloads the interface has written since the
+ * given index, in order. Used to distinguish the raw id-callsign beacon (a
+ * CMD_DATA frame whose payload is the callsign bytes) from ordinary packets.
+ * @param {FakeTransport} iface
+ * @param {number} sinceIndex
+ * @returns {Uint8Array[]}
+ */
+function dataPayloads(iface, sinceIndex = 0) {
+  return iface.written
+    .slice(sinceIndex)
+    .filter((w) => w[1] === C.CMD_DATA)
+    .map((w) => new Uint8Array(kissUnescape(w.slice(2, w.length - 1))));
+}
+
+/** Resolves after `ms`. */
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Structural equality for two array-like byte sequences. */
+function equalBytes(a, b) {
+  const aa = Array.from(a);
+  const bb = Array.from(b);
+  return aa.length === bb.length && aa.every((v, i) => v === bb[i]);
+}
+
+test("shouldId requires both idInterval and idCallsign", () => {
+  assert.equal(new FakeTransport({ ...RADIO, idInterval: 10 }).shouldId, false);
+  assert.equal(
+    new FakeTransport({ ...RADIO, idCallsign: "X" }).shouldId,
+    false,
+  );
+  assert.equal(
+    new FakeTransport({ ...RADIO, idInterval: 10, idCallsign: "X" }).shouldId,
+    true,
+  );
+});
+
+test("idCallsign accepts a string or a byte array and encodes UTF-8", () => {
+  const a = new FakeTransport({
+    ...RADIO,
+    idInterval: 10,
+    idCallsign: "AB",
+  });
+  const b = new FakeTransport({
+    ...RADIO,
+    idInterval: 10,
+    idCallsign: new Uint8Array([65, 66]),
+  });
+  assert.deepEqual(Array.from(a.idCallsign), [65, 66]);
+  assert.deepEqual(Array.from(b.idCallsign), [65, 66]);
+});
+
+test("id callsign longer than 32 encoded bytes is rejected", () => {
+  assert.throws(
+    () =>
+      new FakeTransport({
+        ...RADIO,
+        idInterval: 10,
+        idCallsign: "A".repeat(33),
+      }),
+    /Invalid RNode configuration/,
+  );
+});
+
+test("no beacon is armed without id configuration", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  const before = iface.written.length;
+  await iface.send(mkPacket(enc.encode("data")));
+  assert.equal(iface.firstTx, null, "firstTx stays null without id config");
+  // Wait past a plausible beacon window and confirm no second data frame.
+  await sleep(150);
+  assert.equal(dataPayloads(iface, before).length, 1);
+  await iface.disconnect();
+});
+
+test("id beacon fires idInterval after the first outbound packet", async () => {
+  const iface = new FakeTransport({
+    ...RADIO,
+    idInterval: 0.1,
+    idCallsign: "RNS-TEST",
+  });
+  await bringOnline(iface);
+  const before = iface.written.length;
+  await iface.send(mkPacket(enc.encode("payload")));
+  // Only the ordinary packet so far, and the beacon timer is armed.
+  assert.equal(dataPayloads(iface, before).length, 1);
+  assert.notEqual(iface.firstTx, null);
+  await waitFor(() => dataPayloads(iface, before).length === 2);
+  const beacon = dataPayloads(iface, before)[1];
+  assert.deepEqual(Array.from(beacon), Array.from(enc.encode("RNS-TEST")));
+  // Transmitting the beacon cleared the first-TX timestamp (so it re-arms only
+  // on the next ordinary packet).
+  assert.equal(iface.firstTx, null);
+  await iface.disconnect();
+});
+
+test("id beacon does not re-arm while already armed", async () => {
+  const iface = new FakeTransport({
+    ...RADIO,
+    idInterval: 0.15,
+    idCallsign: "ID",
+  });
+  await bringOnline(iface);
+  const before = iface.written.length;
+  await iface.send(mkPacket(enc.encode("a")));
+  const armedAt = iface.firstTx;
+  assert.notEqual(armedAt, null);
+  // A second ordinary packet while already armed must not reset the timer.
+  await iface.send(mkPacket(enc.encode("bb")));
+  assert.equal(iface.firstTx, armedAt);
+  // Exactly one beacon fires once the window elapses.
+  await waitFor(() =>
+    dataPayloads(iface, before).some((d) => d.length === 2 && d[0] === 73),
+  ); // "ID" = [73, 68]
+  const beacons = dataPayloads(iface, before).filter(
+    (d) => d.length === 2 && d[0] === 73 && d[1] === 68,
+  );
+  assert.equal(beacons.length, 1);
+  await iface.disconnect();
+});
+
+test("id beacon honours flow control and drains on CMD_READY", async () => {
+  const iface = new FakeTransport({
+    ...RADIO,
+    flowControl: true,
+    idInterval: 0.1,
+    idCallsign: "FC",
+  });
+  await bringOnline(iface);
+  const before = iface.written.length;
+  // First send goes out and (with flow control) marks the interface not ready;
+  // it also arms the beacon.
+  await iface.send(mkPacket(enc.encode("q")));
+  assert.notEqual(iface.firstTx, null);
+  // The beacon fires after idInterval but, the interface being not ready, it
+  // queues instead of transmitting.
+  await waitFor(() => iface._packetQueue.some((it) => it.isBeacon));
+  assert.equal(
+    iface.written
+      .slice(before)
+      .some(
+        (w) =>
+          w[1] === C.CMD_DATA &&
+          equalBytes(kissUnescape(w.slice(2, w.length - 1)), enc.encode("FC")),
+      ),
+    false,
+    "beacon should not have been transmitted while not ready",
+  );
+  // A CMD_READY signal drains exactly the queued beacon.
+  iface.push(cmdFrame(C.CMD_READY, [0x00]));
+  await waitFor(() =>
+    iface.written
+      .slice(before)
+      .some(
+        (w) =>
+          w[1] === C.CMD_DATA &&
+          equalBytes(kissUnescape(w.slice(2, w.length - 1)), enc.encode("FC")),
+      ),
+  );
+  await iface.disconnect();
+});
+
+// ---------------------------------------------------------------------------
+// hard_reset (Python `hard_reset`)
+// ---------------------------------------------------------------------------
+
+test("hardReset sends CMD_RESET 0xF8", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  const before = iface.written.length;
+  await iface.hardReset();
+  const reset = iface.written.slice(before).find((w) => w[1] === C.CMD_RESET);
+  assert.ok(reset, "should have sent a CMD_RESET");
+  assert.deepEqual(Array.from(reset.slice(2, reset.length - 1)), [0xf8]);
+  await iface.disconnect();
+});
+
+// ---------------------------------------------------------------------------
+// read_display / display updates (Python `read_display`, CMD_DISP_READ)
+// ---------------------------------------------------------------------------
+
+test("readDisplay sends CMD_DISP_READ with a 0x01 payload byte", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  const before = iface.written.length;
+  await iface.readDisplay(50); // short timeout; we only inspect the request
+  const req = iface.written.slice(before).find((w) => w[1] === C.CMD_DISP_READ);
+  assert.ok(req, "should have sent a CMD_DISP_READ");
+  assert.deepEqual(Array.from(req.slice(2, req.length - 1)), [0x01]);
+  assert.equal(iface.rDisp, null); // timed out, no response pushed
+  await iface.disconnect();
+});
+
+test("readDisplay captures the 1024-byte snapshot with unescaping", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  // A 1024-byte image cycling 0..255 four times, so it contains FEND(0xC0) and
+  // FESC(0xDB) and exercises the read-path unescaping.
+  const disp = new Uint8Array(1024);
+  for (let i = 0; i < 1024; i++) disp[i] = i & 0xff;
+  const pending = iface.readDisplay(2000);
+  await waitFor(() => iface.written.some((w) => w[1] === C.CMD_DISP_READ));
+  iface.push(cmdFrame(C.CMD_DISP_READ, Array.from(disp)));
+  const result = await pending;
+  assert.ok(result instanceof Uint8Array, "should resolve with a Uint8Array");
+  assert.equal(result.length, 1024);
+  assert.deepEqual(Array.from(result), Array.from(disp));
+  assert.equal(typeof iface.rDispLatency, "number");
+  await iface.disconnect();
+});
+
+test("readDisplay is a no-op on a headless (undetected) device", async () => {
+  const iface = new FakeTransport(RADIO); // not connected → display stays false
+  assert.equal(await iface.readDisplay(), null);
+  assert.equal(
+    iface.written.some((w) => w[1] === C.CMD_DISP_READ),
+    false,
+    "nothing should have been written",
+  );
+});
+
+test("startDisplayUpdates polls readDisplay until stopDisplayUpdates", async () => {
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+  iface.startDisplayUpdates(0.03);
+  await waitFor(
+    () => iface.written.filter((w) => w[1] === C.CMD_DISP_READ).length >= 3,
+  );
+  iface.stopDisplayUpdates();
+  const stopped = iface.written.filter((w) => w[1] === C.CMD_DISP_READ).length;
+  // Respond to any in-flight read so its wait does not linger on the 2s timeout.
+  iface.push(cmdFrame(C.CMD_DISP_READ, Array.from(new Uint8Array(1024))));
+  await sleep(120);
+  assert.equal(
+    iface.written.filter((w) => w[1] === C.CMD_DISP_READ).length,
+    stopped,
+    "no further reads after stopDisplayUpdates",
+  );
+  await iface.disconnect();
 });
