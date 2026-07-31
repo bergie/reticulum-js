@@ -36,6 +36,10 @@ We aim for good test coverage. Tests are to be implemented using the Node.js bui
 
 All tests should be verified against the Python reference implementation to make sure we are testing Reticulum compatibility instead of just quirks of our local implementation.
 
+In the end of implementing something, we need to ensure the whole suite works by:
+* Running tests with Node.js (`npm test`)
+* Running tests with Deno (`npm run test:deno`)
+
 ## Dependencies
 
 This tool aims to run on all modern JavaScript environments. There may be environment-specific interfaces, like for example the TCP Client interface that requires a server-side JavaScript runner like Node.js.
