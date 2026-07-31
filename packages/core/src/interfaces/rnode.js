@@ -270,7 +270,7 @@ export const KISS = Object.freeze({
  * class performs no I/O and is browser-safe.
  *
  * Concrete backends:
- * - {@link import("../../../node/src/interfaces/rnode-serial.js").RNodeSerialInterface}
+ * - {@link import("@reticulum/node").RNodeSerialInterface}
  *   (Node.js serial via `stty` + `node:fs`).
  *
  * Future Web Serial / Web Bluetooth backends subclass this and override

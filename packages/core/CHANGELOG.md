@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- Replaced the cross-package relative `{@link import("../../../node/…")}`
+  reference in `RNodeInterface`'s class doc with the bare specifier
+  `import("@reticulum/node")`, fixing the JSR
+  `relative-package-import` release error.
 
 ## [0.5.0] - 2026-07-31
 ### Added
