@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.5.2] - 2026-08-01
 ### Fixed
 - Replaced the `{@link import("@reticulum/node").RNodeSerialInterface}` link in
   `RNodeInterface`'s class doc with plain prose. JSR's dependency analyzer
