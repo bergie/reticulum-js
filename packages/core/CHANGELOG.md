@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- Replaced the `{@link import("@reticulum/node").RNodeSerialInterface}` link in
+  `RNodeInterface`'s class doc with plain prose. JSR's dependency analyzer
+  treats any `import("@reticulum/node")` form (introduced in 0.5.1 to dodge a
+  `relative-package-import` error) as a real dependency, which created a
+  circular `core → node → core` graph and aborted publishing with
+  `unresolvable 'jsr:' dependency: '@reticulum/node@^0.5.1'`. The package name
+  is now referenced as plain code text so no import specifier is emitted.
 
 ## [0.5.1] - 2026-08-01
 ### Changed
