@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- Added `./src/interfaces/rnode.js` and `./src/webrtc/signaling.js` to the
+  JSR `exports` map. `@reticulum/node`'s `rnode-serial` interface and
+  `@reticulum/webrtc-node` both deep-import these modules, but they were never
+  declared as JSR entrypoints, so JSR's module-graph build aborted publishing
+  `@reticulum/node` (and, by aborting the CI job, `webrtc-node` and
+  `websocket-server-node`) with `Module not found .../@reticulum/core/src/
+  interfaces/rnode.js`. npm was unaffected (its `package.json` has no `exports`
+  restriction); this is a JSR-only fix.
 
 ## [0.5.2] - 2026-08-01
 ### Fixed

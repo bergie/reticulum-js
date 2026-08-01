@@ -8,13 +8,15 @@
     "./src/core/packet.js": "./src/core/packet.js",
     "./src/interfaces/base.js": "./src/interfaces/base.js",
     "./src/interfaces/http.js": "./src/interfaces/http.js",
+    "./src/interfaces/rnode.js": "./src/interfaces/rnode.js",
     "./src/interfaces/webrtc.js": "./src/interfaces/webrtc.js",
     "./src/interfaces/websocket.js": "./src/interfaces/websocket.js",
     "./src/transport/hdlc-framer.js": "./src/transport/hdlc-framer.js",
     "./src/transport/kiss-framer.js": "./src/transport/kiss-framer.js",
     "./src/transport/transport.js": "./src/transport/transport.js",
     "./src/utils/encoding.js": "./src/utils/encoding.js",
-    "./src/utils/log.js": "./src/utils/log.js"
+    "./src/utils/log.js": "./src/utils/log.js",
+    "./src/webrtc/signaling.js": "./src/webrtc/signaling.js"
   },
   "publish": {
     "include": [
