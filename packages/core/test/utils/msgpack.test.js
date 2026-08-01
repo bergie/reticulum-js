@@ -119,3 +119,54 @@ describe("MicroMsgPack hardening (untrusted-input defenses)", () => {
     assert.deepEqual(Array.from(decoded), [1, 2, 3, 4, 5]);
   });
 });
+
+describe("MicroMsgPack 64-bit integer (BigInt) support", () => {
+  it("encodes a non-negative BigInt as uint64 wire bytes", () => {
+    const value = 0x0102030405060708n;
+    const encoded = MicroMsgPack.encode(value);
+    assert.deepEqual(
+      Array.from(encoded),
+      [0xcf, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
+    );
+  });
+
+  it("encodes a negative BigInt as int64 wire bytes", () => {
+    const encoded = MicroMsgPack.encode(-1n);
+    assert.deepEqual(
+      Array.from(encoded),
+      [0xd3, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+    );
+  });
+
+  it("round-trips a value above Number.MAX_SAFE_INTEGER as BigInt", () => {
+    const value = BigInt(Number.MAX_SAFE_INTEGER) + 3n; // not exactly representable as Number
+    const decoded = MicroMsgPack.decode(MicroMsgPack.encode(value));
+    assert.strictEqual(typeof decoded, "bigint");
+    assert.strictEqual(decoded, value);
+  });
+
+  it("round-trips a realistic packed HLC timestamp exactly", () => {
+    // physical_ms (~now) << 16 | logical counter — well above 2^53.
+    const hlc = (BigInt(Date.now()) << 16n) | 0x1234n;
+    const decoded = MicroMsgPack.decode(MicroMsgPack.encode(hlc));
+    assert.strictEqual(decoded, hlc);
+  });
+
+  it("still decodes safe-range 64-bit values as Number (backward compatible)", () => {
+    // 5_000_000_000 > uint32 but < MAX_SAFE_INTEGER -> stays a Number.
+    const decoded = MicroMsgPack.decode(MicroMsgPack.encode(5_000_000_000));
+    assert.strictEqual(typeof decoded, "number");
+    assert.strictEqual(decoded, 5_000_000_000);
+  });
+
+  it("throws a RangeError for BigInts outside the 64-bit range", () => {
+    assert.throws(
+      () => MicroMsgPack.encode(0x10000000000000000n), // 2^64
+      /uint64 range/,
+    );
+    assert.throws(
+      () => MicroMsgPack.encode(-0x8000000000000001n), // < -(2^63)
+      /int64 range/,
+    );
+  });
+});

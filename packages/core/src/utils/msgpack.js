@@ -73,6 +73,8 @@ export class MicroMsgPack {
       bytes.push(value ? 0xc3 : 0xc2); // true / false
     } else if (typeof value === "number") {
       MicroMsgPack._encodeNumber(value, bytes);
+    } else if (typeof value === "bigint") {
+      MicroMsgPack._encodeBigInt(value, bytes);
     } else if (typeof value === "string") {
       MicroMsgPack._encodeString(value, bytes);
     } else if (value instanceof Uint8Array) {
@@ -153,6 +155,35 @@ export class MicroMsgPack {
     const buffer = new ArrayBuffer(8);
     new DataView(buffer).setFloat64(0, value, false); // Big-Endian
     bytes.push(...new Uint8Array(buffer));
+  }
+
+  /**
+   * Encodes a BigInt as a big-endian 64-bit integer. Non-negative values use
+   * uint64 (0xcf); negative values use int64 (0xd3). Throws a RangeError when
+   * the magnitude does not fit in 64 bits, since MessagePack has no wider
+   * integer type.
+   * @param {bigint} value
+   * @param {number[]} bytes
+   * @private
+   */
+  static _encodeBigInt(value, bytes) {
+    if (value >= 0n) {
+      if (value > 0xffffffffffffffffn) {
+        throw new RangeError(`BigInt ${value} exceeds uint64 range`);
+      }
+      bytes.push(0xcf); // uint 64
+      const buffer = new ArrayBuffer(8);
+      new DataView(buffer).setBigUint64(0, value, false); // big-endian
+      bytes.push(...new Uint8Array(buffer));
+    } else {
+      if (value < -0x8000000000000000n) {
+        throw new RangeError(`BigInt ${value} is below int64 range`);
+      }
+      bytes.push(0xd3); // int 64
+      const buffer = new ArrayBuffer(8);
+      new DataView(buffer).setBigInt64(0, value, false); // big-endian (two's complement)
+      bytes.push(...new Uint8Array(buffer));
+    }
   }
 
   /**
@@ -466,33 +497,34 @@ export class MicroMsgPack {
   }
 
   /**
-   * Reads a big-endian unsigned 64-bit integer. Returned as a JS Number; values
-   * above Number.MAX_SAFE_INTEGER lose low-order precision but never throw.
-   * Some peers (e.g. Columba) send the §11.1 REQUEST envelope timestamp as a
-   * uint64 (ms / ns since epoch), which exceeds the uint32 range and previously
-   * aborted decoding with "Unimplemented MessagePack byte: 0xcf", dropping the
-   * whole REQUEST before any handler ran.
+   * Reads a big-endian unsigned 64-bit integer. Returns a JS Number when the
+   * value is exactly representable (≤ Number.MAX_SAFE_INTEGER); otherwise
+   * returns a BigInt so genuinely 64-bit values (e.g. packed HLC timestamps)
+   * survive a round-trip without precision loss.
    * @param {{view: DataView, offset: number}} state
-   * @returns {number}
+   * @returns {number|bigint}
    * @private
    */
   static _readUint64(state) {
     const val = state.view.getBigUint64(state.offset, false);
     state.offset += 8;
-    return Number(val);
+    return val <= Number.MAX_SAFE_INTEGER ? Number(val) : val;
   }
 
   /**
-   * Reads a big-endian signed 64-bit integer. Same Number / precision caveat
-   * as {@link _readUint64}.
+   * Reads a big-endian signed 64-bit integer. Same Number / BigInt selection
+   * rule as {@link _readUint64}: a Number when within the safe-integer range,
+   * otherwise a BigInt.
    * @param {{view: DataView, offset: number}} state
-   * @returns {number}
+   * @returns {number|bigint}
    * @private
    */
   static _readInt64(state) {
     const val = state.view.getBigInt64(state.offset, false);
     state.offset += 8;
-    return Number(val);
+    return val >= Number.MIN_SAFE_INTEGER && val <= Number.MAX_SAFE_INTEGER
+      ? Number(val)
+      : val;
   }
 
   /**

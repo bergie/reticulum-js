@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Added BigInt support in MsgPack
 ### Fixed
 - Restarting or stopping `Destination.startAnnouncing` no longer emits a
   "straggler" announce. Previously, a periodic tick that fired just before a
