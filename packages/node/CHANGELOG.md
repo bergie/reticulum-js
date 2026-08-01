@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-01
+
 ## [0.5.0] - 2026-07-31
 ### Added
 - Per-interface traffic counting for the Node.js interfaces. `TCPClientInterface`,

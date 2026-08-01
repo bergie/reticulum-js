@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.5.1] - 2026-08-01
 ### Changed
 - Added BigInt support in MsgPack
 ### Fixed

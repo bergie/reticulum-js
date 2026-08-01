@@ -120,6 +120,31 @@ POSTs, identity key files on disk). No behaviour change for well-formed traffic.
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.5.1] - 2026-08-01
+### Changed
+- **core**: Added BigInt support in MsgPack
+### Fixed
+- **core**: Restarting or stopping `Destination.startAnnouncing` no longer emits a
+  "straggler" announce. Previously, a periodic tick that fired just before a
+  restart/stop could still broadcast after the cadence was replaced (the
+  announce is async, with `await`s for `getPublicKey`/`sign` between the tick
+  and the broadcast), which made the restart-burst test flaky (`3 !== 2`) and
+  violated the documented "no extra immediate announce" contract. A monotonic
+  generation token is now bumped on every (re)start/stop; `_emitAnnounce`
+  stamps each periodic fire with the token active when it ticked and aborts
+  right before broadcasting if the cadence has since changed. Direct
+  `announce()` / `announcePathResponse()` calls are unaffected (always emit).
+- **core**: Replaced the cross-package relative `{@link import("../../../node/…")}`
+  reference in `RNodeInterface`'s class doc with the bare specifier
+  `import("@reticulum/node")`, fixing the JSR
+  `relative-package-import` release error.
+- **core**: The reconnect backoff timer in `Interface._sleepInterruptible` no longer
+  calls `timer.unref()`. An interface that is actively reconnecting keeps the
+  event loop alive (it is doing real work), and the previous `unref()` made
+  Deno's test runner report the reconnect-loop tests as
+  "Promise resolution is still pending but the event loop has already
+  resolved". `disconnect()` still aborts the in-flight backoff immediately.
+
 ## [0.5.0] - 2026-07-31
 ### Added
 - **core**: RNode ID callsign beacon, hard reset, and display read (work doc #6): the
