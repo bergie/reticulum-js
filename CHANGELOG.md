@@ -120,6 +120,80 @@ POSTs, identity key files on disk). No behaviour change for well-formed traffic.
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.5.3] - 2026-08-02
+### Added
+- **core**: **rfed (Reticulum Federation) Phase 1** — the channel client (work doc #25):
+  - `RFedClient` speaks the modern split rfed destinations (`rfed.channel.` +
+    `rfed.delivery`) over Reticulum transport: `subscribe` (signed
+    `[channel_hash, pubkey, sig]` payload, caches the advertised stamp cost),
+    `unsubscribe`, `publish` (fire-and-forget DATA SEND, wrapped via the
+    Phase-0 codec with the cached stamp cost), `pull` (`/rfed/pull` paging),
+    and `listen` (inbound `rfed.delivery` fanout receive → unwrap). Exposed
+    at the package entry point. The full subscribe → publish → live-fanout
+    → pull → unsubscribe round-trip is covered by a loopback mesh test.
+- **core**: **rfed (Reticulum Federation) Phase 0** — pure-JS, wire-compatible channel
+  messaging primitives (work doc #25, protocol version 1):
+  - `deriveChannel(name)` derives the deterministic channel `Identity` and
+    16-byte channel hash from a plain-text name (`seed = SHA-256(name)`, both
+    private keys = the seed), verified byte-for-byte against the Python
+    `RFed/utilities/channel_hash.py` reference vectors.
+  - `deliveryHashFor(identity)` computes the `lxmf.delivery` destination hash
+    (the LXMF `source_hash`/`destination_hash` channels address), distinct from
+    the bare identity hash — the classic rfed correctness invariant.
+  - `wrapChannelMessage` / `unwrapChannelMessage` implement the RTID prelude
+    codec: a propagation-style LXMF message wrapped in a 4-byte `"RTID"` magic
+    + 64-byte sender public key, EC-encrypted to the channel identity. A ~5-byte
+    body yields `inner_blob = 256` / `rfed_payload = 304`, matching the
+    `RFed/SPEC.md` canonical wire-format reference exactly.
+  - `generateChannelStamp` / `validateChannelStamp` implement the rfed PoW
+    stamp contract bound to `channel_hash ‖ inner_blob` with the
+    rfed-specific `STAMP_EXPAND_ROUNDS = 16` (distinct from LXMF PN's 1000).
+  - `parseSendPayload` / `parseFanoutPayload` split the stamped SEND and
+    stamp-free fanout wire forms.
+  Exposed under the `@reticulum/core` entry point; full unit suite under
+  `packages/core/test/rfed/*`.
+- **core**: `examples/rfed_client.js` — a small rfed channel client example that
+  connects to the local Reticulum instance, discovers a rfed node by its
+  `rfed.node` hash, subscribes to a channel, listens for live fanout, and
+  optionally publishes. Demonstrates the multi-hop path-request flow and the
+  deferred-blob pull. Verified end-to-end against a live `reticulum-rust`
+  rfed node.
+### Changed
+- **core**: **rfed channel stamp now mirrors the deployed `reticulum-rust` `LXStamper`**
+  (`rfed/stamp.js`, work doc #25). The rfed SPEC defers the workblock to
+  `LXStamper::stamp_workblock`, expecting Python LXMF's memory-hard HKDF
+  expansion. The current `reticulum-rust` `LXStamper` is instead an
+  incompatible stub (iterated SHA-256, 32 bytes) whose stamps do not
+  cross-validate with Python LXMF; live rfed nodes therefore rejected
+  Python-valid rfed SEND stamps (`[channel] SEND rejected: stamp does not
+  meet required cost`). `generateChannelStamp`/`validateChannelStamp` now use
+  the reticulum-rust workblock + sequential-nonce search so reticulum-js
+  interoperates with live nodes today. A corrective patch for
+  `Reticulum-rust/src/lxstamper.rs` (real HKDF workblock + multi-byte msgpack
+  counter, with a Python-vector regression test) accompanies this change; once
+  it lands upstream, this module should revert to the `lxmf/stamper.js` workblock.
+  End-to-end subscribe → publish → live-fanout → verified-receive against a
+  live rfed node is confirmed.
+### Fixed
+- **core**: Added `./src/interfaces/rnode.js` and `./src/webrtc/signaling.js` to the
+  JSR `exports` map. `@reticulum/node`'s `rnode-serial` interface and
+  `@reticulum/webrtc-node` both deep-import these modules, but they were never
+  declared as JSR entrypoints, so JSR's module-graph build aborted publishing
+  `@reticulum/node` (and, by aborting the CI job, `webrtc-node` and
+  `websocket-server-node`) with `Module not found .../@reticulum/core/src/
+  interfaces/rnode.js`. npm was unaffected (its `package.json` has no `exports`
+  restriction); this is a JSR-only fix.
+- **core**: **lxmf stamp workblock counter is now multi-byte msgpack at `n >= 128`**
+  (`lxmf/stamper.js`). The per-round salt input is `material ‖ msgpack(n)`;
+  `umsgpack.packb` encodes `128..255` as uint8 (`0xcc nn`) and `256+` as
+  uint16/32/64, but the workblock loop packed `n` as a single byte. The
+  produced workblock therefore diverged from Python LXMF for round counts >
+  128 — i.e. LXMF propagation-node stamps (1000 rounds) and message stamps
+  (3000 rounds) would have been rejected by a Python/LXMF recipient. rfed's
+  16-round stamps were unaffected (n < 128). Verified byte-identical to Python
+  `LXStamper.stamp_workblock` at 300 rounds; the high-round vector is now
+  pinned by a regression test.
+
 ## [0.5.2] - 2026-08-01
 ### Fixed
 - **core**: Replaced the `{@link import("@reticulum/node").RNodeSerialInterface}` link in

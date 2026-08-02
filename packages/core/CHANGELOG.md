@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.5.3] - 2026-08-02
 ### Added
 - **rfed (Reticulum Federation) Phase 1** — the channel client (work doc #25):
   - `RFedClient` speaks the modern split rfed destinations (`rfed.channel.` +
