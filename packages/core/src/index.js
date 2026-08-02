@@ -48,7 +48,6 @@ export {
   unwrapChannelMessage,
   wrapChannelMessage,
 } from "./rfed/blob.js";
-export { RFedClient } from "./rfed/client.js";
 // --- rfed (Reticulum Federation; work doc #25) ---
 // Store-and-forward channel messaging: deterministic channel derivation,
 // the RTID source-identity prelude codec, and the channel PoW stamp contract.
@@ -58,6 +57,7 @@ export {
   deliveryHashFor,
   deriveChannel,
 } from "./rfed/channel.js";
+export { RFedClient } from "./rfed/client.js";
 export * as RFedConstants from "./rfed/constants.js";
 export {
   channelStampWorkblock,
