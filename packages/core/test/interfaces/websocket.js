@@ -349,8 +349,26 @@ test("WebSocket client connect failure rejects", async () => {
 test("WebSocket client builds URL from host and port", () => {
   const a = new WebSocketClientInterface({ host: "example.com", port: 8080 });
   assert.strictEqual(a.url, "ws://example.com:8080");
+  assert.strictEqual(a.ssl, false, "ssl defaults to false");
   const b = new WebSocketClientInterface({ url: "wss://x/y" });
   assert.strictEqual(b.url, "wss://x/y");
+});
+
+test("WebSocket client ssl option builds a wss:// URL from host and port", () => {
+  // Mirrors the Python reference `_target_uri()`: `ssl` selects the scheme.
+  const secure = new WebSocketClientInterface({
+    host: "example.com",
+    port: 443,
+    ssl: true,
+  });
+  assert.strictEqual(secure.url, "wss://example.com:443");
+  assert.strictEqual(secure.ssl, true);
+  // An explicit url scheme always wins over ssl.
+  const override = new WebSocketClientInterface({
+    url: "ws://x/y",
+    ssl: true,
+  });
+  assert.strictEqual(override.url, "ws://x/y");
 });
 
 test("WebSocket client drops messages at or below header minimum (HEADER_MINSIZE)", async () => {

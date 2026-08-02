@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `WebSocketClientInterface` gained an `ssl` option (mirrors the Python
+  reference `ssl` config key) that builds a `wss://` dial URL from `host`/`port`.
+  The standard `WebSocket` API then negotiates TLS from the scheme. Needed for
+  browser apps running in a secure context (HTTPS), which cannot open `ws://`.
+  An explicit `url` scheme always takes precedence.
 
 ## [0.5.3] - 2026-08-02
 ### Added

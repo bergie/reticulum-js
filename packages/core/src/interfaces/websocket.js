@@ -77,10 +77,15 @@ export function packetFromMessage(bytes, ifacSize) {
  * @typedef {Object} WebSocketClientInterfaceOptions
  * @property {string} [url] - Full WebSocket URL, e.g. `ws://host:port` or
  *   `wss://host/path`. Takes precedence over `host`/`port`.
- * @property {string} [host] - Target host. Used to build `ws://host:port` when
- *   `url` is omitted.
- * @property {number} [port] - Target port. Used to build `ws://host:port` when
- *   `url` is omitted.
+ * @property {string} [host] - Target host. Used to build `ws://host:port` (or
+ *   `wss://` when `ssl` is set) when `url` is omitted.
+ * @property {number} [port] - Target port. Used to build `ws://host:port` (or
+ *   `wss://` when `ssl` is set) when `url` is omitted.
+ * @property {boolean} [ssl] - Enable TLS so the dial URL uses the `wss://`
+ *   scheme (mirrors the Python reference `ssl` config key). Only consulted
+ *   when `url` is omitted; an explicit `url` scheme always wins. Browsers in
+ *   a secure context (HTTPS) cannot open `ws://`, so a browser app needs this
+ *   to reach a TLS-terminating peer. Default `false`.
  * @property {WebSocket} [websocket] - An already-open WebSocket to adopt
  *   instead of dialing. Used when a server spawns a client interface for an
  *   accepted connection.
@@ -146,7 +151,8 @@ export class WebSocketClientInterface extends Interface {
           default: "localhost",
           examples: ["localhost", "127.0.0.1"],
           description:
-            "Target host. Used to build ws://host:port when url is omitted.",
+            "Target host. Used to build ws://host:port (or wss:// when ssl " +
+            "is set) when url is omitted.",
         },
         port: {
           type: "integer",
@@ -154,7 +160,18 @@ export class WebSocketClientInterface extends Interface {
           maximum: 65535,
           examples: [4242],
           description:
-            "Target port. Used to build ws://host:port when url is omitted.",
+            "Target port. Used to build ws://host:port (or wss:// when ssl " +
+            "is set) when url is omitted.",
+        },
+        ssl: {
+          type: "boolean",
+          default: false,
+          description:
+            "Enable TLS so the dial URL uses the wss:// scheme (Python config " +
+            "key: ssl). Only consulted when url is omitted; an explicit url " +
+            "scheme always wins. Browsers in a secure context (HTTPS) cannot " +
+            "open ws://, so a browser app needs this to reach a " +
+            "TLS-terminating peer.",
         },
         ...reconnectSchemaProperties(),
         framing: {
@@ -187,12 +204,18 @@ export class WebSocketClientInterface extends Interface {
   constructor(options) {
     super();
     this._initReconnectState(options);
+    /** Whether TLS is enabled (`wss://`). Mirrors the Python `use_ssl` flag. */
+    this.ssl = options.ssl === true;
     if (options.url) {
       this.url = options.url;
     } else {
       const host = options.host || "localhost";
       const port = options.port || 0;
-      this.url = `ws://${host}:${port}`;
+      // Mirrors the Python reference `_target_uri()`: `wss` when ssl is set,
+      // `ws` otherwise. The standard WebSocket API picks up TLS from the
+      // scheme, so nothing else is needed on the client side.
+      const scheme = this.ssl ? "wss" : "ws";
+      this.url = `${scheme}://${host}:${port}`;
     }
     this.name =
       options.name || `ws-client-${this.url.replace(/^wss?:\/\//, "")}`;

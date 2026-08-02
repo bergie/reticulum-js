@@ -18,6 +18,8 @@
 
 /* @ts-self-types="../types/src/index.d.ts" */
 
+import fs from "node:fs";
+import https from "node:https";
 import { Interface } from "@reticulum/core/src/interfaces/base.js";
 import { WebSocketClientInterface } from "@reticulum/core/src/interfaces/websocket.js";
 import { WebSocketServer } from "ws";
@@ -29,6 +31,14 @@ import { WebSocketServer } from "ws";
  * @property {number} [ifacSize] - Optional IFAC field size for spawned clients.
  * @property {"raw"|"kiss"} [framing] - Wire framing inherited by spawned client
  *   interfaces. Default `"raw"`.
+ * @property {boolean} [ssl] - Terminate TLS so clients connect over `wss://`
+ *   (mirrors the Python reference `ssl` config key). Requires both `certFile`
+ *   and `keyFile`. Browsers in a secure context (HTTPS) cannot open `ws://`, so
+ *   a browser-facing server needs this. Default `false`.
+ * @property {string} [certFile] - Path to a PEM certificate chain, required when
+ *   `ssl` is set (mirrors the Python reference `certfile` config key).
+ * @property {string} [keyFile] - Path to a PEM private key, required when `ssl`
+ *   is set (mirrors the Python reference `keyfile` config key).
  * @property {string} [name] - Interface name.
  */
 
@@ -78,6 +88,27 @@ export class WebSocketServerInterface extends Interface {
             "Defaults to raw; set to kiss for RNode-style KISS-over-WebSocket " +
             "peers.",
         },
+        ssl: {
+          type: "boolean",
+          default: false,
+          description:
+            "Terminate TLS so clients connect over wss:// (Python config key: " +
+            "ssl). Requires both certFile and keyFile. Browsers in a secure " +
+            "context (HTTPS) cannot open ws://, so a browser-facing server " +
+            "needs this.",
+        },
+        certFile: {
+          type: "string",
+          description:
+            "Path to a PEM certificate chain, required when ssl is set " +
+            "(Python config key: certfile).",
+        },
+        keyFile: {
+          type: "string",
+          description:
+            "Path to a PEM private key, required when ssl is set (Python " +
+            "config key: keyfile).",
+        },
       },
       required: ["listenPort"],
       additionalProperties: false,
@@ -99,6 +130,26 @@ export class WebSocketServerInterface extends Interface {
     this.ifacSize = options.ifacSize || 0;
     /** @type {"raw"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "raw";
+    /** Terminate TLS (`wss://`). Mirrors the Python `use_ssl` flag. */
+    this.ssl = options.ssl === true;
+    /** Path to a PEM certificate chain. Mirrors the Python `certfile` key. */
+    this.certFile = options.certFile || null;
+    /** Path to a PEM private key. Mirrors the Python `keyfile` key. */
+    this.keyFile = options.keyFile || null;
+
+    // Validation mirrors the Python reference WebSocketServerInterface: SSL
+    // requires both a certificate chain and a private key, and providing
+    // either without SSL is also rejected (it would silently do nothing).
+    if (this.ssl && (!this.certFile || !this.keyFile)) {
+      throw new Error(
+        `Both certFile and keyFile must be specified when ssl is enabled for ${this.name}`,
+      );
+    }
+    if (!this.ssl && (this.certFile || this.keyFile)) {
+      throw new Error(
+        `SSL must be enabled when certFile or keyFile is specified for ${this.name}`,
+      );
+    }
     /**
      * Nominal bitrate, inherited by spawned client interfaces. JS-specific
      * (no Python equivalent); matches the WebSocket client's TCP-backed guess.
@@ -107,6 +158,12 @@ export class WebSocketServerInterface extends Interface {
     this.bitrate = 10000000;
     /** @type {WebSocketServer|null} */
     this.server = null;
+    /**
+     * The underlying HTTPS server we create when terminating TLS ourselves.
+     * `null` in the plain `ws://` case (where `ws` owns the HTTP server).
+     * @type {import("node:https").Server | null}
+     */
+    this.tlsServer = null;
     /** @type {Set<WebSocketClientInterface>} */
     this.spawnedInterfaces = new Set();
     /** @type {boolean} */
@@ -139,10 +196,23 @@ export class WebSocketServerInterface extends Interface {
    */
   async connect() {
     return new Promise((resolve, reject) => {
-      this.server = new WebSocketServer({
-        host: this.listenIp,
-        port: this.listenPort,
-      });
+      // When terminating TLS we wrap a Node `https.Server` and hand it to
+      // `ws` via the `server` option. `ws` then forwards `listening` and
+      // `error` from the underlying server but does NOT call `listen()` (nor
+      // `close()` on shutdown), so we drive both ourselves.
+      if (this.ssl) {
+        this.tlsServer = https.createServer({
+          cert: fs.readFileSync(/** @type {string} */ (this.certFile)),
+          key: fs.readFileSync(/** @type {string} */ (this.keyFile)),
+        });
+        this.server = new WebSocketServer({ server: this.tlsServer });
+        this.tlsServer.listen(this.listenPort, this.listenIp);
+      } else {
+        this.server = new WebSocketServer({
+          host: this.listenIp,
+          port: this.listenPort,
+        });
+      }
       this.server.on("listening", () => {
         this.online = true;
         resolve();
@@ -182,6 +252,13 @@ export class WebSocketServerInterface extends Interface {
     if (server) {
       await new Promise((resolve) => server.close(resolve));
       this.server = null;
+    }
+    // `ws` does not close an HTTPS server it did not create; close the one we
+    // made for TLS termination ourselves.
+    const tlsServer = this.tlsServer;
+    if (tlsServer) {
+      await new Promise((resolve) => tlsServer.close(resolve));
+      this.tlsServer = null;
     }
     await Promise.all(
       Array.from(this.spawnedInterfaces).map((client) => client.disconnect()),

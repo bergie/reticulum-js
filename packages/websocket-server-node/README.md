@@ -33,6 +33,46 @@ await server.connect();
 
 Set `framing: "kiss"` for RNode-style KISS-over-WebSocket peers (defaults to `raw`).
 
+## TLS / `wss://`
+
+Browsers running in a secure context (an HTTPS page) cannot open `ws://`
+connections (mixed-content blocking), so a browser-facing server must terminate
+TLS and listen for `wss://`. Enable it with `ssl: true` plus the PEM certificate
+chain and private key paths (mirrors the Python reference `ssl`/`certfile`/
+`keyfile` config keys):
+
+```js
+import fs from "node:fs";
+
+const server = new WebSocketServerInterface({
+  listenPort: 443,
+  ssl: true,
+  certFile: "/etc/letsencrypt/live/ws.example.com/fullchain.pem",
+  keyFile: "/etc/letsencrypt/live/ws.example.com/privkey.pem",
+});
+await server.connect();
+```
+
+A `WebSocketClientInterface` then connects with the `ssl` option (or a `wss://`
+`url`) — the standard `WebSocket` API negotiates TLS from the scheme:
+
+```js
+const client = new WebSocketClientInterface({
+  host: "ws.example.com",
+  port: 443,
+  ssl: true, // builds wss://ws.example.com:443
+});
+await client.connect();
+```
+
+The constructor validates the options the same way the Python reference does:
+enabling `ssl` requires **both** `certFile` and `keyFile`, and providing either
+without `ssl` is rejected (it would silently do nothing).
+
+> When a reverse proxy such as Caddy or nginx terminates TLS in front of the
+> server, leave `ssl` off here and bind to a private or loopback address; the
+> proxy offers `wss://` to remote clients.
+
 ## What's included
 
 | Export | Interface id | Runtime deps | Notes |

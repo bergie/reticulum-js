@@ -123,6 +123,17 @@ import { HttpPostClientInterface } from "@reticulum/core/src/interfaces/http.js"
 import { WebSocketClientInterface } from "@reticulum/core/src/interfaces/websocket.js";
 import { WebRTCInterface } from "@reticulum/core/src/interfaces/webrtc.js";
 ```
+
+> **Browser secure contexts:** an HTTPS page cannot open `ws://` (mixed-content
+> blocking), so dial a TLS-terminating peer over `wss://` instead. Pass
+> `ssl: true` (or a `wss://` `url`) and the standard `WebSocket` API negotiates
+> TLS from the scheme:
+>
+> ```js
+> new WebSocketClientInterface({ host: "node.example.org", port: 443, ssl: true });
+> // -> wss://node.example.org:443
+> ```
+
 **Node-only (in [`@reticulum/node`](../node/README.md)):**
 
 ```js

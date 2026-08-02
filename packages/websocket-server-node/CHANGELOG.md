@@ -1,6 +1,16 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Optional TLS termination (`ssl: true` with `certFile`/`keyFile`), mirroring
+  the Python reference `WebSocketServerInterface` `ssl`/`certfile`/`keyfile`
+  config keys. When enabled the server wraps a Node.js `https.Server` (with the
+  PEM certificate chain and private key) and hands it to `ws`, so clients
+  connect over `wss://`. Needed for browser apps running in a secure context
+  (HTTPS), which cannot open `ws://`. Constructor validation matches the Python
+  reference: SSL requires both `certFile` and `keyFile`, and providing either
+  without `ssl` is rejected. Verified interoperable in both directions with the
+  Python reference over `wss://`.
 
 ## [0.5.3] - 2026-08-02
 
