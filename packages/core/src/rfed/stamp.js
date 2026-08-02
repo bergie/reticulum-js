@@ -31,6 +31,8 @@
  *
  * `stamp_cost` is owned by the `/rfed/subscribe` reply: a cost of `0` (or
  * `nil`) means stamping is disabled and no stamp is required or appended.
+ *
+ * See also https://github.com/jrl290/Reticulum-rust/pull/2
  */
 
 import { Identity } from "../core/identity.js";
