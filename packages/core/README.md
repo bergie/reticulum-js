@@ -11,7 +11,7 @@ Reticulum is a mesh networking stack designed for both local and wide-area netwo
 Reticulum gives several building blocks for enabling applications and users to communicate with each other:
 
 - **Packets**: raw data packets, either as-is or over an established Link
-- **LXMF Messages**: one-to-one structured payloads with store-and-forward capability. Think instant messaging, email, telemetry transfer
+- **LXMF Messages**: one-to-one structured payloads with store-and-forward capability. Think instant messaging, email, telemetry transfer. With the addition of RFed, LXMF messaging also works many-to-many
 - **Request/Response**: calls to services, with optional request payloads and identification. Think `fetch`
 - **Resources**: large chunkable file transport
 - **Channels**: bidirectional data channels with a peer
