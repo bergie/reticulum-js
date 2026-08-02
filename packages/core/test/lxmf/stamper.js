@@ -37,6 +37,27 @@ test("LXMF Stamper", async (t) => {
     },
   );
 
+  await t.test(
+    "stampWorkblock counter is multi-byte msgpack at n >= 128 (matches Python)",
+    async () => {
+      // 300 rounds crosses the uint8 boundary (n = 128..255 encode as 0xcc nn).
+      // A naive single-byte counter would diverge from Python LXStamper here.
+      // Vector generated with Python LXMF.LXStamper.stamp_workblock:
+      //   material = RNS.Identity.full_hash(b"cross-check material")
+      const material = hexToBytes(
+        "01310dfe3bcb204b5bc6889def4de0cc6f98b64972a17399866cffb0651cf890",
+      );
+      const wb = await stampWorkblock(material, 300);
+      assert.strictEqual(wb.length, 300 * 256);
+      assert.deepStrictEqual(
+        wb.slice(0, 32),
+        hexToBytes(
+          "4db69f305d4e0fc69a511bf38e8bc6b6f169dbd2bbe57bab4f943330057008b4",
+        ),
+      );
+    },
+  );
+
   await t.test("stampValue matches Python", async () => {
     const { material_hex, expand_rounds, stamp_hex, expected_value } =
       fixtures.workblock;

@@ -13,6 +13,39 @@
 import { hkdf } from "../crypto/ciphers.js";
 import { LXMF_OVERHEAD } from "./constants.js";
 
+/**
+ * Encodes a non-negative integer as MessagePack, matching `umsgpack.packb` /
+ * `msgpack.packb` for unsigned ints (positive fixint, uint8, uint16, uint32,
+ * uint64). Used for the per-round stamp-workblock salt counter so the workblock
+ * is byte-identical to Python LXMF's at any round count (rfed 16, LXMF PN 1000,
+ * LXMF message 3000).
+ *
+ * @param {number} n
+ * @returns {Uint8Array}
+ */
+function msgpackUint(n) {
+  if (n < 0x80) return new Uint8Array([n]);
+  if (n <= 0xff) return new Uint8Array([0xcc, n]);
+  if (n <= 0xffff) return new Uint8Array([0xcd, (n >> 8) & 0xff, n & 0xff]);
+  if (n <= 0xffffffff)
+    return new Uint8Array([
+      0xce,
+      (n >>> 24) & 0xff,
+      (n >>> 16) & 0xff,
+      (n >>> 8) & 0xff,
+      n & 0xff,
+    ]);
+  // uint64 (big-endian)
+  const out = new Uint8Array(9);
+  out[0] = 0xcf;
+  let v = BigInt(n);
+  for (let i = 8; i >= 1; i--) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  return out;
+}
+
 /** Standard message-stamp HKDF expansion rounds (regular stamps). */
 export const WORKBLOCK_EXPAND_ROUNDS = 3000;
 /** Propagation-node stamp expansion rounds (cheaper — store-and-forward throttles). */
@@ -54,9 +87,10 @@ export async function stampWorkblock(
   /** @type {Uint8Array[]} */
   const chunks = [];
   for (let n = 0; n < expandRounds; n++) {
-    const counter = new Uint8Array([n]);
-    // material || msgpack(n)  — umsgpack packs small non-negative ints as
-    // positive fixint, so a single byte.
+    // material || msgpack(n) — the per-round salt input. umsgpack.packb
+    // encodes unsigned ints as positive fixint (<0x80), then uint8/16/32/64,
+    // so the counter is multi-byte once n >= 128 (LXMF PN/message rounds).
+    const counter = msgpackUint(n);
     const saltInput = new Uint8Array(material.length + counter.length);
     saltInput.set(material, 0);
     saltInput.set(counter, material.length);

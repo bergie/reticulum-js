@@ -42,6 +42,29 @@ export * as LXMFConstants from "./lxmf/constants.js";
 export { Message as LXMessage } from "./lxmf/message.js";
 export { LXMRouter } from "./lxmf/router.js";
 export * as LXStamper from "./lxmf/stamper.js";
+export {
+  parseFanoutPayload,
+  parseSendPayload,
+  unwrapChannelMessage,
+  wrapChannelMessage,
+} from "./rfed/blob.js";
+export { RFedClient } from "./rfed/client.js";
+// --- rfed (Reticulum Federation; work doc #25) ---
+// Store-and-forward channel messaging: deterministic channel derivation,
+// the RTID source-identity prelude codec, and the channel PoW stamp contract.
+// Wire-compatible with the Rust `rfed` reference (protocol version 1).
+export {
+  channelPath,
+  deliveryHashFor,
+  deriveChannel,
+} from "./rfed/channel.js";
+export * as RFedConstants from "./rfed/constants.js";
+export {
+  channelStampWorkblock,
+  generateChannelStamp,
+  STAMP_SIZE as RFED_STAMP_SIZE,
+  validateChannelStamp,
+} from "./rfed/stamp.js";
 // --- Persistence (work doc #16) ---
 // Selective persistence coordinator; a platform-neutral storage contract; and
 // a reference in-memory backend. Real backends live in companion packages
