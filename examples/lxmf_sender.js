@@ -184,7 +184,26 @@ async function sendViaPropagationNode(lxmf, senderIdentity, targetHash) {
   }
   console.log("\n--- Method 3: Propagation node delivery ---");
   try {
-    lxmf.setOutboundPropagationNode(fromHex(propagationNodeHex));
+    const propagationNodeHash = fromHex(propagationNodeHex);
+    lxmf.setOutboundPropagationNode(propagationNodeHash);
+
+    // We need the node's identity (and the path it arrives on) before we can
+    // open a link to it. Wait for its announce — or a persisted identity from
+    // a prior successful submit. Once the link opens, the transport marks the
+    // node contacted (markContacted on the LINKREQUEST send), so its identity
+    // is persisted for next time without us having to store every announce.
+    console.log(
+      `\nWaiting to learn the identity of propagation node ${propagationNodeHex} (from an announce)...`,
+    );
+    const nodeIdentity = await waitForKnownIdentity(propagationNodeHash);
+    if (!nodeIdentity) {
+      console.error(
+        `[!] Propagation node identity for ${propagationNodeHex} is still unknown after timeout.\n` +
+          "    Make sure the node is online and has announced.",
+      );
+      return;
+    }
+
     const message = new LXMessage({
       sourceHash: lxmf.deliveryDest.destinationHash,
       destinationHash: targetHash,
