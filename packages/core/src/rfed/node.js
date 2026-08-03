@@ -63,6 +63,10 @@ const DEFAULT_PULL_PAGE_SIZE = 25;
 const DEFAULT_DEFERRED_QUEUE_LIMIT = 256;
 /** Default subscriber presence TTL (seconds) — rfed.delivery announce freshness. */
 const DEFAULT_PRESENCE_TTL_SEC = 3600;
+/** Blob-store TTL (SPEC §5: 30 days). */
+const BLOB_TTL_SECS = 30 * 24 * 3600;
+/** Deferred-queue entry TTL (SPEC §7: 7-day prune). */
+const DEFERRED_TTL_SECS = 7 * 24 * 3600;
 
 /**
  * @typedef {Object} RFedNodeOptions
@@ -79,6 +83,9 @@ const DEFAULT_PRESENCE_TTL_SEC = 3600;
  * @property {number} [config.storageLimitBytes] Blob-store capacity (default 2 GiB).
  * @property {number} [config.presenceTtlSec] Subscriber presence TTL (default 3600).
  * @property {string} [config.name] Display name for the `rfed.node` announce.
+ * @property {(subscriberHash: Uint8Array) => { deferredQueueLimit: number }} [config.policyFor]
+ *   Per-subscriber policy lookup (default tier); a runner overrides this to
+ *   drive VIP tiers from config. Used for the per-subscriber deferred cap.
  */
 
 /**
@@ -107,6 +114,18 @@ export class RFedNode {
       config.deferredQueueLimit ?? DEFAULT_DEFERRED_QUEUE_LIMIT;
     this.name = config.name ?? "rfed";
     this.presenceTtlSec = config.presenceTtlSec ?? DEFAULT_PRESENCE_TTL_SEC;
+
+    /**
+     * Per-subscriber policy lookup (mirrors Rust `NodeConfig::policy_for`).
+     * Defaults to the flat configured limits; a runner overrides this to drive
+     * VIP tiers from real config. Used today for the per-subscriber deferred
+     * queue cap.
+     *
+     * @type {(subscriberHash: Uint8Array) => { deferredQueueLimit: number }}
+     */
+    this.policyFor =
+      config.policyFor ??
+      (() => ({ deferredQueueLimit: this.deferredQueueLimit }));
 
     /** @type {BlobStore} */
     this.blobStore = new BlobStore({
@@ -226,6 +245,19 @@ export class RFedNode {
       this._announceListener = null;
     }
     this._started = false;
+  }
+
+  /**
+   * Periodic maintenance — a runner calls this hourly (SPEC §5/§7). Prunes
+   * expired blobs (30-day TTL) and deferred-queue entries (7-day TTL) and
+   * evicts blob-store overflow to the capacity limit.
+   *
+   * @returns {{ blobsEvicted: number, deferredEvicted: number }}
+   */
+  tickMaintenance() {
+    const blobsEvicted = this.blobStore.pruneOlderThan(BLOB_TTL_SECS);
+    const deferredEvicted = this.deferred.evictExpired(DEFERRED_TTL_SECS);
+    return { blobsEvicted, deferredEvicted };
   }
 
   /**
@@ -391,11 +423,12 @@ export class RFedNode {
       if (this.isOnline(sub.deliveryHash)) {
         await this._sendDelivery(sub.identity, fanoutPayload);
       } else {
+        const policy = this.policyFor(sub.subscriberHash);
         this.deferred.enqueue(
           sub.subscriberHash,
           channelHash,
           innerBlob,
-          this.deferredQueueLimit,
+          policy.deferredQueueLimit,
         );
       }
     }

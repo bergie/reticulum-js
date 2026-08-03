@@ -34,6 +34,18 @@
   package entry point. Covered by a loopback-mesh suite (live fanout, two-client
   relay, deferred→pull, deferred→announce-drain, stamp enforcement, unsubscribe,
   blob-store ingest).
+- **rfed (Reticulum Federation) Phase 3** — fanout + deferred delivery
+  completion (work doc #25):
+  - `RFedNode.tickMaintenance()` prunes expired blobs (30-day TTL, SPEC §5)
+    and deferred-queue entries (7-day TTL, SPEC §7); a runner calls it hourly.
+  - `BlobStore.pruneOlderThan(maxAgeSec)` is the public prune hook (the store
+    also self-prunes opportunistically on ingest).
+  - `RFedNode` accepts a `config.policyFor(subscriberHash)` callback (mirrors
+    Rust `NodeConfig::policy_for`); the per-subscriber deferred-queue cap is
+    read from it, so a `@reticulum/node` runner can drive VIP tiers from real
+    config. Defaults to the flat configured `deferredQueueLimit`.
+  (Backup-subscription suppression — “skip backups whose owner is online” —
+  stays deferred to the Phase 6 backup-failover work.)
 
 ### Changed
 - **rfed stamp workblock is now a single, documented switch point**

@@ -451,3 +451,74 @@ describe("RFedNode — blob store records every ingest", () => {
     assert.notStrictEqual(toHex(ids[0]), toHex(ids[1]));
   });
 });
+
+describe("RFedNode — periodic maintenance (Phase 3)", () => {
+  test("tickMaintenance prunes expired deferred entries", async () => {
+    // No transport round-trip needed: drive the deferred queue directly with a
+    // backdated entry, then let tickMaintenance (7-day TTL) evict it.
+    const { node } = await fixture();
+    const sub = rnd(16);
+    const chan = (await deriveChannel("public.maint")).channelHash;
+    node.deferred.enqueue(sub, chan, new Uint8Array([1, 2, 3]), 256);
+    assert.strictEqual(node.deferred.hasPending(sub), true);
+
+    // Backdate the entry past the 7-day TTL.
+    const bucket = node.deferred._buckets.get(toHex(sub));
+    assert.ok(bucket && bucket.length === 1);
+    bucket[0].enqueuedAt = Date.now() / 1000 - 8 * 24 * 3600;
+
+    const { deferredEvicted } = node.tickMaintenance();
+    assert.strictEqual(deferredEvicted, 1);
+    assert.strictEqual(node.deferred.hasPending(sub), false);
+  });
+
+  test("tickMaintenance prunes expired blobs", async () => {
+    const { node } = await fixture();
+    const chan = rnd(16);
+    const id = node.blobStore.store(chan, new Uint8Array([9, 9]));
+    assert.strictEqual(node.blobStore.get(id)?.length, 2);
+
+    // Backdate the blob past the 30-day TTL, then let tickMaintenance evict it.
+    const meta = node.blobStore._meta.get(toHex(id));
+    assert.ok(meta);
+    meta.received = Date.now() / 1000 - 31 * 24 * 3600;
+
+    const { blobsEvicted } = node.tickMaintenance();
+    assert.strictEqual(blobsEvicted, 1);
+    assert.strictEqual(node.blobStore.get(id), null);
+  });
+});
+
+describe("RFedNode — tiered deferred limits (Phase 3)", () => {
+  test("policyFor overrides the per-subscriber deferred cap", async () => {
+    // A VIP subscriber gets a larger queue than the default tier.
+    const wire = new Wire();
+    const nodeRns = await makeRns();
+    wire.attach(nodeRns.transport);
+    const vipHash = rnd(16);
+    const node = new RFedNode({
+      identity: nodeRns.identity,
+      rns: nodeRns.rns,
+      config: {
+        deferredQueueLimit: 2, // default tier: tiny
+        policyFor: (h) =>
+          toHex(h) === toHex(vipHash)
+            ? { deferredQueueLimit: 10 } // VIP tier
+            : { deferredQueueLimit: 2 },
+      },
+    });
+    await node.start();
+
+    const chan = rnd(16);
+    // Default-tier subscriber: cap 2 → 3rd enqueue evicts the oldest.
+    const defSub = rnd(16);
+    for (let i = 0; i < 3; i++)
+      node.deferred.enqueue(defSub, chan, new Uint8Array([i]), node.policyFor(defSub).deferredQueueLimit);
+    assert.strictEqual(node.deferred.drain(defSub).length, 2);
+
+    // VIP subscriber: cap 10 → all 3 survive.
+    for (let i = 0; i < 3; i++)
+      node.deferred.enqueue(vipHash, chan, new Uint8Array([i]), node.policyFor(vipHash).deferredQueueLimit);
+    assert.strictEqual(node.deferred.drain(vipHash).length, 3);
+  });
+});

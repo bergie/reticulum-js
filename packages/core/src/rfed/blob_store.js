@@ -159,6 +159,18 @@ export class BlobStore {
   }
 
   /**
+   * Prunes blobs older than `maxAgeSec` (SPEC §5: 30-day TTL). A runner calls
+   * this periodically (hourly) via `RFedNode.tickMaintenance`; the store also
+   * self-prunes opportunistically on each ingest.
+   *
+   * @param {number} maxAgeSec
+   * @returns {number} count evicted.
+   */
+  pruneOlderThan(maxAgeSec) {
+    return this._evictOlderThan(Date.now() / 1000 - maxAgeSec);
+  }
+
+  /**
    * Evicts every blob whose `received` timestamp predates `cutoff`.
    * @param {number} cutoff - Unix seconds.
    * @returns {number} count evicted.
