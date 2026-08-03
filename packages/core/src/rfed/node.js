@@ -38,6 +38,12 @@ import { validateChannelStamp } from "./stamp.js";
 import { BlobStore } from "./blob_store.js";
 import { DeferredQueue } from "./deferred_queue.js";
 import { SubscriptionTable } from "./subscription.js";
+import {
+  decodeBlobStream,
+  encodeBlobStream,
+  fullManifest,
+  gapFromPeer,
+} from "./sync.js";
 
 /** rfed app namespace (shared by all rfed destinations). */
 const APP_NAME = "rfed";
@@ -54,6 +60,9 @@ const DELIVERY_NAME = "rfed.delivery";
 const SUBSCRIBE_PATH = "/rfed/subscribe";
 const UNSUBSCRIBE_PATH = "/rfed/unsubscribe";
 const PULL_PATH = "/rfed/pull";
+/** `/rfed/*` peer-sync paths (SPEC §4). */
+const OFFER_PATH = "/rfed/offer";
+const MESSAGE_GET_PATH = "/rfed/get";
 
 /** rfed protocol version advertised in the `rfed.node` announce app_data. */
 const PROTOCOL_VERSION = 1;
@@ -86,6 +95,10 @@ const DEFERRED_TTL_SECS = 7 * 24 * 3600;
  * @property {(subscriberHash: Uint8Array) => { deferredQueueLimit: number }} [config.policyFor]
  *   Per-subscriber policy lookup (default tier); a runner overrides this to
  *   drive VIP tiers from config. Used for the per-subscriber deferred cap.
+ * @property {number|null} [config.transferLimitBytes] Per-`/rfed/get` session
+ *   byte cap (SPEC §4). When set, the GET response stops emitting records once
+ *   this would be exceeded (default `null` = unlimited for the in-memory node;
+ *   a runner should bound it).
  */
 
 /**
@@ -114,6 +127,8 @@ export class RFedNode {
       config.deferredQueueLimit ?? DEFAULT_DEFERRED_QUEUE_LIMIT;
     this.name = config.name ?? "rfed";
     this.presenceTtlSec = config.presenceTtlSec ?? DEFAULT_PRESENCE_TTL_SEC;
+    /** @type {number|null} */
+    this.transferLimitBytes = config.transferLimitBytes ?? null;
 
     /**
      * Per-subscriber policy lookup (mirrors Rust `NodeConfig::policy_for`).
@@ -177,12 +192,21 @@ export class RFedNode {
   async start() {
     if (this._started) return;
 
-    this._nodeDest = await Destination.IN(
-      NODE_NAME,
-      DestType.SINGLE,
-      this.identity,
-      this.rns,
-    );
+    this._nodeDest = await this._bringUpDest(NODE_NAME);
+    // `rfed.node` serves peer sync (SPEC §4): OFFER (manifest) + MESSAGE_GET
+    // (blob stream). Both allow any caller (`ALLOW_ALL`) like Rust.
+    await this._nodeDest.registerRequestHandler(OFFER_PATH, {
+      allow: Allow.ALL,
+      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ _data) =>
+        this._handleOffer(),
+    });
+    await this._nodeDest.registerRequestHandler(MESSAGE_GET_PATH, {
+      allow: Allow.ALL,
+      responseGenerator: async (
+        /** @type {string} */ _p,
+        /** @type {any} */ data,
+      ) => this._handleGet(data),
+    });
     this._subscribeDest = await this._bringUpRequestDest(SUBSCRIBE_NAME, {
       path: SUBSCRIBE_PATH,
       handler: async (
@@ -224,7 +248,6 @@ export class RFedNode {
       });
     });
     this.rns.transport.bindLocalDestination(this._publishDest);
-    this.rns.transport.bindLocalDestination(this._nodeDest);
 
     // Track subscriber presence from rfed.delivery announces (and drain
     // deferred queues for subscribers coming back online).
@@ -405,6 +428,105 @@ export class RFedNode {
   }
 
   /**
+   * `/rfed/offer` (SPEC §4) — returns the node's **full** store manifest as
+   * `[[channelHash, messageId], …]` so the caller can compute its gap.
+   * (Rust `handle_offer`; the caller's offered IDs are accepted but unused.)
+   *
+   * @returns {Array<[Uint8Array, Uint8Array]>}
+   */
+  _handleOffer() {
+    return fullManifest(this.blobStore);
+  }
+
+  /**
+   * `/rfed/get` (SPEC §3/§4) — encodes the requested blobs into the §3 stream
+   * `ch(16)‖id(16)‖len(4 BE)‖blob`, stopping once `transferLimitBytes` would
+   * be exceeded (per-session cap). Returns the raw stream bytes; the Link wraps
+   * them in a msgpack Binary for transit (Rust `handle_message_get`).
+   *
+   * Blobs transit stamp-stripped; no stamp validation here.
+   *
+   * @param {any} data - Decoded `msgpack [id, …]`.
+   * @returns {Uint8Array}
+   */
+  _handleGet(data) {
+    /** @type {Uint8Array[]} */
+    const ids = Array.isArray(data) ? data : [];
+    /** @type {Array<{ channelHash: Uint8Array, messageId: Uint8Array, blob: Uint8Array }>} */
+    const records = [];
+    let total = 0;
+    for (const id of ids) {
+      const meta = this.blobStore.metaFor(id);
+      if (!meta) continue;
+      const blob = this.blobStore.get(id);
+      if (!blob) continue;
+      if (
+        this.transferLimitBytes !== null &&
+        total + blob.length > this.transferLimitBytes
+      ) {
+        break;
+      }
+      records.push({
+        channelHash: meta.channelHash,
+        messageId: meta.messageId,
+        blob: new Uint8Array(blob),
+      });
+      total += blob.length;
+    }
+    return encodeBlobStream(records);
+  }
+
+  /**
+   * Synchronises with a peer `rfed.node`: OFFER (our held IDs) → receive the
+   * peer's manifest → compute the gap (channels we subscribe to, don't hold) →
+   * MESSAGE_GET the missing blobs → ingest each (store under the upstream id,
+   * then fan out to local subscribers). Mirrors Rust `run_sync_session`.
+   *
+   * Returns the number of newly-ingested blobs. Throws if the peer identity
+   * cannot be recalled or the link fails.
+   *
+   * @param {Uint8Array} peerNodeHash - The peer's `rfed.node` destination hash.
+   * @returns {Promise<number>}
+   */
+  async syncWithPeer(peerNodeHash) {
+    const peerIdentity = await Destination.recall(peerNodeHash);
+    const dest = await Destination.OUT(
+      NODE_NAME,
+      DestType.SINGLE,
+      peerIdentity,
+      this.rns,
+    );
+    const link = await dest.createLink();
+    await link.identify(this.identity);
+    try {
+      // OFFER — send our held IDs (peer ignores them, but matches the protocol).
+      const manifest = /** @type {Array<[Uint8Array, Uint8Array]>} */ (
+        await link.request(OFFER_PATH, this.blobStore.allMessageIds())
+      );
+      const wanted = gapFromPeer(
+        manifest,
+        this.blobStore,
+        this.subscriptions.subscribedChannelHashes(),
+      );
+      if (wanted.length === 0) return 0;
+      // MESSAGE_GET — the §3 blob stream (decodes to a Uint8Array).
+      const stream = /** @type {Uint8Array} */ (
+        await link.request(MESSAGE_GET_PATH, wanted)
+      );
+      let ingested = 0;
+      for (const { channelHash, messageId, blob } of decodeBlobStream(stream)) {
+        if (this.blobStore.get(messageId)) continue; // already held
+        this.blobStore.storeWithId(channelHash, messageId, blob);
+        await this._fanout(channelHash, blob);
+        ingested++;
+      }
+      return ingested;
+    } finally {
+      await link.teardown();
+    }
+  }
+
+  /**
    * Fans a blob out to every subscriber of `channelHash`. Present subscribers
    * (their `rfed.delivery` announced within the TTL) receive it immediately;
    * absent subscribers get it enqueued in the deferred queue.
@@ -508,27 +630,21 @@ export class RFedNode {
   // ── helpers ───────────────────────────────────────────────────────────────
 
   /**
-   * Creates an IN SINGLE destination, registers the request handler, wires the
-   * link-accept listener, and binds it to the transport.
+   * Creates an IN SINGLE destination, wires the link-accept listener, and
+   * binds it to the transport. `rfed.node` uses this directly (it registers
+   * multiple handlers); request destinations go through `_bringUpRequestDest`.
    *
    * @param {string} name
-   * @param {Object} opts
-   * @param {string} opts.path
-   * @param {any} opts.handler
    * @returns {Promise<import("../core/destination.js").Destination>}
    * @private
    */
-  async _bringUpRequestDest(name, { path, handler }) {
+  async _bringUpDest(name) {
     const dest = await Destination.IN(
       name,
       DestType.SINGLE,
       this.identity,
       this.rns,
     );
-    await dest.registerRequestHandler(path, {
-      allow: Allow.ALL,
-      responseGenerator: handler,
-    });
     dest.addEventListener("link_request", async (/** @type {any} */ e) => {
       try {
         await dest.acceptLink(e.detail.packet);
@@ -541,6 +657,25 @@ export class RFedNode {
       }
     });
     this.rns.transport.bindLocalDestination(dest);
+    return dest;
+  }
+
+  /**
+   * Brings up a destination and registers a single request handler on it.
+   *
+   * @param {string} name
+   * @param {Object} opts
+   * @param {string} opts.path
+   * @param {any} opts.handler
+   * @returns {Promise<import("../core/destination.js").Destination>}
+   * @private
+   */
+  async _bringUpRequestDest(name, { path, handler }) {
+    const dest = await this._bringUpDest(name);
+    await dest.registerRequestHandler(path, {
+      allow: Allow.ALL,
+      responseGenerator: handler,
+    });
     return dest;
   }
 

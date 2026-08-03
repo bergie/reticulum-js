@@ -522,3 +522,145 @@ describe("RFedNode — tiered deferred limits (Phase 3)", () => {
     assert.strictEqual(node.deferred.drain(vipHash).length, 3);
   });
 });
+
+describe("RFedNode — peer sync (Phase 4)", () => {
+  test("two nodes: publisher→A, B syncs from A, subscriber on B receives", async () => {
+    const wire = new Wire();
+    const aRns = await makeRns();
+    const bRns = await makeRns();
+    const pubRns = await makeRns();
+    const subRns = await makeRns();
+    wire.attach(aRns.transport);
+    wire.attach(bRns.transport);
+    wire.attach(pubRns.transport);
+    wire.attach(subRns.transport);
+
+    const nodeA = new RFedNode({ identity: aRns.identity, rns: aRns.rns });
+    const nodeB = new RFedNode({ identity: bRns.identity, rns: bRns.rns });
+    await nodeA.start();
+    await nodeB.start();
+
+    // Make every node identity recallable from each of its dest hashes (needed
+    // for OUT dest construction + peer link establishment).
+    for (const rns of [aRns, bRns]) {
+      for (const name of [
+        "rfed.node",
+        "rfed.channel.subscribe",
+        "rfed.channel.unsubscribe",
+        "rfed.channel.publish",
+        "rfed.channel.pull",
+      ]) {
+        const d = await Destination.OUT(name, DestType.SINGLE, rns.identity);
+        await Destination.remember(
+          rnd(16),
+          d.destinationHash,
+          rns.identity.publicKey,
+          null,
+        );
+      }
+    }
+    const aSubHash = (
+      await Destination.OUT(
+        "rfed.channel.subscribe",
+        DestType.SINGLE,
+        aRns.identity,
+      )
+    ).destinationHash;
+    const bSubHash = (
+      await Destination.OUT(
+        "rfed.channel.subscribe",
+        DestType.SINGLE,
+        bRns.identity,
+      )
+    ).destinationHash;
+    const aNodeHash = (
+      await Destination.OUT("rfed.node", DestType.SINGLE, aRns.identity)
+    ).destinationHash;
+
+    const publisher = new RFedClient({ identity: pubRns.identity, rns: pubRns.rns });
+    const subscriber = new RFedClient({ identity: subRns.identity, rns: subRns.rns });
+    const subDeliveryHash = await rfedDeliveryHash(subRns.identity);
+
+    // Subscriber on B subscribes + listens (online on B).
+    await subscriber.subscribe(bSubHash, "public.sync");
+    const received = [];
+    await subscriber.listen((d) => received.push(d));
+    await waitFor(() => nodeB.isOnline(subDeliveryHash));
+
+    // Publisher publishes to A. A has no local subscribers → just stores it.
+    await publisher.publish(
+      aSubHash,
+      "public.sync",
+      new Message({ content: "synced across two nodes" }),
+    );
+    // No live delivery yet (subscriber is on B, not A).
+    await new Promise((r) => setTimeout(r, 100));
+    assert.strictEqual(received.length, 0);
+    assert.strictEqual(nodeA.blobStore.allMessageIds().length, 1);
+
+    // B syncs with A: OFFER → gap → GET → ingest → fan out to local subscriber.
+    const ingested = await nodeB.syncWithPeer(aNodeHash);
+    assert.strictEqual(ingested, 1);
+
+    const decoded = await waitFor(() => received[0]);
+    assert.strictEqual(decoded.message.content, "synced across two nodes");
+    assert.strictEqual(decoded.signatureValid, true);
+    // The blob is now also held by B under the upstream message id.
+    assert.strictEqual(nodeB.blobStore.allMessageIds().length, 1);
+  });
+
+  test("sync is idempotent — re-sync pulls nothing new", async () => {
+    const wire = new Wire();
+    const aRns = await makeRns();
+    const bRns = await makeRns();
+    wire.attach(aRns.transport);
+    wire.attach(bRns.transport);
+
+    const nodeA = new RFedNode({ identity: aRns.identity, rns: aRns.rns });
+    const nodeB = new RFedNode({ identity: bRns.identity, rns: bRns.rns });
+    await nodeA.start();
+    await nodeB.start();
+
+    for (const rns of [aRns, bRns]) {
+      for (const name of [
+        "rfed.node",
+        "rfed.channel.subscribe",
+        "rfed.channel.publish",
+      ]) {
+        const d = await Destination.OUT(name, DestType.SINGLE, rns.identity);
+        await Destination.remember(
+          rnd(16),
+          d.destinationHash,
+          rns.identity.publicKey,
+          null,
+        );
+      }
+    }
+    const aNodeHash = (
+      await Destination.OUT("rfed.node", DestType.SINGLE, aRns.identity)
+    ).destinationHash;
+
+    // Give B a subscription to a channel A holds a blob for.
+    const channel = await deriveChannel("public.idem");
+    const aSubHash = (
+      await Destination.OUT(
+        "rfed.channel.subscribe",
+        DestType.SINGLE,
+        aRns.identity,
+      )
+    ).destinationHash;
+    // Simulate A already holding a blob + B subscribed to that channel.
+    const innerBlob = rnd(32);
+    nodeA.blobStore.store(channel.channelHash, innerBlob);
+    await nodeB.subscriptions.subscribe(
+      (await Identity.generate()),
+      channel.channelHash,
+    );
+
+    const first = await nodeB.syncWithPeer(aNodeHash);
+    assert.strictEqual(first, 1);
+    // Second sync: B already holds the id → gap empty → 0 pulled.
+    const second = await nodeB.syncWithPeer(aNodeHash);
+    assert.strictEqual(second, 0);
+  });
+});

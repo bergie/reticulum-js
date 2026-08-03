@@ -124,6 +124,37 @@ export class BlobStore {
   }
 
   /**
+   * The full store manifest as `[channelHash, messageId]` pairs — served by
+   * `/rfed/offer` (Rust `handle_offer`) so a peer can compute its gap.
+   * @returns {Array<[Uint8Array, Uint8Array]>}
+   */
+  manifest() {
+    return Array.from(
+      this._meta.values(),
+      (m) => /** @type {[Uint8Array, Uint8Array]} */ (
+        [new Uint8Array(m.destinationHash), new Uint8Array(m.messageId)]
+      ),
+    );
+  }
+
+  /**
+   * Returns the `{ channelHash, messageId }` metadata for a stored blob, or
+   * `null` if unknown. Used by `/rfed/get` to emit the §3 blob stream with the
+   * correct channel attribution.
+   *
+   * @param {Uint8Array} messageId
+   * @returns {{ channelHash: Uint8Array, messageId: Uint8Array } | null}
+   */
+  metaFor(messageId) {
+    const meta = this._meta.get(toHex(messageId));
+    if (!meta) return null;
+    return {
+      channelHash: new Uint8Array(meta.destinationHash),
+      messageId: new Uint8Array(meta.messageId),
+    };
+  }
+
+  /**
    * All message ids stored under the given channel hash.
    * @param {Uint8Array} channelHash
    * @returns {Uint8Array[]}
