@@ -7,6 +7,46 @@
   The standard `WebSocket` API then negotiates TLS from the scheme. Needed for
   browser apps running in a secure context (HTTPS), which cannot open `ws://`.
   An explicit `url` scheme always takes precedence.
+- **rfed (Reticulum Federation) Phase 2** — the federation node
+  (work doc #25). `RFedNode` (`rfed/node.js`) brings up the modern split
+  destinations (`rfed.node`, `rfed.channel.{subscribe,unsubscribe,publish,
+  pull}`) on a Reticulum instance and implements the core ingest/serve loop,
+  wire-compatible with the Rust `rfed::destinations` handlers:
+  - `/rfed/send` (the publish destination's DATA callback) validates the PoW
+    stamp (when `stampCost` is set), strips it, stores the inner blob in a
+    `BlobStore`, and fans it out live to present subscribers (deferring the
+    rest).
+  - `/rfed/subscribe` / `/rfed/unsubscribe` verify the signed
+    `[channel_hash, pubkey, sig]` payload and record/drop the subscription;
+    subscribe replies `[true, stamp_cost|nil]` (`0`/`nil` = stamping disabled).
+  - `/rfed/pull` drains one page (`pullPageSize`, default 25) of the caller's
+    deferred queue for a channel and returns `[[[channel_hash, blob], …],
+    more_pending]`.
+  - Subscriber presence is tracked from `rfed.delivery` announces; deferred
+    blobs are flushed when a subscriber's `rfed.delivery` announces (SPEC §7
+    trigger 1) and drained on `/rfed/pull` (trigger 2).
+  Three in-memory stores back it: `BlobStore` (`rfed/blob_store.js`, Rust API
+  + 30-day TTL / capacity eviction), `SubscriptionTable` (`rfed/subscription.js`,
+  keeps the subscriber `Identity` inline + precomputed `rfed.delivery` hash for
+  fanout), and `DeferredQueue` (`rfed/deferred_queue.js`, paged
+  `drainChannelBatch`). All are web-platform pure JS; a filesystem-backed
+  adapter + production runner will live in `@reticulum/node`. Exposed at the
+  package entry point. Covered by a loopback-mesh suite (live fanout, two-client
+  relay, deferred→pull, deferred→announce-drain, stamp enforcement, unsubscribe,
+  blob-store ingest).
+
+### Changed
+- **rfed stamp workblock is now a single, documented switch point**
+  (`rfed/stamp.js`, work doc #25). The workblock computation is isolated in one
+  `computeWorkblock` function gated by `USE_RUST_STUB_WORKBLOCK`. The current
+  (`true`) branch mirrors the deployed `reticulum-rust` `LXStamper` stub
+  (iterated SHA-256) so rfed interoperates with live nodes today; the `false`
+  branch calls the SPEC-correct, Python-LXMF-compatible memory-hard
+  `lxmf/stamper.js#stampWorkblock(id, 16)` (already imported). Once
+  https://github.com/jrl290/Reticulum-rust/pull/2 lands upstream, flipping the
+  flag is the entire change. A regression test asserts the SPEC-correct
+  workblock is wired, callable at rfed's 16 rounds, and distinct from the stub
+  so the alternate path cannot silently bit-rot.
 
 ## [0.5.3] - 2026-08-02
 ### Added

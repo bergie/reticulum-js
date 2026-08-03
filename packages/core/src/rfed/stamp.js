@@ -36,10 +36,32 @@
  */
 
 import { Identity } from "../core/identity.js";
+// The CORRECT, Python-LXMF-compatible memory-hard workblock. Imported so the
+// switch in `computeWorkblock` below is a one-line flip once reticulum-rust
+// fixes its `LXStamper` (see USE_RUST_STUB_WORKBLOCK).
+import { stampWorkblock as lxmfStampWorkblock } from "../lxmf/stamper.js";
 import { concatBytes } from "../utils/encoding.js";
 import { STAMP_EXPAND_ROUNDS, STAMP_SIZE } from "./constants.js";
 
 export { STAMP_SIZE };
+
+/**
+ * ⚠️ rfed workblock implementation switch — THE ONE PLACE TO CHANGE.
+ *
+ * The SPEC defers the workblock to `LXStamper::stamp_workblock`, expecting the
+ * memory-hard HKDF expansion in `../lxmf/stamper.js` (byte-compatible with
+ * Python LXMF). The **deployed** `reticulum-rust` `LXStamper` is an
+ * incompatible stub (iterated SHA-256, 32 bytes), so rfed nodes built from it
+ * reject SPEC-valid stamps.
+ *
+ * To interoperate with live nodes today we mirror the stub. Once the fix lands
+ * upstream (https://github.com/jrl290/Reticulum-rust/pull/2), set this to
+ * `false` (or delete it together with the `true` branch in `computeWorkblock`).
+ *
+ * The `false` branch is a one-liner over the already-tested `lxmfStampWorkblock`,
+ * so it cannot silently bit-rot.
+ */
+const USE_RUST_STUB_WORKBLOCK = true;
 
 /**
  * Mirrors the iteration cap in `reticulum-rust`'s `LXStamper::generate_stamp`.
@@ -88,11 +110,33 @@ function u128leBytes(value) {
 }
 
 /**
+ * Computes the rfed stamp workblock for a transient id.
+ *
+ * Branches on {@link USE_RUST_STUB_WORKBLOCK}:
+ *   - `true` (current): mirrors the deployed `reticulum-rust` `LXStamper` —
+ *     `SHA-256` iterated `rounds + 1` times over the transient id (32 bytes).
+ *   - `false` (once the Rust PR lands): the SPEC-correct memory-hard HKDF
+ *     expansion from `../lxmf/stamper.js`, byte-compatible with Python LXMF.
+ *
+ * @param {Uint8Array} transientId
+ * @returns {Promise<Uint8Array>}
+ */
+async function computeWorkblock(transientId) {
+  if (USE_RUST_STUB_WORKBLOCK) {
+    let workblock = await Identity.fullHash(transientId);
+    for (let i = 0; i < STAMP_EXPAND_ROUNDS; i++) {
+      workblock = await Identity.fullHash(workblock);
+    }
+    return workblock;
+  }
+  return lxmfStampWorkblock(transientId, STAMP_EXPAND_ROUNDS);
+}
+
+/**
  * Computes the transient id and workblock for a channel stamp.
  *
- * `transientId = SHA-256(channel_hash ‖ inner_blob)`; the workblock is the
- * reticulum-rust `LXStamper` workblock: `SHA-256` iterated `rounds + 1` times
- * over the transient id (a 32-byte value).
+ * `transientId = SHA-256(channel_hash ‖ inner_blob)`; the workblock comes from
+ * {@link computeWorkblock}.
  *
  * @param {Uint8Array} channelHash - 16-byte channel identity hash.
  * @param {Uint8Array} innerBlob - EC-encrypted channel message (no stamp).
@@ -101,10 +145,7 @@ function u128leBytes(value) {
 export async function channelStampWorkblock(channelHash, innerBlob) {
   const material = concatBytes(channelHash, innerBlob);
   const transientId = await Identity.fullHash(material);
-  let workblock = await Identity.fullHash(transientId);
-  for (let i = 0; i < STAMP_EXPAND_ROUNDS; i++) {
-    workblock = await Identity.fullHash(workblock);
-  }
+  const workblock = await computeWorkblock(transientId);
   return { transientId, workblock };
 }
 

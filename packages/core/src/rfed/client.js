@@ -316,7 +316,7 @@ export class RFedClient {
    * a subscribed channel, EC-decrypted, and passed to `onMessage` along with
    * the verified LXMF message.
    *
-   * @param {(decoded: { message: Message, senderIdentity: Identity, senderPub: Uint8Array, sourceHash: Uint8Array, signatureValid: boolean, channelHash: Uint8Array, channelName: string|null }) => void} onMessage
+   * @param {(decoded: { message: Message, senderIdentity: Identity, senderPub: Uint8Array, sourceHash: Uint8Array, signatureValid: boolean, channelHash: Uint8Array, channelName: string }) => void} onMessage
    * @returns {Promise<Uint8Array>} the `rfed.delivery` destination hash.
    */
   async listen(onMessage) {

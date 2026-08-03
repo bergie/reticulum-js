@@ -59,6 +59,10 @@ export {
 } from "./rfed/channel.js";
 export { RFedClient } from "./rfed/client.js";
 export * as RFedConstants from "./rfed/constants.js";
+export { BlobStore } from "./rfed/blob_store.js";
+export { DeferredQueue } from "./rfed/deferred_queue.js";
+export { RFedNode } from "./rfed/node.js";
+export { SubscriptionTable } from "./rfed/subscription.js";
 export {
   channelStampWorkblock,
   generateChannelStamp,

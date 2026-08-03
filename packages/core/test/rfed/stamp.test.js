@@ -10,7 +10,10 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { Identity } from "../../src/core/identity.js";
-import { WORKBLOCK_EXPAND_ROUNDS } from "../../src/lxmf/stamper.js";
+import {
+  stampWorkblock,
+  WORKBLOCK_EXPAND_ROUNDS,
+} from "../../src/lxmf/stamper.js";
 import { STAMP_EXPAND_ROUNDS, STAMP_SIZE } from "../../src/rfed/constants.js";
 import {
   channelStampWorkblock,
@@ -155,5 +158,27 @@ describe("rfed stamp value semantics", () => {
     }
     assert.strictEqual(value, expected);
     assert.ok(value >= 8);
+  });
+});
+
+describe("rfed stamp workblock switch (reticulum-rust stub → SPEC-correct)", () => {
+  // Guards the `USE_RUST_STUB_WORKBLOCK` switch in `src/rfed/stamp.js`: the
+  // SPEC-correct (Python-LXMF-compatible) workblock is already wired and must
+  // remain callable + distinct from the iterated-SHA-256 stub we use today for
+  // live-node interop. When the reticulum-rust PR lands, flipping the switch
+  // makes `channelStampWorkblock` return this workblock instead.
+  test("the SPEC-correct lxmf workblock is ready, larger, and distinct at 16 rounds", async () => {
+    const transientId = rnd(32);
+
+    // Stub (current live-node behaviour): SHA-256 iterated rounds+1 times.
+    let stub = await sha256(transientId);
+    for (let i = 0; i < STAMP_EXPAND_ROUNDS; i++) stub = await sha256(stub);
+
+    // Correct (switch target): memory-hard HKDF expansion from lxmf/stamper.
+    const correct = await stampWorkblock(transientId, STAMP_EXPAND_ROUNDS);
+
+    assert.strictEqual(stub.length, 32);
+    assert.strictEqual(correct.length, STAMP_EXPAND_ROUNDS * 256); // 16 × 256 B
+    assert.notStrictEqual(toHex(stub), toHex(correct.subarray(0, 32)));
   });
 });
