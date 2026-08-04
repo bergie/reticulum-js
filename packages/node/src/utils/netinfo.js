@@ -99,6 +99,81 @@ export function descopeLinkLocal(addr) {
 }
 
 /**
+ * Parses a dotted-quad IPv4 address into an unsigned 32-bit integer.
+ * @param {string} ip
+ * @returns {number}
+ * @private
+ */
+function ipv4ToLong(ip) {
+  const parts = String(ip).split(".");
+  if (parts.length !== 4) return 0;
+  const n = parts.map((p) => Number.parseInt(p, 10));
+  if (n.some((oct) => Number.isNaN(oct) || oct < 0 || oct > 255)) return 0;
+  // >>> 0 keeps it unsigned.
+  return ((n[0] << 24) | (n[1] << 16) | (n[2] << 8) | n[3]) >>> 0;
+}
+
+/**
+ * Formats an unsigned 32-bit integer back into dotted-quad notation.
+ * @param {number} n
+ * @returns {string}
+ * @private
+ */
+function longToIPv4(n) {
+  return [n >>> 24, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff].join(".");
+}
+
+/**
+ * Computes the IPv4 broadcast address for an address/netmask pair as
+ * `(addr & netmask) | ~netmask`. Mirrors the broadcast address that Python's
+ * `netinfo.ifaddresses` reads directly from `getifaddrs`, which Node does not
+ * expose. Correct for ordinary subnets (the only kind RNS UDP broadcast runs
+ * over).
+ * @param {string} address
+ * @param {string} netmask
+ * @returns {string}
+ * @private
+ */
+function computeIPv4Broadcast(address, netmask) {
+  const a = ipv4ToLong(address);
+  const m = ipv4ToLong(netmask);
+  return longToIPv4((a & m) | (~m >>> 0));
+}
+
+/**
+ * Returns the first IPv4 unicast address on `ifname`, mirroring the role of
+ * the Python reference's `UDPInterface.get_address_for_if` (which reads
+ * `netinfo.ifaddresses(name)[AF_INET][0]["addr"]`).
+ *
+ * Returns `undefined` when the interface has no IPv4 address.
+ * @param {string} ifname
+ * @returns {string | undefined}
+ */
+export function getAddressForInterface(ifname) {
+  const v4 = listAddresses(ifname)[AF_INET];
+  if (!v4 || v4.length === 0) return undefined;
+  return v4[0].addr;
+}
+
+/**
+ * Returns the IPv4 broadcast address on `ifname`, mirroring the role of the
+ * Python reference's `UDPInterface.get_broadcast_for_if`. Node does not report
+ * the broadcast address, so it is computed from the address and netmask via
+ * {@link computeIPv4Broadcast}.
+ *
+ * Returns `undefined` when the interface has no IPv4 address.
+ * @param {string} ifname
+ * @returns {string | undefined}
+ */
+export function getBroadcastForInterface(ifname) {
+  const v4 = listAddresses(ifname)[AF_INET];
+  if (!v4 || v4.length === 0) return undefined;
+  const entry = v4[0];
+  if (!entry.netmask) return undefined;
+  return computeIPv4Broadcast(entry.addr, entry.netmask);
+}
+
+/**
  * Best-effort numeric interface index for `ifname`, mirroring Python's
  * `interface_name_to_index` (which wraps `socket.if_nametoindex`).
  *
@@ -121,3 +196,5 @@ export function interfaceIndex(ifname) {
   }
   return undefined;
 }
+
+export { computeIPv4Broadcast };

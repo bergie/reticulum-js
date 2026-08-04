@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 ### Added
+- **UDP interface** (`src/interfaces/udp.js`, `UDPInterface`, work doc #26): the
+  IPv4 broadcast-bus transport porting the Python reference
+  `RNS/Interfaces/UDPInterface.py`. A single interface binds a UDP socket to
+  receive (`listenIp`/`listenPort`) and sends raw datagrams — one RNS packet
+  each, no KISS/HDLC framing — to a forward destination (`forwardIp`/
+  `forwardPort`), typically a subnet broadcast address. `port` is shorthand for
+  both ports; `device` (e.g. `eth0`) resolves the IPv4 broadcast address for
+  both halves. Receive-only and forward-only modes are valid (a receive-only
+  instance has a `null` `writable`, so the transport simply won't transmit out
+  of it). Registered in the interface registry as `udp`; re-exported from the
+  package index.
+  - `src/utils/netinfo.js` gains `getAddressForInterface`/
+    `getBroadcastForInterface` (mirroring the Python `get_address_for_if`/
+    `get_broadcast_for_if`): Node's `os.networkInterfaces()` does not report
+    the broadcast address, so it is computed as `(addr & netmask) | ~netmask`
+    via the exported `computeIPv4Broadcast`.
 - **Dual-mode rfed/LXMF CLI runner** (work doc #27): `rfed.js` now runs an
   rfed node and/or an LXMF propagation node (`--lxmf-propagation`, `--no-rfed`)
   sharing one Reticulum instance + identity + interface. Per-role limit/TTL

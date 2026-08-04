@@ -14,6 +14,7 @@ import { HttpPostServerInterface } from "./http_server.js";
 import { LocalClientInterface } from "./local_client.js";
 import { RNodeSerialInterface } from "./rnode-serial.js";
 import { TCPClientInterface, TCPServerInterface } from "./tcp.js";
+import { UDPInterface } from "./udp.js";
 
 /**
  * A RNS interface class: constructable into an {@link Interface} and exposing a
@@ -41,6 +42,7 @@ registry.set("local-client", LocalClientInterface);
 registry.set("rnode-serial", RNodeSerialInterface);
 registry.set("tcp-client", TCPClientInterface);
 registry.set("tcp-server", TCPServerInterface);
+registry.set("udp", UDPInterface);
 registry.set("ws-client", WebSocketClientInterface);
 registry.set("webrtc", WebRTCInterface);
 

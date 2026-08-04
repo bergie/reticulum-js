@@ -13,6 +13,7 @@ import {
   TCPClientInterface,
   TCPServerInterface,
 } from "../../src/interfaces/tcp.js";
+import { UDPInterface } from "../../src/interfaces/udp.js";
 
 /** @param {object} schema */
 function assertValidSchema(schema) {
@@ -35,6 +36,7 @@ test("subclasses inherit name and ifacSize from the base schema", () => {
     AutoInterface,
     TCPClientInterface,
     TCPServerInterface,
+    UDPInterface,
     WebSocketClientInterface,
   ]) {
     const schema = cls.getConfigurationSchema();
@@ -110,6 +112,7 @@ test("every declared option has a description", () => {
     AutoInterface,
     TCPClientInterface,
     TCPServerInterface,
+    UDPInterface,
     WebSocketClientInterface,
   ]) {
     const schema = cls.getConfigurationSchema();
@@ -191,11 +194,28 @@ test("AutoInterface schema documents its options", () => {
   assert.deepStrictEqual(schema.required, []);
 });
 
+test("UDPInterface schema documents its options", () => {
+  const schema = UDPInterface.getConfigurationSchema();
+  assertValidSchema(schema);
+  assert.ok(schema.properties.device, "should expose device");
+  assert.ok(schema.properties.port, "should expose port");
+  assert.ok(schema.properties.listenIp, "should expose listenIp");
+  assert.ok(schema.properties.listenPort, "should expose listenPort");
+  assert.ok(schema.properties.forwardIp, "should expose forwardIp");
+  assert.ok(schema.properties.forwardPort, "should expose forwardPort");
+  assert.ok(schema.properties.ifacSize, "should expose ifacSize");
+  assert.strictEqual(schema.title, "UDP Interface");
+  // Every mode (receive-only, forward-only, both) is valid, so nothing is
+  // strictly required.
+  assert.deepStrictEqual(schema.required, []);
+});
+
 test("registry lists all built-in interfaces", () => {
   const ids = listInterfaces().map((entry) => entry.id);
   assert.ok(ids.includes("auto"));
   assert.ok(ids.includes("tcp-client"));
   assert.ok(ids.includes("tcp-server"));
+  assert.ok(ids.includes("udp"));
   assert.ok(ids.includes("ws-client"));
 });
 
