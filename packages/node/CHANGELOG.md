@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 ### Added
+- **IFAC (Interface Authentication Code) wiring** (work doc #28): the
+  node-side interfaces gain `networkName`/`passphrase`/`ifacSize` options and
+  seal/verify packets at the serialize/deserialize chokepoints via the shared
+  `Interface._sealRaw`/`_openRaw` helpers. Spawned sub-interfaces (TCP server,
+  AutoInterface peers, HTTP server peers) propagate the IFAC config to their
+  children. See `@reticulum/core` for the IFAC primitives.
 - **UDP interface** (`src/interfaces/udp.js`, `UDPInterface`, work doc #26): the
   IPv4 broadcast-bus transport porting the Python reference
   `RNS/Interfaces/UDPInterface.py`. A single interface binds a UDP socket to

@@ -27,8 +27,8 @@ const CMD_DATA = 0x00;
 /**
  * Feeds an array of Uint8Array chunks into the unframer and collects packets.
  */
-async function runUnframerTest(chunks, ifacSize = 0) {
-  const unframer = createKissUnframerStream(Packet, ifacSize);
+async function runUnframerTest(chunks, openRaw = null) {
+  const unframer = createKissUnframerStream(Packet, openRaw);
   const writer = unframer.writable.getWriter();
   const reader = unframer.readable.getReader();
   const results = [];

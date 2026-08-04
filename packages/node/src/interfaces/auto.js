@@ -175,6 +175,8 @@ export async function computeDiscoveryToken(groupId, linkLocalAddr) {
  * @property {number} [configuredBitrate] - Override the default bitrate guess.
  * @property {number} [ifacSize] - IFAC size in bytes (0 disables; reserved, v1
  *   runs with IFAC disabled).
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {number} [announceInterval] - Seconds between multicast announces.
  *   Defaults to 1.6 (Python: ANNOUNCE_INTERVAL). Overridable for fast tests.
  * @property {number} [peeringTimeout] - Seconds of silence after which a peer
@@ -321,6 +323,10 @@ export class AutoInterface extends Interface {
 
     this.bitrate = options.configuredBitrate ?? 10 * 1000 * 1000;
     this.ifacSize = options.ifacSize ?? 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
 
     // Timers and timing. ANNOUNCE_INTERVAL is overridable for fast tests.
     this.announceInterval = options.announceInterval ?? 1.6;
@@ -1138,6 +1144,9 @@ export class AutoInterface extends Interface {
       address: addr,
       ifname,
       name: `auto-peer-${this.name}/${ifname}/${addr}`,
+      ifacSize: this.ifacSize,
+      networkName: this.ifacNetname ?? undefined,
+      passphrase: this.ifacNetkey ?? undefined,
     });
     // Inherit the parent's nominal bitrate (Python spawned-interface parity).
     peer.bitrate = this.bitrate;

@@ -264,6 +264,8 @@ const PROBE_AFTER_MS = 5000;
  *   {@link import("./local_server.js").LocalServerInterface} when it spawns one
  *   per accepted connection). An adopted socket never reconnects.
  * @property {number} [ifacSize] - Optional IFAC size in bytes. Defaults to 0.
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {string} [name] - Human-readable interface name.
  * @property {boolean} [autoReconnect] - Reconnect after drops (initiator only).
  *   Defaults to `true`.
@@ -461,6 +463,10 @@ export class LocalClientInterface extends Interface {
     this.port = options.port || 0;
     this.socketPath = options.socketPath || null;
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /**
      * Nominal bitrate. Matches `RNS.Interfaces.LocalInterface` (1 Gbit/s) in
      * the Python reference — the shared-instance Unix/TCP socket is a
@@ -668,10 +674,10 @@ export class LocalClientInterface extends Interface {
       Readable.toWeb(nodeReadable)
     );
     this._readable = webReadable.pipeThrough(
-      createHdlcUnframerStream(Packet, this.ifacSize),
+      createHdlcUnframerStream(Packet, (raw) => this._openRaw(raw)),
     );
 
-    const framer = createHdlcFramerStream();
+    const framer = createHdlcFramerStream((raw) => this._sealRaw(raw));
 
     // Count every outbound packet (the single TX chokepoint for this
     // interface: both routed writes via the transport and direct `send()`

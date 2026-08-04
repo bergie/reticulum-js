@@ -29,6 +29,8 @@ import { WebSocketServer } from "ws";
  * @property {string} [listenIp] - Address to bind the server to. Default `0.0.0.0`.
  * @property {number} [listenPort] - Port to bind the server to.
  * @property {number} [ifacSize] - Optional IFAC field size for spawned clients.
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {"raw"|"kiss"} [framing] - Wire framing inherited by spawned client
  *   interfaces. Default `"raw"`.
  * @property {boolean} [ssl] - Terminate TLS so clients connect over `wss://`
@@ -128,6 +130,10 @@ export class WebSocketServerInterface extends Interface {
     this.listenPort = options.listenPort || 0;
     /** @type {number} */
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /** @type {"raw"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "raw";
     /** Terminate TLS (`wss://`). Mirrors the Python `use_ssl` flag. */
@@ -231,6 +237,8 @@ export class WebSocketServerInterface extends Interface {
           const client = new WebSocketClientInterface({
             websocket: /** @type {any} */ (ws),
             ifacSize: this.ifacSize,
+            networkName: this.ifacNetname ?? undefined,
+            passphrase: this.ifacNetkey ?? undefined,
             framing: this.framing,
             name: `ws-client-from-server-${remote}`,
           });

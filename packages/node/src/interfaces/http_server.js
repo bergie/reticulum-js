@@ -32,6 +32,8 @@ import { LogLevel, log } from "@reticulum/core/src/utils/log.js";
  * @property {string} [name] - Interface name (defaults from interfaceId).
  * @property {number} [ifacSize] - Optional IFAC field size (reserved for the
  *   future IFAC name + passphrase enhancement; not yet applied).
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  */
 
 /**
@@ -56,6 +58,10 @@ export class HttpPostPeerInterface extends Interface {
     this.sessionToken = options.sessionToken;
     this.name = options.name || `http-peer-${options.interfaceId.slice(0, 8)}`;
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /**
      * Nominal bitrate, overwritten by the parent
      * {@link HttpPostServerInterface} at spawn time. Defaults to 1 Mbit/s
@@ -116,11 +122,13 @@ export class HttpPostPeerInterface extends Interface {
       },
     });
     this._writable = new WritableStream({
-      write: (
+      write: async (
         /** @type {import("@reticulum/core/src/core/packet.js").Packet} */ packet,
       ) => {
         this._recordOutbound(packet);
-        this._outboundQueue.push(packet.serialize());
+        let raw = packet.serialize();
+        raw = await this._sealRaw(raw);
+        this._outboundQueue.push(raw);
       },
     });
     this.online = true;
@@ -152,12 +160,14 @@ export class HttpPostPeerInterface extends Interface {
    * `/exchange` request body) into the inbound stream.
    * @param {string[]} packetsBase64
    */
-  ingest(packetsBase64) {
+  async ingest(packetsBase64) {
     this.touch();
     for (const entry of packetsBase64) {
       if (typeof entry !== "string" || entry === "") continue;
       try {
-        const packet = Packet.deserialize(base64ToBytes(entry));
+        const opened = await this._openRaw(base64ToBytes(entry));
+        if (!opened) continue;
+        const packet = Packet.deserialize(opened);
         if (this._inboundController) {
           this._inboundController.enqueue(packet);
         }
@@ -256,6 +266,8 @@ export class HttpPostPeerInterface extends Interface {
  * @property {number} [headersTimeoutMs=30000] - Node HTTP `headersTimeout`
  *   (must be <= `requestTimeoutMs`; clamped if not).
  * @property {number} [ifacSize=0] - Optional IFAC field size (reserved).
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  */
 
 /**
@@ -359,6 +371,10 @@ export class HttpPostServerInterface extends Interface {
     this.name =
       options.name || `http-server-${this.listenIp}:${this.listenPort}`;
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /**
      * Nominal bitrate, inherited by spawned peer interfaces. JS-specific (no
      * Python equivalent); HTTP exchange is request/response with base64/JSON
@@ -583,6 +599,8 @@ export class HttpPostServerInterface extends Interface {
       sessionToken,
       name: typeof json.name === "string" && json.name ? json.name : undefined,
       ifacSize: this.ifacSize,
+      networkName: this.ifacNetname ?? undefined,
+      passphrase: this.ifacNetkey ?? undefined,
     });
     // Inherit the server's nominal bitrate.
     peer.bitrate = this.bitrate;

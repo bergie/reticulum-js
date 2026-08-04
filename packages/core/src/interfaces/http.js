@@ -41,6 +41,8 @@ import { Interface } from "./base.js";
  *   Defaults to 64; the server may lower it.
  * @property {number} [ifacSize] - Optional IFAC field size. Reserved for the
  *   future IFAC name + passphrase enhancement; not yet applied.
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  */
 
 /**
@@ -127,6 +129,10 @@ export class HttpPostClientInterface extends Interface {
     this.bitrate = options.bitrate ?? 1000000;
     this.mtu = options.mtu ?? 500;
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     this._maxBatchPackets = options.maxBatchPackets ?? 64;
     this._pollIntervalMs = options.pollIntervalMs ?? 1000;
 
@@ -289,9 +295,11 @@ export class HttpPostClientInterface extends Interface {
     });
 
     this._writable = new WritableStream({
-      write: (/** @type {import("../core/packet.js").Packet} */ packet) => {
+      write: async (
+        /** @type {import("../core/packet.js").Packet} */ packet,
+      ) => {
         this._recordOutbound(packet);
-        this._pushOutbound(packet);
+        await this._pushOutbound(packet);
       },
     });
 
@@ -304,8 +312,10 @@ export class HttpPostClientInterface extends Interface {
    * @param {import("../core/packet.js").Packet} packet
    * @private
    */
-  _pushOutbound(packet) {
-    this._outboundQueue.push(packet.serialize());
+  async _pushOutbound(packet) {
+    let raw = packet.serialize();
+    raw = await this._sealRaw(raw);
+    this._outboundQueue.push(raw);
     this._triggerSend();
   }
 
@@ -435,7 +445,9 @@ export class HttpPostClientInterface extends Interface {
     for (const entry of delivery) {
       if (typeof entry !== "string" || entry === "") continue;
       try {
-        const packet = Packet.deserialize(base64ToBytes(entry));
+        const opened = await this._openRaw(base64ToBytes(entry));
+        if (!opened) continue;
+        const packet = Packet.deserialize(opened);
         if (this._inboundController) {
           this._inboundController.enqueue(packet);
         }

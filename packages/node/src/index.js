@@ -34,10 +34,10 @@ export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
 export { UDPInterface } from "./interfaces/udp.js";
 export { FileStorageAdapter } from "./storage/file.js";
 export {
-  loadRFedStores,
-  saveRFedStores,
-} from "./storage/rfed.js";
-export {
   loadLXMFStore,
   saveLXMFStore,
 } from "./storage/lxmf.js";
+export {
+  loadRFedStores,
+  saveRFedStores,
+} from "./storage/rfed.js";

@@ -157,6 +157,50 @@ export async function importRawEd25519PrivateKey(rawKey) {
 }
 
 /**
+ * Decodes an unpadded base64url string into a byte array.
+ * @param {string} s
+ * @returns {Uint8Array}
+ * @private
+ */
+function base64urlToBytes(s) {
+  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/") + pad;
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/**
+ * Derives the public key corresponding to an OKP (X25519 / Ed25519) private
+ * key.
+ *
+ * WebCrypto has no direct "give me my public key" call, but exporting an OKP
+ * private key as JWK yields the public component in the `x` field
+ * (RFC 8037), which we re-import as a raw public key. Used by
+ * {@link import("../core/identity.js").Identity.fromPrivateKey} to build a
+ * full identity from private-key material alone — mirroring the Python
+ * reference's `Identity.load_private_key`, which derives `pub`/`sig_pub` from
+ * `prv`/`sig_prv`.
+ * @param {CryptoKey} privateKey An extractable X25519 or Ed25519 private key.
+ * @returns {Promise<{publicKey: CryptoKey, raw: Uint8Array}>} The matching
+ *   public key, both as a CryptoKey and as 32 raw bytes.
+ */
+export async function derivePublicKeyFromPrivate(privateKey) {
+  const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+  const raw = base64urlToBytes(/** @type {string} */ (jwk.x));
+  const algorithm = /** @type {{ name: string }} */ (privateKey.algorithm);
+  const publicKey = await crypto.subtle.importKey(
+    "raw",
+    /** @type {any} */ (raw),
+    { name: algorithm.name },
+    true,
+    algorithm.name === "Ed25519" ? ["verify"] : [],
+  );
+  return { publicKey, raw };
+}
+
+/**
  * Imports an X25519 private key from raw bytes.
  * @param {Uint8Array} rawKey
  * @returns {Promise<CryptoKey>}

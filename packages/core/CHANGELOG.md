@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 ### Added
+- **IFAC (Interface Authentication Code) support** (work doc #28):
+  per-interface packet authentication/sealing, cross-checked byte-for-byte
+  against the Python reference (`RNS 1.4.2`). Both endpoints sharing a
+  `network_name` / `passphrase` get every packet signed, IFAC-flagged and
+  XOR-masked; mismatched keys silently drop.
+  - New `core/ifac.js`: `IFAC_MIN_SIZE`/`IFAC_SALT` constants,
+    `deriveIfac(netname, netkey)` (reproduces `RNS.Reticulum` interface setup:
+    double `full_hash` → HKDF over `IFAC_SALT` → `Identity` + signature), and
+    `seal`/`open`/`hasIfacFlag` operating on raw wire bytes
+    (`RNS.Transport.transmit`/`inbound`).
+  - `Interface` (base) gained the `ifacNetname`/`ifacNetkey`/`ifacSize`/
+    `ifacIdentity`/`ifacKey`/`ifacSignature` fields, an `ifacEnabled` getter,
+    lazy memoised `_ensureIfacMaterial()`, and `_sealRaw(raw)`/`_openRaw(raw)`
+    helpers that enforce the flag-presence rules (an IFAC interface drops a
+    flag-clear packet; a plain interface drops a flag-set packet). The config
+    schema declares `networkName`/`passphrase`.
+  - IFAC is wired into the byte pipeline of every interface (Option A: seal at
+    the serialize chokepoint, open at the deserialize chokepoint): the KISS/HDLC
+    framers take optional async `sealRaw`/`openRaw` hooks, and the direct
+    interfaces (WebSocket, RNode, WebRTC, HTTP, UDP, AutoInterface peer) call
+    the helpers inline. Spawned sub-interfaces (TCP server, AutoInterface,
+    HTTP server, WebSocket server) propagate `networkName`/`passphrase`/
+    `ifacSize` to their children and re-derive — mirroring `AutoInterface.py`.
+  - The previous incorrect framer `ifacSize` slicing (`slice(2 + ifacSize)`, no
+    masking/verification, in the wrong layer) is removed.
+  - `Identity.fromPrivateKey(bytes)`: builds a full identity from the 64-byte
+    private-key form, deriving public keys via JWK export — the JS analog of
+    Python `Identity.from_bytes`/`load_private_key`. `crypto/keys.js` gained
+    `derivePublicKeyFromPrivate`.
+  - `Reticulum.IFAC_MIN_SIZE`/`IFAC_SALT` re-exported for upstream API parity.
+  - Tests cross-check the derived key/signature and a sealed packet
+    byte-for-byte against RNS 1.4.2, plus integration tests through the real
+    KISS/HDLC framer streams and the `Interface` helpers (round-trip, flag
+    enforcement, mismatch drop, default `ifacSize`).
 - **LXMF propagation-node runner support** (work doc #27): persistence,
   configurable limits/TTLs, and autopeering so a propagation node can run as a
   standalone daemon (alongside rfed).

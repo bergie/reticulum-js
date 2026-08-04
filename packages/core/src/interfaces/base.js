@@ -5,6 +5,13 @@
 
 /* @ts-self-types="../../types/src/interfaces/base.d.ts" */
 
+import {
+  deriveIfac,
+  hasIfacFlag,
+  IFAC_MIN_SIZE,
+  open as openIfac,
+  seal as sealIfac,
+} from "../core/ifac.js";
 import { LogLevel, log } from "../utils/log.js";
 
 /**
@@ -142,7 +149,25 @@ export class Interface extends EventTarget {
           examples: [16],
           description:
             "Optional interface authentication code (IFAC) size in bytes. " +
-            "0 disables IFAC.",
+            "Auto-defaults to the interface DEFAULT_IFAC_SIZE when a " +
+            "network_name / passphrase is set; 0 alone disables IFAC " +
+            "(Python config key: ifac_size, given in bits upstream).",
+        },
+        networkName: {
+          type: "string",
+          description:
+            "Shared interface network name enabling IFAC authentication " +
+            "and obfuscation on the link. Both endpoints must set the same " +
+            "value (Python config key: networkname / network_name; " +
+            "ifac_netname).",
+        },
+        passphrase: {
+          type: "string",
+          description:
+            "Shared interface passphrase enabling IFAC authentication and " +
+            "obfuscation on the link. Both endpoints must set the same " +
+            "value (Python config key: passphrase / pass_phrase; " +
+            "ifac_netkey).",
         },
       },
       required: [],
@@ -217,6 +242,71 @@ export class Interface extends EventTarget {
    */
   created = Date.now();
 
+  // ------------------------------------------------------------------
+  // IFAC (Interface Authentication Code) — § Transport.transmit/inbound
+  // ------------------------------------------------------------------
+
+  /**
+   * Shared network name enabling IFAC (`ifac_netname`). When set together
+   * with {@link ifacNetkey} (or alone), packets on this interface are
+   * authenticated and obfuscated. Both endpoints must share the same value.
+   * @type {string|null}
+   */
+  ifacNetname = null;
+  /**
+   * Shared passphrase enabling IFAC (`ifac_netkey`). See {@link ifacNetname}.
+   * @type {string|null}
+   */
+  ifacNetkey = null;
+  /**
+   * IFAC field size in bytes. When a network name / passphrase is set this
+   * auto-defaults to {@link DEFAULT_IFAC_SIZE} (mirroring upstream
+   * `interface.ifac_size = interface.DEFAULT_IFAC_SIZE`); 0 with no shared
+   * secret disables IFAC entirely.
+   * @type {number}
+   */
+  ifacSize = 0;
+  /**
+   * Per-interface default IFAC size (bytes) when IFAC is enabled but no
+   * explicit `ifacSize` was given. Mirrors `DEFAULT_IFAC_SIZE` on each
+   * Python interface (16 for Auto/Backbone, 8 for AX.25). Subclasses
+   * override; the base default of 16 matches the common case.
+   * @type {number}
+   */
+  DEFAULT_IFAC_SIZE = 16;
+  /**
+   * Derived IFAC Ed25519 identity (only its signing ability is used).
+   * Populated lazily by {@link _ensureIfacMaterial}; `null` while IFAC is
+   * disabled or before first use.
+   * @type {import("../core/identity.js").Identity|null}
+   */
+  ifacIdentity = null;
+  /**
+   * Derived 64-byte IFAC key (HKDF over {@link import("../core/ifac.js").IFAC_SALT}).
+   * @type {Uint8Array|null}
+   */
+  ifacKey = null;
+  /**
+   * IFAC signature of `fullHash(ifacKey)`, published in the discovery
+   * announce. @type {Uint8Array|null}
+   */
+  ifacSignature = null;
+  /**
+   * Memoised {@link _ensureIfacMaterial} promise so the HKDF derivation runs
+   * at most once per interface.
+   * @type {Promise<boolean>|null}
+   * @private
+   */
+  _ifacMaterialPromise = null;
+
+  /**
+   * Whether IFAC is enabled on this interface (a shared secret is configured).
+   * @returns {boolean}
+   */
+  get ifacEnabled() {
+    return Boolean(this.ifacNetname || this.ifacNetkey);
+  }
+
   /**
    * Whether this interface is currently open/online.
    * @type {boolean}
@@ -285,6 +375,82 @@ export class Interface extends EventTarget {
    * @param {import("../transport/transport.js").TransportCore} _transport
    */
   attachTransport(_transport) {}
+
+  /**
+   * Derives and caches the IFAC key/identity/signature from the configured
+   * {@link ifacNetname} / {@link ifacNetkey}, mirroring the per-interface
+   * setup in `RNS/Reticulum.py` (~l.975). No-op (resolves `false`) when IFAC
+   * is disabled. Memoised so the HKDF + Ed25519 key load runs at most once.
+   * @returns {Promise<boolean>} `true` if IFAC material is available.
+   * @protected
+   */
+  _ensureIfacMaterial() {
+    if (this._ifacMaterialPromise) return this._ifacMaterialPromise;
+    this._ifacMaterialPromise = (async () => {
+      if (!this.ifacEnabled) return false;
+      const material = await deriveIfac(this.ifacNetname, this.ifacNetkey);
+      if (!material) return false;
+      this.ifacIdentity = material.ifacIdentity;
+      this.ifacKey = material.ifacKey;
+      this.ifacSignature = material.ifacSignature;
+      if (!this.ifacSize || this.ifacSize < IFAC_MIN_SIZE) {
+        this.ifacSize = this.DEFAULT_IFAC_SIZE;
+      }
+      return true;
+    })();
+    return this._ifacMaterialPromise;
+  }
+
+  /**
+   * Seals raw (un-IFACed) wire bytes for transmit (`RNS.Transport.transmit`).
+   * No-op passthrough when IFAC is disabled; otherwise derives the IFAC
+   * material on first use, then signs, sets the `ifac_flag`, inserts the IFAC
+   * field and XOR-masks the packet. Subclasses/interfaces call this at the
+   * chokepoint where a packet is serialised to bytes, just before framing.
+   * @param {Uint8Array} raw Serialised, unsealed wire bytes.
+   * @returns {Promise<Uint8Array>} The bytes to put on the medium.
+   * @protected
+   */
+  async _sealRaw(raw) {
+    if (!this.ifacEnabled) return raw;
+    await this._ensureIfacMaterial();
+    return sealIfac(raw, {
+      ifacIdentity: /** @type {import("../core/identity.js").Identity} */ (
+        this.ifacIdentity
+      ),
+      ifacKey: /** @type {Uint8Array} */ (this.ifacKey),
+      ifacSize: this.ifacSize,
+    });
+  }
+
+  /**
+   * Verifies and unseals inbound raw wire bytes (`RNS.Transport.inbound`).
+   *
+   * Enforces the flag-presence rules: an IFAC-enabled interface drops a
+   * flag-clear packet, and a plain interface drops a flag-set packet — both
+   * return `null` (silent drop). For an IFAC interface it then unmasks,
+   * strips the IFAC and verifies it by re-signing; a mismatch also yields
+   * `null`. Subclasses/interfaces call this at the chokepoint where a frame
+   * has been unframed to bytes, just before `Packet.deserialize`.
+   * @param {Uint8Array} raw Sealed or plain wire bytes straight off the medium.
+   * @returns {Promise<Uint8Array|null>} The unsealed bytes, or `null` to drop.
+   * @protected
+   */
+  async _openRaw(raw) {
+    if (!this.ifacEnabled) {
+      // No IFAC configured: reject anything claiming to carry an IFAC.
+      return hasIfacFlag(raw) ? null : raw;
+    }
+    await this._ensureIfacMaterial();
+    if (!hasIfacFlag(raw)) return null; // IFAC expected but flag absent.
+    return openIfac(raw, {
+      ifacIdentity: /** @type {import("../core/identity.js").Identity} */ (
+        this.ifacIdentity
+      ),
+      ifacKey: /** @type {Uint8Array} */ (this.ifacKey),
+      ifacSize: this.ifacSize,
+    });
+  }
 
   /**
    * Sends bytes wrapped in KISS framing

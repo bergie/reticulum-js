@@ -3,6 +3,7 @@ import { InterfaceDiscovery } from "../transport/discovery.js";
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log, setLogLevel } from "../utils/log.js";
+import { IFAC_MIN_SIZE, IFAC_SALT } from "./ifac.js";
 import { Packet } from "./packet.js";
 
 /**
@@ -18,6 +19,16 @@ export class Reticulum {
    * skipped in routing; the Python reference doesn't either.
    */
   static MINIMUM_BITRATE = 5;
+  /**
+   * Minimum IFAC size in bytes (`RNS.Reticulum.IFAC_MIN_SIZE`). Re-exported
+   * from {@link import("./ifac.js").IFAC_MIN_SIZE} for upstream API parity.
+   */
+  static IFAC_MIN_SIZE = IFAC_MIN_SIZE;
+  /**
+   * Fixed IFAC salt (`RNS.Reticulum.IFAC_SALT`). Re-exported from
+   * {@link import("./ifac.js").IFAC_SALT} for upstream API parity.
+   */
+  static IFAC_SALT = IFAC_SALT;
   /**
    * Initializes the Reticulum engine.
    * @param {Object} config - Configuration options for the node.

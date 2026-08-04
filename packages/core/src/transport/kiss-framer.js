@@ -105,17 +105,25 @@ export function kissFrame(rawPacket) {
 /**
  * Creates a TransformStream for KISS framing (Packets -> Bytes).
  *
- * Each packet is wrapped as `FEND | CMD_DATA | escaped(payload) | FEND`.
+ * Each packet is serialised and wrapped as
+ * `FEND | CMD_DATA | escaped(payload) | FEND`. When `sealRaw` is provided
+ * (an interface's {@link import("../interfaces/base.js").Interface#_sealRaw}),
+ * the serialised bytes are IFAC-sealed before framing — the byte-level
+ * chokepoint that mirrors `RNS.Transport.transmit`.
+ * @param {((raw: Uint8Array) => Promise<Uint8Array>) | null} [sealRaw] -
+ *   Optional async IFAC seal hook.
  * @returns {TransformStream}
  */
-export function createKissFramerStream() {
+export function createKissFramerStream(sealRaw = null) {
   return new TransformStream({
     /**
      * @param {import('../core/packet.js').Packet} packet
      * @param {TransformStreamDefaultController} controller
      */
-    transform(packet, controller) {
-      const frame = kissFrame(packet.serialize());
+    async transform(packet, controller) {
+      let raw = packet.serialize();
+      if (sealRaw) raw = await sealRaw(raw);
+      const frame = kissFrame(raw);
       log("KISS", `Enqueuing frame: ${frame}`, LogLevel.EXTREME);
       controller.enqueue(frame);
     },
@@ -131,8 +139,15 @@ export function createKissFramerStream() {
  * frames. Non-data frames are silently consumed. Frames exceeding `maxMtu`
  * are discarded (defence against a malicious/malformed peer), matching the
  * Python `len(data_buffer) < self.HW_MTU` guard.
+ *
+ * When `openRaw` is provided (an interface's
+ * {@link import("../interfaces/base.js").Interface#_openRaw}), each unframed
+ * frame is IFAC-verified/unsealed before deserialisation, and frames that
+ * fail verification (or violate the flag-presence rules) are silently
+ * dropped — the byte-level chokepoint that mirrors `RNS.Transport.inbound`.
  * @param {typeof import('../core/packet.js').Packet} packetClass
- * @param {number} [ifacSize=0] - Optional size of the IFAC field if present
+ * @param {((raw: Uint8Array) => Promise<Uint8Array | null>) | null} [openRaw]
+ *   - Optional async IFAC open hook; return `null` to drop the frame.
  * @param {number} [maxMtu=2048] - Maximum bytes accumulated per frame before
  *   the in-progress frame is dropped. Defaults to a generous cap; serial
  *   interfaces should pass their real `HW_MTU`.
@@ -140,7 +155,7 @@ export function createKissFramerStream() {
  */
 export function createKissUnframerStream(
   packetClass,
-  ifacSize = 0,
+  openRaw = null,
   maxMtu = 2048,
 ) {
   let inFrame = false;
@@ -154,7 +169,7 @@ export function createKissUnframerStream(
      * @param {Uint8Array} chunk
      * @param {TransformStreamDefaultController} controller
      */
-    transform(chunk, controller) {
+    async transform(chunk, controller) {
       log("KISS", `Received ${chunk.length} bytes`, LogLevel.DEBUG);
       for (let idx = 0; idx < chunk.length; idx++) {
         const byte = chunk[idx];
@@ -163,9 +178,12 @@ export function createKissUnframerStream(
           if (inFrame && command === CMD_DATA) {
             const unescaped = new Uint8Array(dataBuffer);
             try {
+              /** @type {Uint8Array} */
               let dataToDeserialize = unescaped;
-              if (ifacSize > 0) {
-                dataToDeserialize = unescaped.slice(2 + ifacSize);
+              if (openRaw) {
+                const opened = await openRaw(unescaped);
+                if (!opened) continue;
+                dataToDeserialize = opened;
               }
               controller.enqueue(packetClass.deserialize(dataToDeserialize));
             } catch (e) {

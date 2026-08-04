@@ -60,6 +60,8 @@ const HW_MTU = 1064;
  *   (Python config key: forward_port).
  * @property {number} [ifacSize] - IFAC size in bytes (0 disables; v1 runs with
  *   IFAC disabled, matching the common case).
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {number} [configuredBitrate] - Override the default bitrate guess.
  */
 
@@ -215,6 +217,10 @@ export class UDPInterface extends Interface {
     this.bitrate = options.configuredBitrate ?? BITRATE_GUESS;
 
     this.ifacSize = options.ifacSize ?? 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
 
     this.online = false;
 
@@ -307,6 +313,8 @@ export class UDPInterface extends Interface {
 
       this._writable = new WritableStream({
         write: (/** @type {Packet} */ packet) => this._processOutgoing(packet),
+        // ^ `_processOutgoing` is async (IFAC seal); the returned promise
+        //   signals WritableStream backpressure.
       });
       log(
         "UDPInterface",
@@ -336,11 +344,13 @@ export class UDPInterface extends Interface {
    * @param {Uint8Array} data
    * @private
    */
-  _onMessage(data) {
+  async _onMessage(data) {
     if (!this.online) return;
     let packet;
     try {
-      packet = Packet.deserialize(data);
+      const opened = await this._openRaw(data);
+      if (!opened) return;
+      packet = Packet.deserialize(opened);
     } catch (/** @type {any} */ e) {
       log(
         "UDPInterface",
@@ -361,10 +371,11 @@ export class UDPInterface extends Interface {
    * @param {Packet} packet
    * @private
    */
-  _processOutgoing(packet) {
+  async _processOutgoing(packet) {
     if (!this.online || !this._sendSocket) return;
     this._recordOutbound(packet);
-    const data = packet.serialize();
+    let data = packet.serialize();
+    data = await this._sealRaw(data);
     this._sendSocket.send(
       data,
       /** @type {number} */ (this.forwardPort),

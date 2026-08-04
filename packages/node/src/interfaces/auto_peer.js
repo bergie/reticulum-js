@@ -29,6 +29,11 @@ import { LogLevel, log } from "@reticulum/core/src/utils/log.js";
  *   Outbound datagrams are sent from that interface's data socket and scoped
  *   with `%ifname`.
  * @property {string} [name] - Interface name (defaults from address/ifname).
+ * @property {number} [ifacSize] - IFAC field size, inherited from the parent.
+ * @property {string} [networkName] - Shared IFAC network name, inherited from
+ *   the parent (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase, inherited from the
+ *   parent (`ifac_netkey`).
  */
 
 /**
@@ -52,6 +57,12 @@ export class AutoInterfacePeer extends Interface {
     this.address = options.address;
     this.ifname = options.ifname;
     this.name = options.name || `auto-peer-${this.ifname}/${this.address}`;
+    /** @type {number} */
+    this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /**
      * Nominal bitrate, overwritten by the parent {@link AutoInterface} at
      * spawn time so spawned peers inherit its (possibly configured) rate.
@@ -151,7 +162,9 @@ export class AutoInterfacePeer extends Interface {
 
     let packet;
     try {
-      packet = Packet.deserialize(data);
+      const opened = await this._openRaw(data);
+      if (!opened) return;
+      packet = Packet.deserialize(opened);
     } catch (/** @type {any} */ e) {
       log(
         "AutoInterface",
@@ -171,13 +184,14 @@ export class AutoInterfacePeer extends Interface {
    * data socket for this interface. No KISS framing — one raw RNS packet per
    * datagram, matching Python's `process_outgoing`.
    * @param {Packet} packet
-   * @returns {void}
+   * @returns {Promise<void>}
    * @private
    */
-  _processOutgoing(packet) {
+  async _processOutgoing(packet) {
     if (!this.online) return;
     this._recordOutbound(packet);
-    const data = packet.serialize();
+    let data = packet.serialize();
+    data = await this._sealRaw(data);
     this.parentInterface._sendData(this.address, this.ifname, data);
   }
 

@@ -241,6 +241,10 @@ export const KISS = Object.freeze({
  *   callsign to beacon. Strings are UTF-8 encoded; max 32 encoded bytes
  *   (Python: id_callsign).
  * @property {number} [ifacSize] - Optional IFAC size in bytes. Defaults to 0.
+ * @property {string} [networkName] - Shared IFAC network name
+ *   (`ifac_netname`); both endpoints must match.
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`);
+ *   both endpoints must match.
  * @property {string} [name] - Human-readable interface name.
  * @property {number} [detectTimeout] - Seconds to wait for the detect
  *   handshake. Defaults to 5 (Python TCP/BLE detect timeout) — the serial path
@@ -446,6 +450,10 @@ export class RNodeInterface extends Interface {
     });
     this.name = options.name || "rnode";
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
 
     this.frequency = options.frequency;
     this.bandwidth = options.bandwidth;
@@ -1259,7 +1267,8 @@ export class RNodeInterface extends Interface {
    * @param {import("../core/packet.js").Packet} packet
    */
   async send(packet) {
-    const raw = packet.serialize();
+    let raw = packet.serialize();
+    raw = await this._sealRaw(raw);
     if (this.online && this.interfaceReady) {
       if (this.flowControl) this.interfaceReady = false;
       this._noteTransmission(false);
@@ -1838,17 +1847,15 @@ export class RNodeInterface extends Interface {
    * @param {number[]} dataBuffer
    * @private
    */
-  _processIncoming(dataBuffer) {
+  async _processIncoming(dataBuffer) {
     const data = new Uint8Array(dataBuffer);
     this.rxb += data.length;
     this.rStatRssi = null;
     this.rStatSnr = null;
     try {
-      let toDeserialize = data;
-      if (this.ifacSize > 0) {
-        toDeserialize = data.slice(2 + this.ifacSize);
-      }
-      const packet = Packet.deserialize(toDeserialize);
+      const opened = await this._openRaw(data);
+      if (!opened) return;
+      const packet = Packet.deserialize(opened);
       this.dispatchEvent(new CustomEvent("packet", { detail: { packet } }));
     } catch (e) {
       log(

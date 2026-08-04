@@ -7,7 +7,10 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { Identity } from "../../src/core/identity.js";
-import { buildPropagationNodeAppData, parsePropagationNodeAppData } from "../../src/lxmf/announce_data.js";
+import {
+  buildPropagationNodeAppData,
+  parsePropagationNodeAppData,
+} from "../../src/lxmf/announce_data.js";
 import { LXMRouter } from "../../src/lxmf/router.js";
 import { toHex } from "../../src/utils/encoding.js";
 

@@ -70,16 +70,24 @@ export function hdlcUnescape(data) {
 
 /**
  * Creates a TransformStream for HDLC framing (Packets -> Bytes).
+ *
+ * When `sealRaw` is provided (an interface's
+ * {@link import("../interfaces/base.js").Interface#_sealRaw}), the serialised
+ * bytes are IFAC-sealed before framing — the byte-level chokepoint that
+ * mirrors `RNS.Transport.transmit`.
+ * @param {((raw: Uint8Array) => Promise<Uint8Array>) | null} [sealRaw] -
+ *   Optional async IFAC seal hook.
  * @returns {TransformStream}
  */
-export function createHdlcFramerStream() {
+export function createHdlcFramerStream(sealRaw = null) {
   return new TransformStream({
     /**
      * @param {import('../core/packet.js').Packet} packet
      * @param {TransformStreamDefaultController} controller
      */
-    transform(packet, controller) {
-      const raw = packet.serialize();
+    async transform(packet, controller) {
+      let raw = packet.serialize();
+      if (sealRaw) raw = await sealRaw(raw);
       const escaped = hdlcEscape(raw);
 
       const frame = new Uint8Array(escaped.length + 2);
@@ -103,15 +111,22 @@ export function createHdlcFramerStream() {
  * HW_MTU*2` guard. Defaults to 2× the Python TCP `HW_MTU` (262144), which
  * comfortably admits any legitimate frame while preventing unbounded memory
  * growth on a stream-oriented interface.
+ *
+ * When `openRaw` is provided (an interface's
+ * {@link import("../interfaces/base.js").Interface#_openRaw}), each unframed
+ * frame is IFAC-verified/unsealed before deserialisation, and frames that
+ * fail verification (or violate the flag-presence rules) are silently
+ * dropped — the byte-level chokepoint that mirrors `RNS.Transport.inbound`.
  * @param {typeof import('../core/packet.js').Packet} packetClass
- * @param {number} [ifacSize=0] - Optional size of the IFAC field if present
+ * @param {((raw: Uint8Array) => Promise<Uint8Array | null>) | null} [openRaw]
+ *   - Optional async IFAC open hook; return `null` to drop the frame.
  * @param {number} [maxFrameSize=524288] - Maximum bytes accumulated between
  *   flags before the in-progress frame is dropped and the unframer resyncs.
  * @returns {TransformStream}
  */
 export function createHdlcUnframerStream(
   packetClass,
-  ifacSize = 0,
+  openRaw = null,
   maxFrameSize = 524288,
 ) {
   // Byte-oriented state machine, mirroring createKissUnframerStream. A FLAG
@@ -130,7 +145,7 @@ export function createHdlcUnframerStream(
      * @param {Uint8Array} chunk
      * @param {TransformStreamDefaultController} controller
      */
-    transform(chunk, controller) {
+    async transform(chunk, controller) {
       log("HDLC", `Received ${chunk.length} bytes`, LogLevel.DEBUG);
       for (let i = 0; i < chunk.length; i++) {
         const byte = chunk[i];
@@ -142,9 +157,16 @@ export function createHdlcUnframerStream(
           if (inFrame && dataBuffer.length > 0) {
             try {
               const unescaped = hdlcUnescape(new Uint8Array(dataBuffer));
+              /** @type {Uint8Array} */
               let dataToDeserialize = unescaped;
-              if (ifacSize > 0) {
-                dataToDeserialize = unescaped.slice(2 + ifacSize);
+              if (openRaw) {
+                const opened = await openRaw(unescaped);
+                if (!opened) {
+                  inFrame = true;
+                  dataBuffer = [];
+                  continue;
+                }
+                dataToDeserialize = opened;
               }
               controller.enqueue(packetClass.deserialize(dataToDeserialize));
             } catch (e) {

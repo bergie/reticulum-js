@@ -54,6 +54,8 @@ const STATE_OPEN = "open";
  * @property {string} [name] - Interface name.
  * @property {number} [ifacSize] - Optional IFAC field size. The channel is
  *   already DTLS-encrypted end-to-end, so IFAC is rarely needed; reserved for
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  *   parity with other interfaces.
  */
 
@@ -122,6 +124,10 @@ export class WebRTCInterface extends Interface {
       `webrtc-${options.channel.label || "channel"}-${options.channel.id ?? ""}`;
     /** @type {number} */
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /**
      * Nominal bitrate in bits/s. Matches the work doc's ~50 Mbit/s
      * high-bandwidth assumption; the channel is a direct peer link.
@@ -228,38 +234,43 @@ export class WebRTCInterface extends Interface {
     // Inbound: RTCDataChannel binary messages -> Packets.
     const incoming = new ReadableStream({
       start: (controller) => {
-        channel.addEventListener("message", (/** @type {any} */ event) => {
-          // `binaryType` is "arraybuffer", so binary frames arrive as
-          // ArrayBuffer. Text frames (strings) are ignored.
-          if (!(event.data instanceof ArrayBuffer)) {
-            log(
-              "WebRTC",
-              "Ignoring non-binary RTCDataChannel message",
-              LogLevel.DEBUG,
-            );
-            return;
-          }
-          const bytes = new Uint8Array(event.data);
-          try {
-            // Match the Python reference read loop and the WebSocket
-            // interface: drop anything no larger than the header minimum.
-            if (bytes.length <= HEADER_MINSIZE) {
+        channel.addEventListener(
+          "message",
+          async (/** @type {any} */ event) => {
+            // `binaryType` is "arraybuffer", so binary frames arrive as
+            // ArrayBuffer. Text frames (strings) are ignored.
+            if (!(event.data instanceof ArrayBuffer)) {
               log(
                 "WebRTC",
-                `Dropping RTCDataChannel message at or below header minimum (${HEADER_MINSIZE} bytes)`,
+                "Ignoring non-binary RTCDataChannel message",
                 LogLevel.DEBUG,
               );
               return;
             }
-            controller.enqueue(Packet.deserialize(bytes));
-          } catch (e) {
-            log(
-              "WebRTC",
-              `Failed to parse incoming message: ${e}`,
-              LogLevel.ERROR,
-            );
-          }
-        });
+            const bytes = new Uint8Array(event.data);
+            try {
+              // Match the Python reference read loop and the WebSocket
+              // interface: drop anything no larger than the header minimum.
+              if (bytes.length <= HEADER_MINSIZE) {
+                log(
+                  "WebRTC",
+                  `Dropping RTCDataChannel message at or below header minimum (${HEADER_MINSIZE} bytes)`,
+                  LogLevel.DEBUG,
+                );
+                return;
+              }
+              const opened = await this._openRaw(bytes);
+              if (!opened) return;
+              controller.enqueue(Packet.deserialize(opened));
+            } catch (e) {
+              log(
+                "WebRTC",
+                `Failed to parse incoming message: ${e}`,
+                LogLevel.ERROR,
+              );
+            }
+          },
+        );
         channel.addEventListener("close", () => {
           try {
             controller.close();
@@ -289,12 +300,16 @@ export class WebRTCInterface extends Interface {
 
     // Outbound: packets -> RTCDataChannel binary messages.
     this._writable = new WritableStream({
-      write: (/** @type {import("../core/packet.js").Packet} */ packet) => {
+      write: async (
+        /** @type {import("../core/packet.js").Packet} */ packet,
+      ) => {
         if (channel.readyState !== STATE_OPEN) {
           throw new Error("RTCDataChannel is not open");
         }
         this._recordOutbound(packet);
-        channel.send(packet.serialize());
+        let raw = packet.serialize();
+        raw = await this._sealRaw(raw);
+        channel.send(raw);
       },
       close: () => {
         try {

@@ -40,40 +40,6 @@ import { Interface, reconnectSchemaProperties } from "./base.js";
 const HEADER_MINSIZE = 19;
 
 /**
- * Decodes a single raw (`framing: "raw"`) WebSocket message into a Packet,
- * honouring the IFAC flag bit (the high bit of the first header byte).
- *
- * In Python, the IFAC field is prepended/masked by `Transport.outbound` and
- * stripped/unmasked by `Transport.inbound`, so an interface normally just
- * passes raw bytes through. When this interface is not configured with an
- * `ifacSize`, IFAC-tagged packets cannot be authenticated and are dropped —
- * matching both the Python reference and the upstream `rns.js` client.
- *
- * Not used when `framing: "kiss"`; in that mode inbound bytes are fed through
- * the streaming KISS unframer instead.
- * @param {Uint8Array} bytes
- * @param {number} ifacSize
- * @returns {import("../core/packet.js").Packet | null} `null` if the message should be ignored.
- */
-export function packetFromMessage(bytes, ifacSize) {
-  const hasIfac = (bytes[0] & 0x80) !== 0;
-  if (hasIfac) {
-    if (ifacSize > 0) {
-      // Strip the 2-byte header + IFAC signature, matching the existing
-      // unframer behaviour. (Full IFAC verification is not yet implemented.)
-      return Packet.deserialize(bytes.slice(2 + ifacSize));
-    }
-    log(
-      "WebSocket",
-      "Received IFAC packet but no ifacSize configured; dropping",
-      LogLevel.DEBUG,
-    );
-    return null;
-  }
-  return Packet.deserialize(bytes);
-}
-
-/**
  * @typedef {Object} WebSocketClientInterfaceOptions
  * @property {string} [url] - Full WebSocket URL, e.g. `ws://host:port` or
  *   `wss://host/path`. Takes precedence over `host`/`port`.
@@ -91,6 +57,10 @@ export function packetFromMessage(bytes, ifacSize) {
  *   accepted connection.
  * @property {number} [ifacSize] - Optional IFAC field size, if the remote peer
  *   signs packets with an interface authentication code.
+ * @property {string} [networkName] - Shared IFAC network name
+ *   (`ifac_netname`); both endpoints must match.
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`);
+ *   both endpoints must match.
  * @property {"raw"|"kiss"} [framing] - Wire framing. Defaults to `"raw"`
  *   (one RNS packet per binary message). Set to `"kiss"` for peers that
  *   speak KISS over WebSocket (e.g. some RNode firmware versions): each
@@ -221,6 +191,10 @@ export class WebSocketClientInterface extends Interface {
       options.name || `ws-client-${this.url.replace(/^wss?:\/\//, "")}`;
     /** @type {number} */
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /**
      * Nominal bitrate. JS-specific (no Python equivalent); WebSocket is
      * TCP-backed so we assume the same 10 Mbit/s guess as
@@ -390,7 +364,8 @@ export class WebSocketClientInterface extends Interface {
     this._packetWriter = null;
 
     const framing = this.framing;
-    const ifacSize = this.ifacSize;
+    const openRaw = (/** @type {Uint8Array} */ raw) => this._openRaw(raw);
+    const sealRaw = (/** @type {Uint8Array} */ raw) => this._sealRaw(raw);
 
     // Inbound: WebSocket binary messages -> bytes (kiss) or packets (raw).
     //
@@ -400,7 +375,7 @@ export class WebSocketClientInterface extends Interface {
     // coalesced within) messages still parse correctly.
     const incoming = new ReadableStream({
       start: (controller) => {
-        ws.addEventListener("message", (/** @type {any} */ event) => {
+        ws.addEventListener("message", async (/** @type {any} */ event) => {
           // `binaryType` is "arraybuffer", so binary frames arrive as
           // ArrayBuffer and text frames as strings.
           if (!(event.data instanceof ArrayBuffer)) {
@@ -427,7 +402,9 @@ export class WebSocketClientInterface extends Interface {
               );
               return;
             }
-            const packet = packetFromMessage(bytes, ifacSize);
+            const opened = await openRaw(bytes);
+            if (!opened) return;
+            const packet = Packet.deserialize(opened);
             if (packet) controller.enqueue(packet);
           } catch (e) {
             log(
@@ -464,22 +441,22 @@ export class WebSocketClientInterface extends Interface {
     this._readable =
       framing === "kiss"
         ? incoming.pipeThrough(
-            /** @type {any} */ (createKissUnframerStream(Packet, ifacSize)),
+            /** @type {any} */ (createKissUnframerStream(Packet, openRaw)),
           )
         : incoming;
 
     // Outbound: packets -> WebSocket binary messages
     const sink = new WritableStream({
-      write: (/** @type {import("../core/packet.js").Packet} */ packet) => {
+      write: async (
+        /** @type {import("../core/packet.js").Packet} */ packet,
+      ) => {
         if (ws.readyState !== WebSocket.OPEN) {
           throw new Error("WebSocket is not open");
         }
         this._recordOutbound(packet);
-        ws.send(
-          framing === "kiss"
-            ? kissFrame(packet.serialize())
-            : packet.serialize(),
-        );
+        let raw = packet.serialize();
+        raw = await sealRaw(raw);
+        ws.send(framing === "kiss" ? kissFrame(raw) : raw);
       },
       close: () => {
         try {

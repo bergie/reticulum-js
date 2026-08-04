@@ -7,6 +7,7 @@
 
 import { hkdf } from "../crypto/ciphers.js";
 import {
+  derivePublicKeyFromPrivate,
   exportPublicKey,
   exportRawPrivateKey,
   generateEd25519KeyPair,
@@ -303,6 +304,58 @@ export class Identity extends EventTarget {
     publicKey.set(x25519PubBytes, 0);
     publicKey.set(ed25519PubBytes, 32);
     return publicKey;
+  }
+
+  /**
+   * Build an identity from a 64-byte private-key blob.
+   *
+   * This is the JavaScript analog of the Python reference's
+   * `Identity.from_bytes` / `load_private_key`: the input is **private key
+   * material only** — the first 32 bytes are the X25519 private key, the last
+   * 32 bytes the Ed25519 private key — and the public keys are derived from
+   * them (rather than supplied, as in {@link Identity.fromBytes}, which takes
+   * the full 128-byte priv+pub export).
+   *
+   * Used to instantiate the {@link import("./ifac.js").deriveIfac IFAC
+   * identity} from an HKDF-derived 64-byte key, matching upstream
+   * `Identity.from_bytes(ifac_key)`. Returns `null` on invalid input.
+   * @param {Uint8Array} bytes 64 bytes: `[x25519Priv(32) || ed25519Priv(32)]`.
+   * @returns {Promise<Identity|null>}
+   */
+  static async fromPrivateKey(bytes) {
+    try {
+      if (bytes.length !== 64) {
+        throw new Error(
+          `Expected 64 bytes of private key material, got ${bytes.length}`,
+        );
+      }
+      const x25519Priv = await importRawX25519PrivateKey(bytes.slice(0, 32));
+      const ed25519Priv = await importRawEd25519PrivateKey(bytes.slice(32, 64));
+      const x25519 = await derivePublicKeyFromPrivate(x25519Priv);
+      const ed25519 = await derivePublicKeyFromPrivate(ed25519Priv);
+
+      const publicKey = new Uint8Array(64);
+      publicKey.set(x25519.raw, 0);
+      publicKey.set(ed25519.raw, 32);
+
+      const identityHash = await Identity.truncatedHash(publicKey);
+
+      return new Identity(
+        x25519Priv,
+        ed25519Priv,
+        x25519.publicKey,
+        ed25519.publicKey,
+        publicKey,
+        identityHash,
+      );
+    } catch (e) {
+      log(
+        "Identity",
+        `Failed to load identity from private key: ${e}`,
+        LogLevel.ERROR,
+      );
+      return null;
+    }
   }
 
   /**

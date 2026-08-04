@@ -56,12 +56,7 @@
  * Signals: SIGINT/SIGTERM flush stores to disk and exit.
  */
 import { parseArgs } from "node:util";
-import {
-  fromHex,
-  Identity,
-  Reticulum,
-  toHex,
-} from "@reticulum/core";
+import { fromHex, Identity, Reticulum, toHex } from "@reticulum/core";
 import { LXMRouter } from "@reticulum/core/src/lxmf/index.js";
 import { RFedNode } from "@reticulum/core/src/rfed/index.js";
 import {
@@ -70,8 +65,8 @@ import {
   LocalClientInterface,
   TCPClientInterface,
 } from "../index.js";
-import { loadRFedStores, saveRFedStores } from "../storage/rfed.js";
 import { loadLXMFStore, saveLXMFStore } from "../storage/lxmf.js";
+import { loadRFedStores, saveRFedStores } from "../storage/rfed.js";
 
 const MAINTENANCE_INTERVAL_DEFAULT = 3600;
 const SYNC_INTERVAL_DEFAULT = 300;

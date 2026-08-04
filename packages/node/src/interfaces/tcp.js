@@ -35,6 +35,8 @@ const I2P_PROBE_AFTER_MS = 10000;
  * @property {number} [port]
  * @property {any} [socket]
  * @property {number} [ifacSize]
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {string} [name]
  * @property {"hdlc"|"kiss"} [framing] - Wire framing to use. Defaults to
  *   `"hdlc"` (Python reference default). `"kiss"` mirrors the Python
@@ -54,6 +56,8 @@ const I2P_PROBE_AFTER_MS = 10000;
  * @typedef {Object} TCPServerInterfaceOptions
  * @property {number} port
  * @property {number} [ifacSize]
+ * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
+ * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {"hdlc"|"kiss"} [framing] - Wire framing for spawned client
  *   interfaces. Defaults to `"hdlc"`.
  * @property {string} [name]
@@ -145,6 +149,10 @@ export class TCPClientInterface extends Interface {
     this.host = options.host || "";
     this.port = options.port || 0;
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /**
      * Nominal bitrate. Matches `TCPClientInterface.BITRATE_GUESS`
      * (10 Mbit/s) in the Python reference; overwritten by the parent server
@@ -358,14 +366,14 @@ export class TCPClientInterface extends Interface {
     );
     this._readable = webReadable.pipeThrough(
       this.framing === "kiss"
-        ? createKissUnframerStream(Packet, this.ifacSize)
-        : createHdlcUnframerStream(Packet, this.ifacSize),
+        ? createKissUnframerStream(Packet, (raw) => this._openRaw(raw))
+        : createHdlcUnframerStream(Packet, (raw) => this._openRaw(raw)),
     );
 
     const framer =
       this.framing === "kiss"
-        ? createKissFramerStream()
-        : createHdlcFramerStream();
+        ? createKissFramerStream((raw) => this._sealRaw(raw))
+        : createHdlcFramerStream((raw) => this._sealRaw(raw));
 
     // Count every outbound packet (the single TX chokepoint for this
     // interface: both routed writes via the transport and direct `send()`
@@ -496,6 +504,10 @@ export class TCPServerInterface extends Interface {
     this.name = options.name || `tcp-server-${options.port}`;
     this.port = options.port;
     this.ifacSize = options.ifacSize || 0;
+    /** @type {string|null} */
+    this.ifacNetname = options.networkName || null;
+    /** @type {string|null} */
+    this.ifacNetkey = options.passphrase || null;
     /** @type {"hdlc"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "hdlc";
     /**
@@ -535,6 +547,8 @@ export class TCPServerInterface extends Interface {
         const client = new TCPClientInterface({
           socket,
           ifacSize: this.ifacSize,
+          networkName: this.ifacNetname ?? undefined,
+          passphrase: this.ifacNetkey ?? undefined,
           framing: this.framing,
           name: `tcp-client-from-server-${socket.remoteAddress}:${socket.remotePort}`,
         });

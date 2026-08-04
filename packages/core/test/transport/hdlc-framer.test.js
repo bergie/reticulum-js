@@ -48,7 +48,7 @@ async function runUnframerTest(chunks) {
  * Feeds an array of Packet objects into the framer and collects the output.
  */
 async function runFramerTest(packets) {
-  const framer = createHdlcFramerStream(Packet);
+  const framer = createHdlcFramerStream();
   const writer = framer.writable.getWriter();
   const reader = framer.readable.getReader();
   const results = [];
@@ -216,7 +216,7 @@ describe("RNS Unframer DoS bound (maxFrameSize)", () => {
    * collecting decoded packets.
    */
   async function runBoundedUnframer(maxFrameSize, chunks) {
-    const unframer = createHdlcUnframerStream(Packet, 0, maxFrameSize);
+    const unframer = createHdlcUnframerStream(Packet, null, maxFrameSize);
     const writer = unframer.writable.getWriter();
     const reader = unframer.readable.getReader();
     const results = [];
