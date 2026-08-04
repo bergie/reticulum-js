@@ -23,7 +23,19 @@ import {
 import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
-import { RoutingTable } from "./router.js";
+import { PathState, RoutingTable } from "./router.js";
+
+/**
+ * Network MTU in bytes — mirrors `RNS.Reticulum.MTU` (protocol-fixed). Kept
+ * locally to avoid a transport↔reticulum import cycle; the canonical static
+ * lives on {@link import("../core/reticulum.js").Reticulum}.
+ */
+const MTU = 500;
+/**
+ * Base per-hop timeout in seconds — mirrors `RNS.Reticulum.DEFAULT_PER_HOP_TIMEOUT`
+ * (protocol-fixed). See {@link MTU} note on why it's mirrored here.
+ */
+const DEFAULT_PER_HOP_TIMEOUT = 6;
 
 /**
  * The central network router for the Reticulum node.
@@ -464,6 +476,9 @@ export class TransportCore extends EventTarget {
     }
     if (await receipt.validateProof(packet.payload)) {
       receipt.setDelivered();
+      // §7 path-health: a validated proof confirms the path works — flip it
+      // responsive (Transport.mark_path_responsive).
+      this.markPathResponsive(receipt.destinationHash);
       log(
         "Transport",
         `PROOF validated for ${toHex(packet.destinationHash)} — receipt delivered`,
@@ -715,9 +730,18 @@ export class TransportCore extends EventTarget {
       packet.packetType === PacketType.DATA &&
       packet.contextByte === ContextType.NONE
     ) {
-      PacketReceipt.track(
-        new PacketReceipt(packetHash, packet.destinationHash),
-      );
+      const receipt = new PacketReceipt(packetHash, packet.destinationHash, {
+        // §7 path-health: a proof that never arrives means the path is dead —
+        // mark it unresponsive so announce ingestion will try an alternative
+        // (Transport.mark_path_unresponsive on receipt timeout).
+        failed: (r) => {
+          this.markPathUnresponsive(r.destinationHash);
+        },
+      });
+      // §Bitrate-adaptive timeout (RNS.Packet.timeout = get_first_hop_timeout):
+      // a slow next hop gets a proportionally longer proof wait.
+      receipt.startTimeout(this.firstHopTimeout(packet.destinationHash) * 1000);
+      PacketReceipt.track(receipt);
     }
   }
 
@@ -764,6 +788,106 @@ export class TransportCore extends EventTarget {
    */
   nextHop(destinationHash) {
     return this.routingTable.getRoute(destinationHash)?.nextHop ?? null;
+  }
+
+  // -----------------------------------------------------------------------
+  // Bitrate-adaptive timeouts (RNS.Transport.first_hop_timeout /
+  // extra_link_proof_timeout) + path-health state (mark_path_*).
+  // -----------------------------------------------------------------------
+
+  /**
+   * The bitrate-adaptive proof timeout for a single hop toward the
+   * destination, in seconds (`Transport.first_hop_timeout`).
+   * `MTU * (8 / next_hop_bitrate) + DEFAULT_PER_HOP_TIMEOUT`, falling back to
+   * `DEFAULT_PER_HOP_TIMEOUT` when the route or its interface bitrate is
+   * unknown. Used as the proof-wait timeout for an outbound DATA packet
+   * (Python `Packet.timeout = get_first_hop_timeout(...)`).
+   * @param {Uint8Array} destinationHash
+   * @returns {number} seconds
+   */
+  firstHopTimeout(destinationHash) {
+    const bitrate =
+      this.routingTable.getRoute(destinationHash)?.interface?.bitrate;
+    if (!bitrate) return DEFAULT_PER_HOP_TIMEOUT;
+    return MTU * (8 / bitrate) + DEFAULT_PER_HOP_TIMEOUT;
+  }
+
+  /**
+   * The link-establishment timeout for a destination, in seconds. Combines
+   * {@link firstHopTimeout} with a per-hop term: `first_hop_timeout +
+   * DEFAULT_PER_HOP_TIMEOUT * max(1, hops)` (`Link.__init__` ~l.282-283), so a
+   * slow or multi-hop path gets a proportionally longer handshake wait.
+   * @param {Uint8Array} destinationHash
+   * @returns {number} seconds
+   */
+  establishmentTimeout(destinationHash) {
+    const hops = this.routingTable.getRoute(destinationHash)?.hops ?? 1;
+    return (
+      this.firstHopTimeout(destinationHash) +
+      DEFAULT_PER_HOP_TIMEOUT * Math.max(1, hops)
+    );
+  }
+
+  /**
+   * Extra slack (seconds) to allow for a link proof transiting a given
+   * interface (`Transport.extra_link_proof_timeout`):
+   * `(8 / bitrate) * MTU`. Returns 0 when the interface bitrate is unknown.
+   * @param {import("../interfaces/base.js").Interface|null} iface
+   * @returns {number}
+   */
+  extraLinkProofTimeout(iface) {
+    if (!iface?.bitrate) return 0;
+    return (8 / iface.bitrate) * MTU;
+  }
+
+  /**
+   * Marks the path to a destination responsive — a proof/link just succeeded
+   * (`Transport.mark_path_responsive`). No-op if no route is known.
+   * @param {Uint8Array} destinationHash
+   * @returns {boolean}
+   */
+  markPathResponsive(destinationHash) {
+    return this.routingTable.markState(destinationHash, PathState.RESPONSIVE);
+  }
+
+  /**
+   * Marks the path to a destination unresponsive — a proof/link timed out
+   * (`Transport.mark_path_unresponsive`). Subsequent announce ingestion will
+   * try an alternative path via the `path_is_unresponsive` gate.
+   * @param {Uint8Array} destinationHash
+   * @returns {boolean}
+   */
+  markPathUnresponsive(destinationHash) {
+    return this.routingTable.markState(destinationHash, PathState.UNRESPONSIVE);
+  }
+
+  /**
+   * Resets the path state to unknown (`Transport.mark_path_unknown_state`).
+   * @param {Uint8Array} destinationHash
+   * @returns {boolean}
+   */
+  markPathUnknown(destinationHash) {
+    return this.routingTable.markState(destinationHash, PathState.UNKNOWN);
+  }
+
+  /**
+   * Whether the path was marked unresponsive by a failed attempt
+   * (`Transport.path_is_unresponsive`).
+   * @param {Uint8Array} destinationHash
+   * @returns {boolean}
+   */
+  pathIsUnresponsive(destinationHash) {
+    return this.routingTable.pathIsUnresponsive(destinationHash);
+  }
+
+  /**
+   * Forgets the path to a destination (`Transport.expire_path`), e.g. on link
+   * teardown.
+   * @param {Uint8Array} destinationHash
+   * @returns {boolean}
+   */
+  expirePath(destinationHash) {
+    return this.routingTable.expireRoute(destinationHash);
   }
 
   /**

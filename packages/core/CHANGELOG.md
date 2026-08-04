@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 ### Added
+- **Path-health state & bitrate-adaptive timeouts** (work doc #29): path
+  liveness tracking plus proof/link timeouts that scale with the next-hop
+  interface bitrate, mirroring `RNS.Transport` (`first_hop_timeout`,
+  `extra_link_proof_timeout`, `mark_path_*`, `path_is_unresponsive`,
+  `expire_path`). Leaf-relevant only — relay-side transitions arrive with the
+  transport-node effort (#23).
+  - `RoutingTable` gained a per-route `state` (`PathState.UNKNOWN` /
+    `UNRESPONSIVE` / `RESPONSIVE`, matching `Transport.STATE_*`),
+    `markState`/`getState`/`pathIsUnresponsive`/`expireRoute`, and the
+    `path_is_unresponsive` replay gate in `addOrUpdateRoute` (Transport.py
+    ~l.1887): a repeated announce is accepted on a dead path so an
+    alternative next hop can be tried. A path replaced by a fresh announce
+    resets to `UNKNOWN` (`mark_path_unknown_state`).
+  - `TransportCore` gained `firstHopTimeout(destHash)` =
+    `MTU*8/bitrate + DEFAULT_PER_HOP_TIMEOUT`, `establishmentTimeout(destHash)`
+    = `firstHopTimeout + PER_HOP*max(1,hops)`, `extraLinkProofTimeout(iface)`,
+    and `markPathResponsive`/`markPathUnresponsive`/`markPathUnknown`/
+    `pathIsUnresponsive`/`expirePath` wrappers. `Reticulum.MTU` (500),
+    `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6) and
+    `Reticulum.getFirstHopTimeout(destHash)` added for upstream API parity.
+  - `PacketReceipt` gained a proof-wait `startTimeout(ms)`/`clearTimeout()`;
+    `sendPacket` now arms it with `firstHopTimeout` and wires the `failed`
+    callback to `markPathUnresponsive`, while a validated PROOF flips the path
+    `RESPONSIVE`.
+  - `Link`: a pending link that closes without ever activating now expires the
+    path and re-requests it (Transport.py ~l.538-541 leaf branch); `whenActive()`
+    defaults to the bitrate-adaptive `establishmentTimeout` instead of a fixed
+    15 s. Both are guarded so lightweight/mock transports without the
+    path-health API are unaffected.
 - **IFAC (Interface Authentication Code) support** (work doc #28):
   per-interface packet authentication/sealing, cross-checked byte-for-byte
   against the Python reference (`RNS 1.4.2`). Both endpoints sharing a

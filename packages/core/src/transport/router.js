@@ -13,6 +13,20 @@ const PATH_EXPIRY_MS = 60 * 60 * 24 * 7 * 1000;
 const MAX_RANDOM_BLOBS = 64;
 
 /**
+ * Per-destination path liveness state (`Transport.STATE_*`). A path starts
+ * {@link PathState.UNKNOWN UNKNOWN} when learned, flips to
+ * {@link PathState.RESPONSIVE RESPONSIVE} on a successful proof/link and to
+ * {@link PathState.UNRESPONSIVE UNRESPONSIVE} when a proof/link times out.
+ * `UNKNOWN` is the default for any destination with no recorded state.
+ * @enum {number}
+ */
+export const PathState = {
+  UNKNOWN: 0x00,
+  UNRESPONSIVE: 0x01,
+  RESPONSIVE: 0x02,
+};
+
+/**
  * @typedef {Object} Route
  * @property {import("../interfaces/base.js").Interface|null} interface The
  *   interface the destination was announced through — i.e. the outbound
@@ -27,6 +41,9 @@ const MAX_RANDOM_BLOBS = 64;
  * @property {number} expires ms epoch after which the route is lazily culled.
  * @property {Uint8Array[]} randomBlobs Recorded announce `random_hash`es, used
  *   for replay defense and path-table replacement ordering (§4.5 step 6.3).
+ * @property {number} state Path liveness ({@link PathState}); defaults to
+ *   {@link PathState.UNKNOWN}. Reset to `UNKNOWN` whenever the entry is
+ *   replaced by a fresh announce (`Transport.mark_path_unknown_state`).
  */
 
 /**
@@ -102,34 +119,64 @@ export class RoutingTable {
     const emitted = emissionTime(randomBlob);
     const expires = entry.expires ?? Date.now() + PATH_EXPIRY_MS;
 
-    // §4.5 step 6.3 — replay defense: never accept an announce whose
-    // random_blob we have already recorded for this destination.
-    if (existing && randomBlob) {
-      if (existing.randomBlobs.some((b) => bytesEqual(b, randomBlob))) {
-        return false;
-      }
-    }
+    // §4.5 step 6.3 — replay defense: a random_blob already recorded for this
+    // destination is normally rejected. The single exception is the
+    // path_is_unresponsive gate below (Transport.py ~l.1887), handled per-branch.
+    const isReplay = Boolean(
+      existing &&
+        randomBlob &&
+        existing.randomBlobs.some((b) => bytesEqual(b, randomBlob)),
+    );
 
-    let shouldAdd;
+    let shouldAdd = false;
+    /** Set when acceptance is via the unresponsive-replay gate (state preserved). */
+    let viaUnresponsiveGate = false;
     if (!existing) {
       shouldAdd = true;
-    } else if (entry.hops <= existing.hops) {
-      shouldAdd = emitted > timebaseFromBlobs(existing.randomBlobs);
     } else {
-      // Longer path: only override an expired or more-recently-emitted path.
-      const now = Date.now();
-      shouldAdd =
-        now >= existing.expires ||
-        emitted > timebaseFromBlobs(existing.randomBlobs);
+      const timebase = timebaseFromBlobs(existing.randomBlobs);
+      if (entry.hops <= existing.hops) {
+        // Shorter-or-equal path: refresh only on a fresher emission. A replayed
+        // blob can never be fresher (same emission ⇒ emitted === timebase), so
+        // this also enforces anti-replay for this branch.
+        shouldAdd = emitted > timebase;
+      } else {
+        // Longer path: override only an expired or more-recently-emitted path.
+        const now = Date.now();
+        if (now >= existing.expires) {
+          shouldAdd = !isReplay;
+        } else if (emitted > timebase) {
+          shouldAdd = true;
+        } else if (
+          emitted === timebase &&
+          existing.state === PathState.UNRESPONSIVE
+        ) {
+          // §7 path_is_unresponsive gate: the same announce heard again, but
+          // the stored path was marked unresponsive — accept it (likely via a
+          // different next hop / interface) so we try an alternative instead of
+          // trusting a known-dead path. Python does not call
+          // mark_path_unknown_state here, so the state is preserved.
+          shouldAdd = true;
+          viaUnresponsiveGate = true;
+        }
+      }
     }
 
     if (!shouldAdd) return false;
 
     const randomBlobs = existing ? existing.randomBlobs.slice() : [];
-    if (randomBlob) {
+    // Don't re-record a replayed blob (the unresponsive-gate case); it's
+    // already there.
+    if (randomBlob && !isReplay) {
       randomBlobs.push(randomBlob.slice());
       while (randomBlobs.length > MAX_RANDOM_BLOBS) randomBlobs.shift();
     }
+
+    // A path replaced by a fresh announce is "unknown" until proven again
+    // (Transport.mark_path_unknown_state). The unresponsive-gate exception
+    // keeps the existing state, matching Python.
+    const state =
+      existing && viaUnresponsiveGate ? existing.state : PathState.UNKNOWN;
 
     this.routes.set(destKey, {
       interface: entry.viaInterface,
@@ -138,8 +185,52 @@ export class RoutingTable {
       timestamp: Date.now(),
       expires,
       randomBlobs,
+      state,
     });
     return true;
+  }
+
+  /**
+   * Sets the liveness state of a known path (`Transport.mark_path_*`).
+   * @param {Uint8Array} destinationHash
+   * @param {number} state A {@link PathState}.
+   * @returns {boolean} `true` if a route was updated.
+   */
+  markState(destinationHash, state) {
+    const route = this.routes.get(toHex(destinationHash));
+    if (!route) return false;
+    route.state = state;
+    return true;
+  }
+
+  /**
+   * The liveness state of a path, defaulting to {@link PathState.UNKNOWN}.
+   * @param {Uint8Array} destinationHash
+   * @returns {number}
+   */
+  getState(destinationHash) {
+    return this.routes.get(toHex(destinationHash))?.state ?? PathState.UNKNOWN;
+  }
+
+  /**
+   * Whether the path was marked unresponsive by a failed proof/link attempt
+   * (`Transport.path_is_unresponsive`).
+   * @param {Uint8Array} destinationHash
+   * @returns {boolean}
+   */
+  pathIsUnresponsive(destinationHash) {
+    return this.getState(destinationHash) === PathState.UNRESPONSIVE;
+  }
+
+  /**
+   * Forgets a path immediately (`Transport.expire_path`). Python marks the
+   * entry for lazy culling; with no transport-node cull job we delete outright
+   * so `hasPath` reflects the expiry at once.
+   * @param {Uint8Array} destinationHash
+   * @returns {boolean} `true` if a route was removed.
+   */
+  expireRoute(destinationHash) {
+    return this.routes.delete(toHex(destinationHash));
   }
 
   /**

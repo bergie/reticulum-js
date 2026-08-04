@@ -20,6 +20,18 @@ export class Reticulum {
    */
   static MINIMUM_BITRATE = 5;
   /**
+   * The network MTU in bytes (`RNS.Reticulum.MTU`). The largest packet the
+   * network will carry; feeds the bitrate-adaptive timeout math
+   * ({@link TransportCore.firstHopTimeout}).
+   */
+  static MTU = 500;
+  /**
+   * The base per-hop timeout in seconds (`RNS.Reticulum.DEFAULT_PER_HOP_TIMEOUT`),
+   * added on top of the bitrate-derived term in
+   * {@link TransportCore.firstHopTimeout} / {@link TransportCore.establishmentTimeout}.
+   */
+  static DEFAULT_PER_HOP_TIMEOUT = 6;
+  /**
    * Minimum IFAC size in bytes (`RNS.Reticulum.IFAC_MIN_SIZE`). Re-exported
    * from {@link import("./ifac.js").IFAC_MIN_SIZE} for upstream API parity.
    */
@@ -186,6 +198,18 @@ export class Reticulum {
   broadcast(packet) {
     // The core acts as the mediator
     this.transport.broadcast(packet);
+  }
+
+  /**
+   * The bitrate-adaptive proof timeout for a single hop toward the destination,
+   * in seconds (`RNS.Reticulum.get_first_hop_timeout`). Delegates to
+   * {@link TransportCore.firstHopTimeout}; falls back to
+   * {@link Reticulum.DEFAULT_PER_HOP_TIMEOUT} when no route / bitrate is known.
+   * @param {Uint8Array} destinationHash
+   * @returns {number} seconds
+   */
+  getFirstHopTimeout(destinationHash) {
+    return this.transport.firstHopTimeout(destinationHash);
   }
 
   /**

@@ -73,6 +73,8 @@ export class PacketReceipt {
     /** @type {ReceiptStatus} */
     this.status = ReceiptStatus.SENDING;
     this.sentAt = Date.now();
+    /** Proof-wait timeout timer (cleared on delivery/failure). @type {ReturnType<typeof setTimeout> | null} */
+    this._timeoutTimer = null;
   }
 
   /**
@@ -153,11 +155,39 @@ export class PacketReceipt {
   }
 
   /**
+   * Starts the proof-wait timeout: on expiry the receipt is removed from the
+   * registry and marked failed (firing the `failed` callback, which a
+   * transport wires to `markPathUnresponsive`). No-op if already resolved.
+   * Mirrors the `self.timeout` + jobs-loop check on Python's `PacketReceipt`.
+   * @param {number} timeoutMs
+   */
+  startTimeout(timeoutMs) {
+    if (this.status !== ReceiptStatus.SENDING) return;
+    this.clearTimeout();
+    this._timeoutTimer = setTimeout(() => {
+      this._timeoutTimer = null;
+      PacketReceipt.receipts.delete(toHex(this.truncatedHash));
+      this.setFailed();
+    }, timeoutMs);
+  }
+
+  /**
+   * Cancels any pending proof-wait timeout. Idempotent.
+   */
+  clearTimeout() {
+    if (this._timeoutTimer) {
+      clearTimeout(this._timeoutTimer);
+      this._timeoutTimer = null;
+    }
+  }
+
+  /**
    * Marks the receipt delivered, removes it from the registry, and fires the
    * `delivered` callback once. Idempotent.
    */
   setDelivered() {
     if (this.status === ReceiptStatus.DELIVERED) return;
+    this.clearTimeout();
     this.status = ReceiptStatus.DELIVERED;
     PacketReceipt.receipts.delete(toHex(this.truncatedHash));
     if (this.callbacks.delivered) {
@@ -179,6 +209,7 @@ export class PacketReceipt {
    */
   setFailed() {
     if (this.status === ReceiptStatus.FAILED) return;
+    this.clearTimeout();
     this.status = ReceiptStatus.FAILED;
     if (this.callbacks.failed) {
       try {

@@ -8,7 +8,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { createAnnounceRandomHash } from "../../src/core/destination.js";
-import { RoutingTable } from "../../src/transport/router.js";
+import { PathState, RoutingTable } from "../../src/transport/router.js";
 import { bytesEqual, toHex } from "../../src/utils/encoding.js";
 
 /** @param {number} sec Emission timestamp (Unix seconds) encoded into [5:10]. */
@@ -242,5 +242,132 @@ describe("RoutingTable — interface failover", () => {
     // Sanity: keys are hex strings, not raw arrays.
     assert.strictEqual(typeof [...table.routes.keys()][0], "string");
     assert.ok(toHex(b).length);
+  });
+});
+
+describe("RoutingTable — path-health state", () => {
+  test("a new route starts in the UNKNOWN state", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: iface,
+      randomBlob: blobAt(1000),
+    });
+
+    assert.strictEqual(table.getState(hash), PathState.UNKNOWN);
+    assert.strictEqual(table.pathIsUnresponsive(hash), false);
+  });
+
+  test("markState flips liveness and pathIsUnresponsive tracks it", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: iface,
+      randomBlob: blobAt(1000),
+    });
+
+    assert.strictEqual(table.markState(hash, PathState.UNRESPONSIVE), true);
+    assert.strictEqual(table.pathIsUnresponsive(hash), true);
+    assert.strictEqual(table.getState(hash), PathState.UNRESPONSIVE);
+
+    table.markState(hash, PathState.RESPONSIVE);
+    assert.strictEqual(table.pathIsUnresponsive(hash), false);
+
+    // markState on an unknown destination is a no-op.
+    const other = dest();
+    assert.strictEqual(table.markState(other, PathState.RESPONSIVE), false);
+    assert.strictEqual(table.getState(other), PathState.UNKNOWN);
+  });
+
+  test("replacing a path with a fresh announce resets state to UNKNOWN", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 3,
+      viaInterface: iface,
+      randomBlob: blobAt(1000),
+    });
+    // Simulate a successful comms → RESPONSIVE, then it goes stale → UNRESPONSIVE.
+    table.markState(hash, PathState.UNRESPONSIVE);
+
+    // A shorter path with a newer emission replaces it → state resets.
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: iface,
+      randomBlob: blobAt(2000),
+    });
+    assert.strictEqual(table.getState(hash), PathState.UNKNOWN);
+  });
+
+  test("the unresponsive-replay gate accepts a repeated blob on a dead path", () => {
+    // Transport.py ~l.1887: the same announce (same emission) heard again is
+    // normally rejected, but if the stored path is UNRESPONSIVE a longer path
+    // carrying the same random_blob is accepted so we can try an alternative.
+    const table = new RoutingTable();
+    const hash = dest();
+    const blob = blobAt(1000);
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: iface,
+      randomBlob: blob,
+    });
+    table.markState(hash, PathState.UNRESPONSIVE);
+
+    const altNext = crypto.getRandomValues(new Uint8Array(16));
+    const ok = table.addOrUpdateRoute(hash, {
+      nextHop: altNext,
+      hops: 4, // longer path, same emission (replay) — normally rejected
+      viaInterface: iface,
+      randomBlob: blob,
+    });
+
+    assert.strictEqual(ok, true);
+    assert.ok(bytesEqual(table.getRoute(hash).nextHop, altNext));
+    // Python does not call mark_path_unknown_state here, so state is preserved.
+    assert.strictEqual(table.getState(hash), PathState.UNRESPONSIVE);
+  });
+
+  test("a repeated blob is still rejected when the path is responsive", () => {
+    // The unresponsive gate must NOT fire for a healthy path.
+    const table = new RoutingTable();
+    const hash = dest();
+    const blob = blobAt(1000);
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: iface,
+      randomBlob: blob,
+    });
+    table.markState(hash, PathState.RESPONSIVE);
+
+    const ok = table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 4,
+      viaInterface: iface,
+      randomBlob: blob,
+    });
+    assert.strictEqual(ok, false);
+  });
+
+  test("expireRoute forgets the path immediately", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: iface,
+      randomBlob: blobAt(1000),
+    });
+
+    assert.strictEqual(table.expireRoute(hash), true);
+    assert.strictEqual(table.hasRoute(hash), false);
+    assert.strictEqual(table.expireRoute(hash), false); // already gone
   });
 });

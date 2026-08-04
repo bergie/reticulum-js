@@ -347,6 +347,23 @@ export class Link extends EventTarget {
         if (this.transport) this.transport.removeLink(this.linkId);
         // §11.5: fail any in-flight REQUESTs so their Promises don't dangle.
         this._rejectPendingRequests("Link closed before RESPONSE arrived");
+        // §7 leaf path-recovery (Transport.py ~l.538-541): a pending link that
+        // never reached ACTIVE means the path is bad. Expire it and rediscover
+        // so the next attempt can pick an alternative next hop. Skipped for
+        // links that were ACTIVE (a graceful teardown of a working link).
+        // Guarded so test/lightweight transports without the path-health API
+        // (and responder links whose destination is local) are unaffected.
+        const dh = this.destination?.destinationHash;
+        if (
+          oldStatus !== LinkStatus.ACTIVE &&
+          dh &&
+          typeof this.transport?.expirePath === "function"
+        ) {
+          this.transport.expirePath(dh);
+          if (typeof this.transport.requestPath === "function") {
+            this.transport.requestPath(dh).catch(() => {});
+          }
+        }
       }
     }
   }
@@ -370,6 +387,26 @@ export class Link extends EventTarget {
   }
 
   /**
+   * The default `whenActive` wait: the bitrate-adaptive establishment timeout
+   * ({@link import("./transport.js").TransportCore.establishmentTimeout}) when
+   * a transport and destination are available, else 15 s. Mirrors Python
+   * `Link.establishment_timeout = get_first_hop_timeout + PER_HOP*hops`.
+   * @returns {number} milliseconds
+   * @private
+   */
+  _defaultEstablishmentTimeoutMs() {
+    const dh = this.destination?.destinationHash;
+    if (
+      this.transport &&
+      dh &&
+      typeof this.transport.establishmentTimeout === "function"
+    ) {
+      return this.transport.establishmentTimeout(dh) * 1000;
+    }
+    return 15000;
+  }
+
+  /**
    * Resolves once the Link reaches ACTIVE status (immediately if it already
    * is). Callers that obtain a Link reference before the handshake finishes —
    * e.g. right after `Destination.createLink()` resolves — should `await`
@@ -379,10 +416,16 @@ export class Link extends EventTarget {
    * Mirrors the gating the Python LXMF router applies in `process_outbound`
    * before sending DIRECT messages.
    *
-   * @param {number} [timeoutMs=15000] - How long to wait for the handshake.
+   * @param {number} [timeoutMs] - How long to wait for the handshake.
+   *   Defaults to the bitrate-adaptive establishment timeout
+   *   ({@link import("./transport.js").TransportCore.establishmentTimeout});
+   *   falls back to 15 s when no transport/destination is available.
    * @returns {Promise<Link>}
    */
-  async whenActive(timeoutMs = 15000) {
+  async whenActive(timeoutMs) {
+    if (timeoutMs === undefined) {
+      timeoutMs = this._defaultEstablishmentTimeoutMs();
+    }
     if (this._status === LinkStatus.ACTIVE) {
       return this;
     }
