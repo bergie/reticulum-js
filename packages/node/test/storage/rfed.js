@@ -11,14 +11,13 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
+import { Identity, toHex } from "@reticulum/core";
 import {
   BlobStore,
   DeferredQueue,
-  Identity,
   NotifyRegistry,
   SubscriptionTable,
-  toHex,
-} from "@reticulum/core";
+} from "@reticulum/core/src/rfed/index.js";
 import { bytesEqual } from "@reticulum/core/src/utils/encoding.js";
 import { loadRFedStores, saveRFedStores } from "../../src/storage/rfed.js";
 

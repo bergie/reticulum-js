@@ -3,11 +3,10 @@ import {
   DestType,
   fromHex,
   Identity,
-  LXMessage,
-  LXMRouter,
   Reticulum,
   toHex,
 } from "@reticulum/core";
+import { LXMessage, LXMRouter } from "@reticulum/core/src/lxmf/index.js";
 import {
   FileStorageAdapter,
   LocalClientInterface,

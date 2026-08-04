@@ -33,10 +33,10 @@ import { join } from "node:path";
 import {
   BlobStore,
   DeferredQueue,
-  MsgPack,
   NotifyRegistry,
   SubscriptionTable,
-} from "@reticulum/core";
+} from "@reticulum/core/src/rfed/index.js";
+import { MsgPack } from "@reticulum/core";
 import { fromHex, toHex } from "@reticulum/core/src/utils/encoding.js";
 
 /**

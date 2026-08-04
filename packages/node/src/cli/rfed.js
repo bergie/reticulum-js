@@ -31,11 +31,11 @@ import { parseArgs } from "node:util";
 import {
   Destination,
   Identity,
-  RFedNode,
   Reticulum,
   fromHex,
   toHex,
 } from "@reticulum/core";
+import { RFedNode } from "@reticulum/core/src/rfed/index.js";
 import {
   AutoInterface,
   FileStorageAdapter,

@@ -49,14 +49,10 @@ set up an identity, and exchange [LXMF](https://reticulum.network/manual/lxmf.ht
 messages:
 
 ```js
-import {
-  fromHex,
-  Identity,
-  LXMessage,
-  LXMRouter,
-  Reticulum,
-  toHex,
-} from "@reticulum/core";
+import { fromHex, Identity, Reticulum, toHex } from "@reticulum/core";
+// LXMF is a deep import — it isn't re-exported from the package root to keep
+// the core bundle lean for browsers.
+import { LXMessage, LXMRouter } from "@reticulum/core/src/lxmf/index.js";
 // TCP and shared-instance interfaces are Node-only — install `@reticulum/node`.
 import {
   LocalClientInterface,
@@ -168,7 +164,8 @@ propagated one, but instead of travelling over the network it is encoded as an
 `lxm://` URI that the recipient ingests later:
 
 ```js
-import { LXMFConstants, LXMessage, toHex } from "@reticulum/core";
+import { toHex } from "@reticulum/core";
+import { LXMFConstants, LXMessage } from "@reticulum/core/src/lxmf/index.js";
 
 // Build the recipient's outbound lxmf.delivery destination from a recalled
 // identity (typically learned from an announce).

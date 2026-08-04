@@ -87,6 +87,21 @@
   injected `stores` option to adopt pre-loaded stores.
 
 ### Changed
+- **rfed + LXMF are no longer re-exported from the package root** (work
+  doc #25). They're sizable, server-leaning modules, and ESM eagerly
+  evaluates the whole static import graph — so re-exporting them bloated
+  `import { Reticulum } from "@reticulum/core"` for browsers (the same reason
+  the Node-only interfaces aren't re-exported). Each module now has a barrel
+  index — import it by subpath:
+  `import { RFedNode } from "@reticulum/core/src/rfed/index.js"`,
+  `import { LXMessage, LXMRouter } from "@reticulum/core/src/lxmf/index.js"`.
+  (For the leanest graph, import a single symbol from its module file, e.g.
+  `.../rfed/node.js` — the barrel pulls in the whole module.)
+  Removed from the root: `LXMessage`, `LXMRouter`, `LXStamper`,
+  `LXMFConstants`, and all rfed symbols (`RFedNode`, `RFedClient`, `BlobStore`,
+  `SubscriptionTable`, `DeferredQueue`, `NotifyRegistry`, the sync/stamp/
+  channel/blob helpers, `RFedConstants`). `MsgPack`, `Destination`, `Identity`,
+  `Reticulum`, the encoding helpers, etc. remain on the root.
 - **rfed stamp workblock is now a single, documented switch point**
   (`rfed/stamp.js`, work doc #25). The workblock computation is isolated in one
   `computeWorkblock` function gated by `USE_RUST_STUB_WORKBLOCK`. The current

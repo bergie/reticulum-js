@@ -20,11 +20,11 @@ import {
   Destination,
   fromHex,
   Identity,
-  LXMessage,
   Reticulum,
-  RFedClient,
   toHex,
 } from "@reticulum/core";
+import { LXMessage } from "@reticulum/core/src/lxmf/index.js";
+import { RFedClient } from "@reticulum/core/src/rfed/index.js";
 import {
   FileStorageAdapter,
   LocalClientInterface,
