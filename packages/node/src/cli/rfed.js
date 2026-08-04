@@ -22,6 +22,11 @@
  *   --sync-peer <hex>          rfed.node hash to sync with periodically (repeatable)
  *   --sync-interval <sec>      peer-sync period. Default 300
  *   --maintenance-interval <sec>    maintenance + persist period. Default 3600
+ *   --primary-node <hex>       designated backup target for this node's subs (SPEC §11)
+ *   --secondary-node <hex>     fallback backup target (repeatable)
+ *   --owner-offline-secs <sec> silence before a backup fails over. Default 90
+ *   --trusted-backup-peer <hex>  restrict /rfed/backup/push to these owners (repeatable)
+ *   --backup-interval <sec>    backup push + failover tick period. Default 30
  *
  * Environment (tcp interface only): RNS_HOST (default 127.0.0.1), RNS_PORT (42424)
  *
@@ -46,6 +51,8 @@ import { loadRFedStores, saveRFedStores } from "../storage/rfed.js";
 
 const MAINTENANCE_INTERVAL_DEFAULT = 3600;
 const SYNC_INTERVAL_DEFAULT = 300;
+/** Backup push + failover tick cadence (SPEC §11; Rust `BACKUP_TICK_SECS`). */
+const BACKUP_INTERVAL_DEFAULT = 30;
 
 /**
  * Boots and runs the rfed node until interrupted.
@@ -66,6 +73,14 @@ async function main() {
         type: "string",
         default: String(MAINTENANCE_INTERVAL_DEFAULT),
       },
+      "primary-node": { type: "string" },
+      "secondary-node": { type: "string", multiple: true, default: [] },
+      "owner-offline-secs": { type: "string", default: "90" },
+      "trusted-backup-peer": { type: "string", multiple: true, default: [] },
+      "backup-interval": {
+        type: "string",
+        default: String(BACKUP_INTERVAL_DEFAULT),
+      },
     },
   });
 
@@ -77,9 +92,25 @@ async function main() {
     MAINTENANCE_INTERVAL_DEFAULT;
   const syncInterval =
     Number.parseInt(values["sync-interval"], 10) || SYNC_INTERVAL_DEFAULT;
+  const backupInterval =
+    Number.parseInt(values["backup-interval"], 10) || BACKUP_INTERVAL_DEFAULT;
+  const ownerOfflineSecs =
+    Number.parseInt(values["owner-offline-secs"], 10) || 90;
   /** @type {string[]} */
   const syncPeers = values["sync-peer"];
   const iface = values.interface;
+  // Backup failover (SPEC §11). Hashes are 16 bytes (32 hex chars).
+  const primaryNode = values["primary-node"]
+    ? fromHex(values["primary-node"])
+    : null;
+  /** @type {Uint8Array[]} */
+  const secondaryNodes = (values["secondary-node"] ?? []).map((h) =>
+    fromHex(h),
+  );
+  /** @type {Uint8Array[]} */
+  const trustedBackupPeers = (values["trusted-backup-peer"] ?? []).map((h) =>
+    fromHex(h),
+  );
 
   console.log(`rfed node — store: ${rfedDir}, interface: ${iface}`);
 
@@ -119,6 +150,10 @@ async function main() {
       name: values.name,
       stampCost,
       stampFlexibility: stampFlex,
+      primaryNode,
+      secondaryNodes,
+      ownerOfflineSecs,
+      trustedBackupPeers,
     },
   });
   await node.start();
@@ -152,6 +187,22 @@ async function main() {
   };
   const maintenanceTimer = setInterval(persist, maintenanceInterval * 1000);
 
+  // ── Periodic: backup push + failover (SPEC §11) ─────────────────────
+  const backupTick = async () => {
+    try {
+      const res = await node.tickBackupDelivery();
+      if (res.pushed || res.adopted || res.pruned || res.repushed) {
+        console.log(
+          `backup: pushed ${res.pushed}, adopted ${res.adopted}, ` +
+            `repushed ${res.repushed}, pruned ${res.pruned}.`,
+        );
+      }
+    } catch (err) {
+      console.warn(`backup tick failed: ${String(err)}`);
+    }
+  };
+  const backupTimer = setInterval(backupTick, backupInterval * 1000);
+
   // ── Periodic: peer sync ──────────────────────────────────────────────
   let syncTimer = null;
   if (syncPeers.length > 0) {
@@ -178,6 +229,7 @@ async function main() {
     shuttingDown = true;
     console.log(`\n${sig} received — flushing stores and shutting down…`);
     clearInterval(maintenanceTimer);
+    clearInterval(backupTimer);
     if (syncTimer) clearInterval(syncTimer);
     try {
       node.stop();

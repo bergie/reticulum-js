@@ -29,6 +29,7 @@ import { MicroMsgPack } from "../../src/utils/msgpack.js";
 import { deliveryHashFor, deriveChannel } from "../../src/rfed/channel.js";
 import { RFedClient } from "../../src/rfed/client.js";
 import { RFedNode } from "../../src/rfed/node.js";
+import { SubscriptionTable } from "../../src/rfed/subscription.js";
 import { toHex } from "../../src/utils/encoding.js";
 
 /** Polls `fn` every 10 ms until truthy or `timeoutMs` elapses. */
@@ -769,5 +770,195 @@ describe("RFedNode — notify wake-ups (Phase 5)", () => {
     const cleared = await client.clearNotify(nodeHash);
     assert.strictEqual(cleared, true);
     assert.strictEqual(node.notifyRegistry.count, 0);
+  });
+});
+
+// ─── Phase 6: backup failover (SPEC §11) ─────────────────────────────────
+
+describe("RFedNode — backup failover (Phase 6)", () => {
+  test("SubscriptionTable: subscribeBackup + backupEntriesForTick + prune", async () => {
+    const subs = new SubscriptionTable();
+    const owner = rnd(16);
+    const sub = rnd(16);
+    const ch = rnd(16);
+
+    subs.subscribeBackup(sub, ch, owner);
+    assert.strictEqual(subs.length, 1);
+    // Idempotent refresh (same sub/ch/owner) — bumps heartbeat, no duplicate.
+    subs.subscribeBackup(sub, ch, owner);
+    assert.strictEqual(subs.length, 1);
+
+    const entries = subs.backupEntriesForTick();
+    assert.strictEqual(entries.length, 1);
+    assert.strictEqual(toHex(entries[0].ownerNodeHash), toHex(owner));
+
+    // A primary entry is not a backup entry.
+    await subs.subscribe(await Identity.generate(), rnd(16));
+    assert.strictEqual(subs.backupEntriesForTick().length, 1);
+
+    // pruneStaleBackups only touches backup entries.
+    assert.strictEqual(subs.pruneStaleBackups(1e9), 0);
+    // Backdate the backup entry → pruneable.
+    subs._entries[0].lastRefreshed = 0;
+    assert.strictEqual(subs.pruneStaleBackups(90), 1);
+    assert.strictEqual(subs.length, 1); // primary entry survives
+  });
+
+  test("backup/push handler: registers backup subs + trust gate", async () => {
+    const nodeRns = await makeRns();
+    const wire = new Wire();
+    wire.attach(nodeRns.transport);
+    const node = new RFedNode({ identity: nodeRns.identity, rns: nodeRns.rns });
+    await node.start();
+
+    // Owner identity + the pairs it pushes.
+    const owner = await Identity.generate();
+    const subHash = (await Identity.fromPublicKey(owner.publicKey)).identityHash;
+    const ch = rnd(16);
+    const pairsMsgpack = MicroMsgPack.encode([[subHash, ch]]);
+    const pubkey = await owner.getPublicKey();
+    const sig = await owner.sign(pairsMsgpack);
+    // The link decodes the msgpack request body before invoking the handler,
+    // so the handler receives the decoded `[value, pubkey, sig]` array.
+    const payload = [pairsMsgpack, pubkey, sig];
+
+    const ok = await node._handleBackupPush(payload);
+    assert.strictEqual(ok, true);
+    assert.strictEqual(node.subscriptions.backupEntriesForTick().length, 1);
+
+    // Trust gate: with trustedBackupPeers set, an untrusted owner is rejected.
+    const node2Rns = await makeRns();
+    const wire2 = new Wire();
+    wire2.attach(node2Rns.transport);
+    const node2 = new RFedNode({
+      identity: node2Rns.identity,
+      rns: node2Rns.rns,
+      config: { trustedBackupPeers: [rnd(16)] },
+    });
+    await node2.start();
+    const ok2 = await node2._handleBackupPush(payload);
+    assert.strictEqual(ok2, false);
+    assert.strictEqual(node2.subscriptions.backupEntriesForTick().length, 0);
+  });
+
+  test("fanout suppresses backup sub while owner is reachable", async () => {
+    const nodeRns = await makeRns();
+    const wire = new Wire();
+    wire.attach(nodeRns.transport);
+    const node = new RFedNode({ identity: nodeRns.identity, rns: nodeRns.rns });
+    await node.start();
+
+    const owner = rnd(16);
+    const subHash = rnd(16);
+    const ch = rnd(16);
+    node.subscriptions.subscribeBackup(subHash, ch, owner);
+    node.blobStore.store(ch, rnd(20));
+
+    // Owner silent → failover: blob deferred for the backup subscriber.
+    await node._fanout(ch, rnd(12));
+    assert.strictEqual(node.deferred.hasPending(subHash), true);
+
+    // Owner now reachable (announce within ownerOfflineSecs) → suppressed.
+    node.deferred.enqueue(subHash, ch, rnd(8), 256); // ensure drainable state resets
+    node._presence.set(toHex(owner), Date.now() / 1000);
+    // New blob, new fanout: no NEW deferral for this subscriber beyond what
+    // the suppressed path skips. Clear and re-check.
+    node.deferred.drain(subHash);
+    const before = node.deferred.hasPending(subHash);
+    await node._fanout(ch, rnd(12));
+    assert.strictEqual(before, false);
+    assert.strictEqual(node.deferred.hasPending(subHash), false);
+  });
+
+  test("failover tick dumps channel backlog when owner goes silent", async () => {
+    const nodeRns = await makeRns();
+    const wire = new Wire();
+    wire.attach(nodeRns.transport);
+    const node = new RFedNode({ identity: nodeRns.identity, rns: nodeRns.rns });
+    await node.start();
+
+    const owner = rnd(16);
+    const subHash = rnd(16);
+    const ch = rnd(16);
+    node.subscriptions.subscribeBackup(subHash, ch, owner);
+    // Two blobs in the channel store.
+    node.blobStore.store(ch, rnd(20));
+    node.blobStore.store(ch, rnd(20));
+
+    // Owner silent → tick adopts the subscriber + enqueues the backlog.
+    const adopted = node._backupDeliveryTick();
+    assert.strictEqual(adopted.length, 1);
+    assert.strictEqual(node.deferred.hasPending(subHash), true);
+    const drained = node.deferred.drain(subHash);
+    assert.ok(drained.length >= 2);
+  });
+
+  test("two-node e2e: primary pushes subscription to backup, then fails over", async () => {
+    const wire = new Wire();
+    const primaryRns = await makeRns();
+    const backupRns = await makeRns();
+    wire.attach(primaryRns.transport);
+    wire.attach(backupRns.transport);
+
+    const primaryNodeHash = (
+      await Destination.OUT("rfed.node", DestType.SINGLE, primaryRns.identity)
+    ).destinationHash;
+
+    const primary = new RFedNode({
+      identity: primaryRns.identity,
+      rns: primaryRns.rns,
+      config: { primaryNode: primaryNodeHash },
+    });
+    // Point the primary at the backup's rfed.node hash as its backup target.
+    const backupNodeHash = (
+      await Destination.OUT("rfed.node", DestType.SINGLE, backupRns.identity)
+    ).destinationHash;
+    primary.primaryNode = backupNodeHash;
+    const backup = new RFedNode({ identity: backupRns.identity, rns: backupRns.rns });
+    await primary.start();
+    await backup.start();
+
+    // Make each node's identity recallable by the other.
+    for (const rns of [primaryRns, backupRns]) {
+      for (const name of ["rfed.node", "rfed.channel.subscribe"]) {
+        const d = await Destination.OUT(name, DestType.SINGLE, rns.identity);
+        await Destination.remember(
+          rnd(16),
+          d.destinationHash,
+          rns.identity.publicKey,
+          null,
+        );
+      }
+    }
+
+    // A subscriber subscribes on the PRIMARY.
+    const channel = await deriveChannel("public.failover");
+    const subIdentity = await Identity.generate();
+    const subHash = subIdentity.identityHash;
+    await primary.subscriptions.subscribe(subIdentity, channel.channelHash);
+    // Mirror what /rfed/subscribe does: queue the pair for backup push.
+    primary._pendingBackupPushes.push([subHash, channel.channelHash]);
+
+    // Backup tick: primary pushes its subscription to the backup.
+    const res = await primary.tickBackupDelivery();
+    assert.strictEqual(res.pushed, 1);
+    // The backup now holds a backup entry tagged with the primary's node hash.
+    await waitFor(() => backup.subscriptions.backupEntriesForTick().length === 1);
+    const held = backup.subscriptions.backupEntriesForTick()[0];
+    assert.strictEqual(toHex(held.ownerNodeHash), toHex(primaryNodeHash));
+    assert.strictEqual(toHex(held.subscriberHash), toHex(subHash));
+
+    // Backup ingests a blob for the channel (e.g. via sync) while the primary
+    // is still "online" → suppressed (no deferral yet).
+    backup.blobStore.store(channel.channelHash, rnd(24));
+    // Mark the primary reachable on the backup's presence map.
+    backup._presence.set(toHex(primaryNodeHash), Date.now() / 1000);
+    await backup._fanout(channel.channelHash, rnd(16));
+    assert.strictEqual(backup.deferred.hasPending(subHash), false);
+
+    // Primary goes silent → backup failover tick dumps the backlog.
+    backup._presence.delete(toHex(primaryNodeHash));
+    backup._backupDeliveryTick();
+    assert.strictEqual(backup.deferred.hasPending(subHash), true);
   });
 });

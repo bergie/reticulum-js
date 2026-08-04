@@ -77,6 +77,8 @@ const PULL_PATH = "/rfed/pull";
 /** `/rfed/*` peer-sync paths (SPEC §4). */
 const OFFER_PATH = "/rfed/offer";
 const MESSAGE_GET_PATH = "/rfed/get";
+/** `/rfed/backup/push` (SPEC §11) — owner → backup subscription replication. */
+const BACKUP_PUSH_PATH = "/rfed/backup/push";
 /** `/rfed/notify/*` registration paths (SPEC §9.1). */
 const NOTIFY_REGISTER_PATH = "/rfed/notify/register";
 const NOTIFY_UNREGISTER_PATH = "/rfed/notify/unregister";
@@ -94,6 +96,14 @@ const DEFAULT_PRESENCE_TTL_SEC = 3600;
 const BLOB_TTL_SECS = 30 * 24 * 3600;
 /** Deferred-queue entry TTL (SPEC §7: 7-day prune). */
 const DEFERRED_TTL_SECS = 7 * 24 * 3600;
+/** Seconds since an owner's `rfed.node` announce before a backup considers it
+ * offline and starts delivering (SPEC §11; default 90). */
+const DEFAULT_OWNER_OFFLINE_SECS = 90;
+/** Backup-push tick cadence (Rust `BACKUP_TICK_SECS` = 30s) — a runner concern,
+ * exposed for tests/default scheduling. */
+const BACKUP_TICK_SECS = 30;
+/** Cap on the pending-backup-push queue (Rust `PENDING_BACKUP_CAP` = 1024). */
+const PENDING_BACKUP_CAP = 1024;
 
 /**
  * @typedef {Object} RFedNodeOptions
@@ -117,6 +127,17 @@ const DEFERRED_TTL_SECS = 7 * 24 * 3600;
  *   byte cap (SPEC §4). When set, the GET response stops emitting records once
  *   this would be exceeded (default `null` = unlimited for the in-memory node;
  *   a runner should bound it).
+ * @property {Uint8Array|null} [config.primaryNode] Designated first-choice
+ *   backup target for THIS node's subscribers (SPEC §11). Subscription pairs
+ *   are pushed here via `/rfed/backup/push` on each backup tick.
+ * @property {Uint8Array[]} [config.secondaryNodes] Ordered fallback backup
+ *   targets; used when the primary is unreachable.
+ * @property {number} [config.ownerOfflineSecs] Seconds since an owner's
+ *   `rfed.node` announce before a backup considers it offline and starts
+ *   delivering (default 90).
+ * @property {Uint8Array[]} [config.trustedBackupPeers] If non-empty, only
+ *   `/rfed/backup/push` requests whose owner `rfed.node` hash is in this list
+ *   are accepted.
  * @property {{ blobStore?: BlobStore, subscriptions?: SubscriptionTable, deferred?: DeferredQueue, notify?: NotifyRegistry }} [stores]
  *   Pre-built stores to adopt instead of fresh in-memory ones. A runner passes
  *   stores loaded from disk (via `@reticulum/node`'s `loadRFedStores`) so state
@@ -151,6 +172,28 @@ export class RFedNode {
     this.presenceTtlSec = config.presenceTtlSec ?? DEFAULT_PRESENCE_TTL_SEC;
     /** @type {number|null} */
     this.transferLimitBytes = config.transferLimitBytes ?? null;
+
+    // ── Backup failover (SPEC §11, Phase 6) ──────────────────────────────
+    /** @type {Uint8Array|null} Designated primary backup target. */
+    this.primaryNode = config.primaryNode ?? null;
+    /** @type {Uint8Array[]} Ordered fallback backup targets. */
+    this.secondaryNodes = config.secondaryNodes ?? [];
+    /** @type {number} */
+    this.ownerOfflineSecs =
+      config.ownerOfflineSecs ?? DEFAULT_OWNER_OFFLINE_SECS;
+    /**
+     * If non-empty, only accept `/rfed/backup/push` from these owner hashes.
+     * @type {Uint8Array[]}
+     */
+    this.trustedBackupPeers = config.trustedBackupPeers ?? [];
+    /**
+     * Pending `(subscriberHash, channelHash)` pairs awaiting push to the
+     * backup node. Drained by {@link tickBackupDelivery}. Mirrors Rust
+     * `pending_backup_pushes` (capped at `PENDING_BACKUP_CAP`).
+     * @type {Array<[Uint8Array, Uint8Array]>}
+     * @private
+     */
+    this._pendingBackupPushes = [];
 
     /**
      * Per-subscriber policy lookup (mirrors Rust `NodeConfig::policy_for`).
@@ -236,6 +279,12 @@ export class RFedNode {
         /** @type {string} */ _p,
         /** @type {any} */ data,
       ) => this._handleGet(data),
+    });
+    // `/rfed/backup/push` (SPEC §11) — owner → backup subscription replication.
+    await this._nodeDest.registerRequestHandler(BACKUP_PUSH_PATH, {
+      allow: Allow.ALL,
+      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ d) =>
+        this._handleBackupPush(d),
     });
     this._subscribeDest = await this._bringUpRequestDest(SUBSCRIBE_NAME, {
       path: SUBSCRIBE_PATH,
@@ -347,6 +396,219 @@ export class RFedNode {
   }
 
   /**
+   * Backup-failover tick (SPEC §11) — a runner calls this every
+   * {@link BACKUP_TICK_SECS} seconds (30s). Three tasks:
+   *
+   *   1. **Push own subscriptions**: drain `{@link _pendingBackupPushes}` and
+   *      forward to ONE resolved backup node.
+   *   2. **Prune** stale backup entries (chain unravel; TTL =
+   *      `max(ownerOfflineSecs × 2, 90)`).
+   *   3. **Failover**: for each held backup whose owner has gone silent, dump
+   *      the channel backlog into the deferred queue + fire notify wakes, and
+   *      re-push adopted entries to our own backup (chain of custody).
+   *
+   * Mirrors Rust `tick_backup_delivery`. Auto-selection from federation peers
+   * (Rust priority 5) is not implemented — only configured `primaryNode` /
+   * `secondaryNodes` are used.
+   *
+   * @returns {Promise<{ pushed: number, pruned: number, adopted: number, repushed: number }>}
+   */
+  async tickBackupDelivery() {
+    const backupHash = this._resolveBackup();
+
+    // ── Part 1: push own pending registrations ──────────────────────
+    let pushed = 0;
+    if (this._pendingBackupPushes.length > 0) {
+      const pending = this._pendingBackupPushes;
+      this._pendingBackupPushes = [];
+      if (backupHash) {
+        const ok = await this._pushSubscriptionsToBackup(backupHash, pending);
+        if (ok) {
+          pushed = pending.length;
+        } else {
+          // Re-queue for the next tick (respecting the cap).
+          this._requeueBackupPairs(pending);
+        }
+      } else {
+        // No backup available — put them back.
+        this._requeueBackupPairs(pending);
+      }
+    }
+
+    // ── Part 2: prune stale backup entries (chain unravel) ──────────
+    const ttl = Math.max(this.ownerOfflineSecs * 2, 90);
+    const pruned = this.subscriptions.pruneStaleBackups(ttl);
+    if (pruned > 0) {
+      log(
+        "RFedNode",
+        `backup pruned ${pruned} stale entry(ies) (TTL ${ttl}s)`,
+        LogLevel.DEBUG,
+      );
+    }
+
+    // ── Part 3: failover delivery + chain-of-custody re-push ────────
+    const adopted = this._backupDeliveryTick();
+    let repushed = 0;
+    if (adopted.length > 0 && backupHash) {
+      const backupHex = toHex(backupHash);
+      // Don't bounce adopted entries back to the current owner.
+      /** @type {Array<[Uint8Array, Uint8Array]>} */
+      const repush = [];
+      for (const { subscriberHash, channelHash, ownerHash } of adopted) {
+        if (toHex(ownerHash) === backupHex) continue;
+        repush.push([subscriberHash, channelHash]);
+      }
+      if (repush.length > 0) {
+        const ok = await this._pushSubscriptionsToBackup(backupHash, repush);
+        if (ok) repushed = repush.length;
+      }
+    }
+
+    return { pushed, pruned, adopted: adopted.length, repushed };
+  }
+
+  /**
+   * Resolves the active backup target in priority order (SPEC §11):
+   * primaryNode → first secondaryNode → null. (Rust also auto-selects from
+   * alive federation peers; that requires a peer registry this node doesn't
+   * keep, so it's omitted.)
+   *
+   * @returns {Uint8Array|null}
+   * @private
+   */
+  _resolveBackup() {
+    return this.primaryNode ?? this.secondaryNodes[0] ?? null;
+  }
+
+  /**
+   * Re-queues pairs onto the pending backup-push list, respecting the cap.
+   *
+   * @param {Array<[Uint8Array, Uint8Array]>} pairs
+   * @private
+   */
+  _requeueBackupPairs(pairs) {
+    for (const p of pairs) {
+      if (this._pendingBackupPushes.length >= PENDING_BACKUP_CAP) break;
+      this._pendingBackupPushes.push(p);
+    }
+  }
+
+  /**
+   * Failover scan (Rust `backup_delivery_tick`): for each backup entry whose
+   * owner has been silent past `ownerOfflineSecs`, copy the channel's blobs
+   * into the subscriber's deferred queue (so they flush on the next
+   * `/rfed/pull`) and fire notify wakes. Skips subscribers that already have
+   * pending deferred entries (avoids re-dumping every tick). Returns the
+   * adopted `(sub, ch, owner)` triples for chain-of-custody re-push.
+   *
+   * @returns {Array<{ subscriberHash: Uint8Array, channelHash: Uint8Array, ownerHash: Uint8Array }>}
+   * @private
+   */
+  _backupDeliveryTick() {
+    const entries = this.subscriptions.backupEntriesForTick();
+    if (entries.length === 0) return [];
+
+    // Group by owner — one liveness check per owner.
+    /** @type {Map<string, { ownerHash: Uint8Array, subs: Array<{ subscriberHash: Uint8Array, channelHash: Uint8Array }> }>} */
+    const byOwner = new Map();
+    for (const e of entries) {
+      const key = toHex(e.ownerNodeHash);
+      let bucket = byOwner.get(key);
+      if (!bucket) {
+        bucket = { ownerHash: e.ownerNodeHash, subs: [] };
+        byOwner.set(key, bucket);
+      }
+      bucket.subs.push({
+        subscriberHash: e.subscriberHash,
+        channelHash: e.channelHash,
+      });
+    }
+
+    /** @type {Array<{ subscriberHash: Uint8Array, channelHash: Uint8Array, ownerHash: Uint8Array }>} */
+    const adopted = [];
+    for (const { ownerHash, subs } of byOwner.values()) {
+      if (this._ownerReachable(ownerHash)) continue;
+
+      for (const { subscriberHash, channelHash } of subs) {
+        // Already enqueued? Mark adopted but don't re-dump.
+        if (this.deferred.hasPending(subscriberHash)) {
+          adopted.push({ subscriberHash, channelHash, ownerHash });
+          continue;
+        }
+        const ids = this.blobStore.messageIdsForChannel(channelHash);
+        if (ids.length === 0) continue;
+        const limit = this.policyFor(subscriberHash).deferredQueueLimit;
+        let enqueued = 0;
+        for (const id of ids) {
+          const blob = this.blobStore.get(id);
+          if (!blob) continue;
+          this.deferred.enqueue(
+            subscriberHash,
+            channelHash,
+            new Uint8Array(blob),
+            limit,
+          );
+          enqueued++;
+        }
+        if (enqueued > 0) {
+          adopted.push({ subscriberHash, channelHash, ownerHash });
+          this._fireChannelNotify(subscriberHash, channelHash);
+        }
+      }
+    }
+    return adopted;
+  }
+
+  /**
+   * Opens a link to a backup node's `rfed.node` and pushes a batch of
+   * `(subscriber_hash, channel_hash)` pairs via `/rfed/backup/push`. The pairs
+   * are signed with this node's identity (shared `[value, pubkey, sig]` form;
+   * `value` is the pairs msgpack). Returns whether the peer accepted. On any
+   * failure the pairs should be re-queued by the caller. Mirrors Rust
+   * `push_subscriptions_to_backup`.
+   *
+   * @param {Uint8Array} backupHash - The backup's `rfed.node` destination hash.
+   * @param {Array<[Uint8Array, Uint8Array]>} pairs
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _pushSubscriptionsToBackup(backupHash, pairs) {
+    const peerIdentity = await Destination.recall(backupHash);
+    if (!peerIdentity) {
+      this.rns.transport?.requestPath?.(backupHash);
+      log("RFedNode", "backup push — no path to backup node", LogLevel.DEBUG);
+      return false;
+    }
+    const dest = await Destination.OUT(
+      NODE_NAME,
+      DestType.SINGLE,
+      peerIdentity,
+      this.rns,
+    );
+    const link = await dest.createLink();
+    await link.identify(this.identity);
+    try {
+      const pairsMsgpack = MicroMsgPack.encode(pairs);
+      const pubkey = await this.identity.getPublicKey();
+      const sig = await this.identity.sign(pairsMsgpack);
+      // The link msgpack-encodes the request body, so pass the plain
+      // `[value, pubkey, sig]` array (value = the pairs msgpack bytes).
+      const resp = await link.request(BACKUP_PUSH_PATH, [
+        pairsMsgpack,
+        pubkey,
+        sig,
+      ]);
+      const accepted = resp === true;
+      if (!accepted) {
+        log("RFedNode", "backup push rejected by peer", LogLevel.WARNING);
+      }
+      return accepted;
+    } finally {
+      await link.teardown();
+    }
+  }
+
+  /**
    * Announces `rfed.node` (with stamp-cost app_data) and the four service
    * destinations so clients can discover and path-request them.
    */
@@ -385,6 +647,14 @@ export class RFedNode {
     if (channelHash.length !== HASH_LENGTH) return [false, null];
 
     await this.subscriptions.subscribe(identity, channelHash);
+    // Queue for backup push (SPEC §11): the primary forwards its own
+    // subscriptions to its designated backup so delivery can fail over.
+    if (this._pendingBackupPushes.length < PENDING_BACKUP_CAP) {
+      this._pendingBackupPushes.push([
+        new Uint8Array(identity.identityHash),
+        new Uint8Array(channelHash),
+      ]);
+    }
     log(
       "RFedNode",
       `subscribe ${toHex(channelHash)} ← ${toHex(identity.identityHash)}`,
@@ -519,6 +789,73 @@ export class RFedNode {
       ],
     );
     return [pairs, morePending];
+  }
+
+  /**
+   * `/rfed/backup/push` (SPEC §11) — an owner node replicates its
+   * `(subscriber_hash, channel_hash)` pairs to this backup. The payload is the
+   * shared signed `[value, pubkey, sig]` form where `value` is the msgpack of
+   * `[[sub_hash, ch_hash], …]`; the owner identity is derived from `pubkey`
+   * and its `rfed.node` hash tags the resulting backup subscriptions. Replies
+   * `true` on success, `false` on any verification/trust failure. Mirrors Rust
+   * `backup_push_cb`.
+   *
+   * @param {any} data
+   * @returns {Promise<boolean>}
+   */
+  async _handleBackupPush(data) {
+    const parsed = await this._verifySignedPayload(data);
+    if (!parsed) return false;
+    const { identity, value } = parsed;
+
+    // Owner hash = their `rfed.node` destination hash.
+    const ownerDest = await Destination.OUT(
+      NODE_NAME,
+      DestType.SINGLE,
+      identity,
+    );
+    const ownerHash = /** @type {Uint8Array} */ (ownerDest.destinationHash);
+
+    // Trust gate: if trusted_backup_peers is set, only accept listed owners.
+    if (this.trustedBackupPeers.length > 0) {
+      const trusted = this.trustedBackupPeers.some(
+        (h) => toHex(h) === toHex(ownerHash),
+      );
+      if (!trusted) {
+        log(
+          "RFedNode",
+          `backup/push rejected — untrusted owner ${toHex(ownerHash)}`,
+          LogLevel.WARNING,
+        );
+        return false;
+      }
+    }
+
+    /** @type {Array<[Uint8Array, Uint8Array]>} */
+    let pairs;
+    try {
+      pairs = MicroMsgPack.decode(value);
+    } catch {
+      return false;
+    }
+    if (!Array.isArray(pairs)) return false;
+    for (const pair of pairs) {
+      if (!Array.isArray(pair) || pair.length !== 2) continue;
+      const [subHash, chHash] = pair;
+      if (
+        !(subHash instanceof Uint8Array) || subHash.length !== HASH_LENGTH ||
+        !(chHash instanceof Uint8Array) || chHash.length !== HASH_LENGTH
+      ) {
+        continue;
+      }
+      this.subscriptions.subscribeBackup(subHash, chHash, ownerHash);
+    }
+    log(
+      "RFedNode",
+      `backup/push registered ${pairs.length} backup sub(s) ← owner ${toHex(ownerHash)}`,
+      LogLevel.DEBUG,
+    );
+    return true;
   }
 
   /**
@@ -690,9 +1027,25 @@ export class RFedNode {
     const fanoutPayload = concatBytes(channelHash, innerBlob);
 
     for (const sub of subs) {
-      // Backup subscriptions (Phase 6) suppress delivery while the owner is
-      // reachable — not yet wired, so all entries deliver.
-      if (this.isOnline(sub.deliveryHash)) {
+      // Backup subscriptions (SPEC §11): suppress delivery while the owner is
+      // reachable; when the owner has gone silent, defer only — the backup
+      // holds no subscriber identity, so the subscriber is pull-served
+      // (never live-fanout here).
+      if (sub.ownerNodeHash) {
+        if (this._ownerReachable(sub.ownerNodeHash)) continue;
+        const policy = this.policyFor(sub.subscriberHash);
+        this.deferred.enqueue(
+          sub.subscriberHash,
+          channelHash,
+          innerBlob,
+          policy.deferredQueueLimit,
+        );
+        this._fireChannelNotify(sub.subscriberHash, channelHash);
+        continue;
+      }
+
+      // Primary subscription: live-deliver if present, else defer.
+      if (sub.identity && sub.deliveryHash && this.isOnline(sub.deliveryHash)) {
         await this._sendDelivery(sub.identity, fanoutPayload);
       } else {
         const policy = this.policyFor(sub.subscriberHash);
@@ -702,19 +1055,45 @@ export class RFedNode {
           innerBlob,
           policy.deferredQueueLimit,
         );
-        // Notify wake-ups (SPEC §9.4): poke each registered relay for this
-        // (subscriber, channel) so the device can pull while offline.
-        for (const reg of this.notifyRegistry.getForSubscriber(
-          sub.subscriberHash,
-          channelHash,
-        )) {
-          this._dispatchNotify(reg, {
-            receiver: sub.subscriberHash,
-            channel: channelHash,
-          }).catch(() => {});
-        }
+        this._fireChannelNotify(sub.subscriberHash, channelHash);
       }
     }
+  }
+
+  /**
+   * Fires a §9.3 notify wake to every relay registered for
+   * `(subscriber, channel)`. Fire-and-forget. Shared by fanout and the backup
+   * failover tick.
+   *
+   * @param {Uint8Array} subscriberHash
+   * @param {Uint8Array} channelHash
+   * @private
+   */
+  _fireChannelNotify(subscriberHash, channelHash) {
+    for (const reg of this.notifyRegistry.getForSubscriber(
+      subscriberHash,
+      channelHash,
+    )) {
+      this._dispatchNotify(reg, {
+        receiver: subscriberHash,
+        channel: channelHash,
+      }).catch(() => {});
+    }
+  }
+
+  /**
+   * Whether an owner node's `rfed.node` has been heard from within
+   * `ownerOfflineSecs` (SPEC §11). Reuses the announce-presence map (an
+   * owner's `rfed.node` announce lands there like any other destination).
+   *
+   * @param {Uint8Array} ownerNodeHash
+   * @returns {boolean}
+   * @private
+   */
+  _ownerReachable(ownerNodeHash) {
+    const last = this._presence.get(toHex(ownerNodeHash));
+    if (!last) return false;
+    return Date.now() / 1000 - last <= this.ownerOfflineSecs;
   }
 
   /**
@@ -819,7 +1198,15 @@ export class RFedNode {
    *
    * @param {{ subscriberHash: Uint8Array, identity: Identity }} sub
    */
+  /**
+   * Live-delivers everything queued for a subscriber (FIFO), then the bucket is
+   * empty for future `/rfed/pull` / fanout. Backup entries have no identity and
+   * are pull-served, so a null identity here is a no-op.
+   *
+   * @param {{ subscriberHash: Uint8Array, identity: Identity|null }} sub
+   */
   async _drainDeferredFor(sub) {
+    if (!sub.identity) return;
     const pending = this.deferred.drain(sub.subscriberHash);
     for (const p of pending) {
       await this._sendDelivery(

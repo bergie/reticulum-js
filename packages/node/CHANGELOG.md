@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 ### Added
+- **rfed CLI: backup failover scheduling** (work doc #25, Phase 6). The
+  runner now schedules `tickBackupDelivery()` every 30s (push own subs to the
+  backup, prune stale, fail over for offline owners, chain re-push) and exposes
+  `--primary-node`, `--secondary-node` (repeatable), `--owner-offline-secs`,
+  `--trusted-backup-peer` (repeatable), and `--backup-interval`.
 - **rfed filesystem persistence + CLI runner** (work doc #25).
   - `loadRFedStores(dir)` / `saveRFedStores(dir, stores)` (`storage/rfed.js`)
     persist the four rfed in-memory stores to disk: blobs as

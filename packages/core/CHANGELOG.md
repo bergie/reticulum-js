@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 ### Added
+- **rfed (Reticulum Federation) Phase 6** — backup failover (work doc #25,
+  SPEC §11). Chain-of-custody subscriber backup: a primary periodically pushes
+  its `(subscriber, channel)` pairs to a designated backup; the backup holds
+  them suppressed while the primary is reachable and takes over delivery when
+  it goes silent. Wire-compatible with the Rust `rfed` reference.
+  - `SubscriptionTable` gained `subscribeBackup()`, `backupEntriesForTick()`,
+    `pruneStaleBackups()`; `exportRecords()`/`importRecords()` now serialize
+    `ownerNodeHash` (backup entries carry no subscriber identity — they're
+    pull-served).
+  - `RFedNode` gained a `/rfed/backup/push` handler (signed
+    `[pairs, pubkey, sig]`; derives the owner's `rfed.node` hash; honors
+    `trustedBackupPeers`), a `tickBackupDelivery()` driver (resolve backup →
+    drain + push → prune stale → failover → chain re-push), and fanout
+    suppression of backup subs while the owner is reachable. New config:
+    `primaryNode`, `secondaryNodes`, `ownerOfflineSecs` (90),
+    `trustedBackupPeers`. Auto-selection from federation peers (Rust priority 5)
+    is omitted — only configured primary/secondary targets are used.
 - `WebSocketClientInterface` gained an `ssl` option (mirrors the Python
   reference `ssl` config key) that builds a `wss://` dial URL from `host`/`port`.
   The standard `WebSocket` API then negotiates TLS from the scheme. Needed for
