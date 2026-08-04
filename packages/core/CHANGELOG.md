@@ -46,6 +46,22 @@
     config. Defaults to the flat configured `deferredQueueLimit`.
   (Backup-subscription suppression — “skip backups whose owner is online” —
   stays deferred to the Phase 6 backup-failover work.)
+- **rfed (Reticulum Federation) Phase 4** — inter-node peer sync
+  (`rfed/sync.js`, work doc #25). `rfed.node` now serves the SPEC §4 sync
+  paths and `RFedNode.syncWithPeer(peerHash)` drives a full sync session over
+  a Reticulum link, wire-compatible with Rust `rfed::sync`:
+  - `/rfed/offer` returns the node's full blob-store manifest
+    (`[[channelHash, messageId], …]`); the caller's offered IDs are accepted
+    but unused.
+  - `/rfed/get` encodes the requested blobs into the §3 stream
+    (`channel_hash(16)‖message_id(16)‖len(4 BE)‖blob`, repeated), honouring the
+    optional per-session `config.transferLimitBytes` cap.
+  - `syncWithPeer` does OFFER → `gapFromPeer` (channels we subscribe to, don't
+    hold) → MESSAGE_GET → ingest each blob under its upstream message id, then
+    fan out to local subscribers. Idempotent: re-syncing pulls nothing new.
+  Sync ingest stores stamp-stripped blobs verbatim (the origin node validated
+  and stripped on first ingest); no stamp re-check, matching Rust. Pure codec
+  + manifest/gap helpers are exported for reuse.
 
 ### Changed
 - **rfed stamp workblock is now a single, documented switch point**

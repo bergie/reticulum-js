@@ -64,6 +64,12 @@ export { DeferredQueue } from "./rfed/deferred_queue.js";
 export { RFedNode } from "./rfed/node.js";
 export { SubscriptionTable } from "./rfed/subscription.js";
 export {
+  decodeBlobStream,
+  encodeBlobStream,
+  fullManifest,
+  gapFromPeer,
+} from "./rfed/sync.js";
+export {
   channelStampWorkblock,
   generateChannelStamp,
   STAMP_SIZE as RFED_STAMP_SIZE,
