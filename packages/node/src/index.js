@@ -36,3 +36,7 @@ export {
   loadRFedStores,
   saveRFedStores,
 } from "./storage/rfed.js";
+export {
+  loadLXMFStore,
+  saveLXMFStore,
+} from "./storage/lxmf.js";

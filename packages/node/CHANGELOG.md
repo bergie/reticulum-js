@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 ### Added
+- **Dual-mode rfed/LXMF CLI runner** (work doc #27): `rfed.js` now runs an
+  rfed node and/or an LXMF propagation node (`--lxmf-propagation`, `--no-rfed`)
+  sharing one Reticulum instance + identity + interface. Per-role limit/TTL
+  flags (`--storage-limit-mb`, `--blob-ttl-days`, `--deferred-ttl-days`,
+  `--lxmf-message-ttl-days`) + LXMF options (`--lxmf-stamp-cost`,
+  `--lxmf-peering-cost`, `--propagation-peer`, `--autopeer`,
+  `--autopeer-max-cost`).
+- **LXMF message-store filesystem persistence**: `loadLXMFStore(dir)` /
+  `saveLXMFStore(dir, store)` (`storage/lxmf.js`) persist the propagation-node
+  message store as `propagation_messages.rmp` (msgpack), mirroring the rfed
+  FS adapter.
 - **rfed CLI: backup failover scheduling** (work doc #25, Phase 6). The
   runner now schedules `tickBackupDelivery()` every 30s (push own subs to the
   backup, prune stale, fail over for offline owners, chain re-push) and exposes

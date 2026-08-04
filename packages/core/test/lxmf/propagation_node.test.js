@@ -289,3 +289,64 @@ describe("PropagationNode ingestion (stamp path)", () => {
     assert.strictEqual(res.stored, 0);
   });
 });
+
+// ─── MessageStore limits + persistence ───────────────────────────────────
+
+describe("MessageStore — limits + persistence", () => {
+  test("storageLimitBytes evicts highest-weight entries on add", () => {
+    const dest = rnd(16);
+    const store = new MessageStore({ storageLimitBytes: 100 });
+    // Three 40-byte entries → 120 bytes > 100 cap → oldest (lowest weight at
+    // equal age is smallest... here equal size/age, so eviction is by weight
+    // descending = arbitrary among equals; assert the cap is honored).
+    store.add(fakeEntry(dest, 40));
+    store.add(fakeEntry(dest, 40));
+    store.add(fakeEntry(dest, 40));
+    assert.ok(store.totalBytes <= 100, "stays under byte cap");
+    assert.strictEqual(store.size, 2);
+  });
+
+  test("no cap = unlimited (nothing evicted)", () => {
+    const dest = rnd(16);
+    const store = new MessageStore(); // storageLimitBytes null
+    for (let i = 0; i < 5; i++) store.add(fakeEntry(dest, 40));
+    assert.strictEqual(store.size, 5);
+    assert.strictEqual(store.totalBytes, 200);
+  });
+
+  test("messageTtlSecs prunes aged entries via prune()", () => {
+    const dest = rnd(16);
+    const store = new MessageStore({ messageTtlSecs: 60 });
+    const fresh = fakeEntry(dest, 30);
+    fresh.received = Date.now() / 1000;
+    const stale = fakeEntry(dest, 30);
+    stale.received = 0; // ancient
+    store.add(fresh);
+    store.add(stale);
+    const res = store.prune();
+    assert.strictEqual(res.aged, 1);
+    assert.strictEqual(store.size, 1);
+    assert.strictEqual(store.has(fresh.transientId), true);
+  });
+
+  test("exportRecords / importRecords round-trip (Sets preserved)", async () => {
+    const dest = rnd(16);
+    const store = new MessageStore({ storageLimitBytes: 1000 });
+    const e = fakeEntry(dest, 30);
+    store.add(e);
+    store.markUnhandledForPeer(e.transientId, rnd(16));
+
+    const records = store.exportRecords();
+    assert.strictEqual(records.length, 1);
+    assert.deepStrictEqual(records[0].unhandledPeers.length, 1);
+
+    const store2 = new MessageStore();
+    store2.importRecords(records);
+    assert.strictEqual(store2.size, 1);
+    assert.strictEqual(store2.totalBytes, 30);
+    const got = store2.get(e.transientId);
+    assert.ok(got);
+    assert.ok(got.unhandledPeers.size === 1);
+    assert.ok(got.handledPeers instanceof Set);
+  });
+});

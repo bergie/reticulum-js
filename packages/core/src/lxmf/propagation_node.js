@@ -41,6 +41,14 @@ const DESTINATION_LENGTH = 16;
  * @property {number} [peeringCost] Peering cost advertised.
  * @property {string|null} [name] Operator node name (announce metadata).
  * @property {boolean} [nodeState] Whether this node is actively serving.
+ * @property {number|null} [storageLimitBytes] Stored-message byte cap; when
+ *   set, the highest-weight entries are evicted to stay under it (Python
+ *   `message_storage_limit`). `null` = unlimited.
+ * @property {number|null} [messageTtlSecs] Stored-message age TTL; entries
+ *   older than this are pruned by {@link PropagationNode#tickMaintenance}.
+ *   `null` = no age TTL (default; the Python reference relies on the byte cap).
+ * @property {import("./message_store.js").MessageStore} [store] Pre-built store
+ *   to adopt (e.g. loaded from disk by a runner) instead of a fresh one.
  * @property {(identity: import("../core/identity.js").Identity) => boolean} [identityAllowed]
  *   Access control; defaults to allow all (open node).
  * @property {() => Uint8Array} [getLocalIdentityHash]
@@ -64,7 +72,12 @@ export class PropagationNode {
    */
   constructor(options = {}) {
     /** @type {MessageStore} */
-    this.store = new MessageStore();
+    this.store =
+      options.store ??
+      new MessageStore({
+        storageLimitBytes: options.storageLimitBytes ?? null,
+        messageTtlSecs: options.messageTtlSecs ?? null,
+      });
     this.stampCost = options.stampCost ?? PROPAGATION_COST;
     this.stampCostFlexibility =
       options.stampCostFlexibility ?? PROPAGATION_COST_FLEX;
@@ -109,6 +122,17 @@ export class PropagationNode {
       peeringCost: this.peeringCost,
       name: this.name,
     });
+  }
+
+  /**
+   * Periodic maintenance — prunes aged entries (when `messageTtlSecs` is set)
+   * and re-runs capacity eviction. A runner calls this hourly (Python calls
+   * `clean_messages` from its job loop).
+   *
+   * @returns {{ aged: number }}
+   */
+  tickMaintenance() {
+    return this.store.prune();
   }
 
   /**

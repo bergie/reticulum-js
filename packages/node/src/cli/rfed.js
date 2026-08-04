@@ -2,18 +2,25 @@
 /**
  * @file rfed.js
  * @description CLI runner for the Node.js rfed (Reticulum Federation) node
- *   (work doc #25).
+ *   (work doc #25) and, optionally, an LXMF propagation node (work doc #27).
  *
  * Boots a `Reticulum` instance with a mesh interface, loads (or creates) the
- * node identity, hydrates the four rfed stores from disk, and runs an
- * {@link RFedNode} with periodic maintenance, persistence, and optional static
- * peer sync. State survives restarts.
+ * node identity, and runs one or both roles sharing that instance + identity:
+ *
+ *   - **rfed node** (default on; `--no-rfed` disables): hydrates the four rfed
+ *     stores from disk and runs an {@link RFedNode} with periodic maintenance,
+ *     persistence, backup failover, and optional static peer sync.
+ *   - **LXMF propagation node** (`--lxmf-propagation`): an `lxmd`-like
+ *     propagation node with disk-persisted message store, optional static
+ *     peers, and autopeering.
+ *
+ * State survives restarts.
  *
  * Usage:
  *   node packages/node/src/cli/rfed.js [options]
  *
  * Options:
- *   --rfed-dir <path>          rfed store directory (blobs/ + *.rmp). Default ./rfed-data
+ *   --rfed-dir <path>          store directory (rfed + LXMF). Default ./rfed-data
  *   --rns-dir <path>           Reticulum storage dir (identity/paths). Default ./reticulum
  *   --name <name>              rfed.node announce display name. Default "rfed"
  *   --stamp-cost <bits>        required PoW leading-zero bits (0 = disabled). Default 16
@@ -28,18 +35,34 @@
  *   --trusted-backup-peer <hex>  restrict /rfed/backup/push to these owners (repeatable)
  *   --backup-interval <sec>    backup push + failover tick period. Default 30
  *
+ * LXMF propagation node (optional, --lxmf-propagation):
+ *   --lxmf-propagation         also run an LXMF propagation node (lxmd-like)
+ *   --no-rfed                  disable the rfed node (run LXMF propagation only)
+ *   --lxmf-name <name>         propagation node display name
+ *   --lxmf-stamp-cost <bits>   propagation stamp cost. Default 8
+ *   --lxmf-peering-cost <bits> peering cost advertised to peers. Default 18
+ *   --propagation-peer <hex>   static lxmf.propagation peer to sync with (repeatable)
+ *   --autopeer                 auto-peer with discovered propagation nodes
+ *   --autopeer-max-cost <bits> max advertised peering cost to auto-peer at. Default 18
+ *   --lxmf-message-ttl-days <n>  prune stored LXMF messages older than this (default: none)
+ *
+ * Storage limits + TTLs (per-role unless noted):
+ *   --storage-limit-mb <n>     byte cap for BOTH rfed blobs and LXMF messages
+ *   --blob-ttl-days <n>        rfed blob age TTL. Default 30
+ *   --deferred-ttl-days <n>    rfed deferred-queue entry TTL. Default 7
+ *
  * Environment (tcp interface only): RNS_HOST (default 127.0.0.1), RNS_PORT (42424)
  *
  * Signals: SIGINT/SIGTERM flush stores to disk and exit.
  */
 import { parseArgs } from "node:util";
 import {
-  Destination,
   fromHex,
   Identity,
   Reticulum,
   toHex,
 } from "@reticulum/core";
+import { LXMRouter } from "@reticulum/core/src/lxmf/index.js";
 import { RFedNode } from "@reticulum/core/src/rfed/index.js";
 import {
   AutoInterface,
@@ -48,6 +71,7 @@ import {
   TCPClientInterface,
 } from "../index.js";
 import { loadRFedStores, saveRFedStores } from "../storage/rfed.js";
+import { loadLXMFStore, saveLXMFStore } from "../storage/lxmf.js";
 
 const MAINTENANCE_INTERVAL_DEFAULT = 3600;
 const SYNC_INTERVAL_DEFAULT = 300;
@@ -55,7 +79,7 @@ const SYNC_INTERVAL_DEFAULT = 300;
 const BACKUP_INTERVAL_DEFAULT = 30;
 
 /**
- * Boots and runs the rfed node until interrupted.
+ * Boots and runs the configured role(s) until interrupted.
  * @returns {Promise<void>}
  */
 async function main() {
@@ -84,6 +108,20 @@ async function main() {
         type: "string",
         default: String(BACKUP_INTERVAL_DEFAULT),
       },
+      // ── LXMF propagation node (optional) ──
+      "lxmf-propagation": { type: "boolean", default: false },
+      "no-rfed": { type: "boolean", default: false },
+      "lxmf-name": { type: "string" },
+      "lxmf-stamp-cost": { type: "string", default: "8" },
+      "lxmf-peering-cost": { type: "string", default: "18" },
+      "propagation-peer": { type: "string", multiple: true, default: [] },
+      autopeer: { type: "boolean", default: false },
+      "autopeer-max-cost": { type: "string", default: "18" },
+      "lxmf-message-ttl-days": { type: "string" },
+      // ── Storage limits + TTLs ──
+      "storage-limit-mb": { type: "string" },
+      "blob-ttl-days": { type: "string", default: "30" },
+      "deferred-ttl-days": { type: "string", default: "7" },
     },
   });
 
@@ -115,9 +153,36 @@ async function main() {
     fromHex(h),
   );
 
-  console.log(`rfed node — store: ${rfedDir}, interface: ${iface}`);
+  // ── Role selection + limits ──────────────────────────────────────────
+  const enableRfed = !values["no-rfed"];
+  const enableLxmf = !!values["lxmf-propagation"];
+  if (!enableRfed && !enableLxmf) {
+    console.error("Nothing to run: both --no-rfed and no --lxmf-propagation.");
+    process.exit(1);
+  }
+  /** @type {string[]} */
+  const propagationPeers = values["propagation-peer"] ?? [];
+  const lxmfStampCost = Number.parseInt(values["lxmf-stamp-cost"], 10) || 0;
+  const lxmfPeeringCost = Number.parseInt(values["lxmf-peering-cost"], 10) || 0;
+  const autopeerMaxCost = Number.parseInt(values["autopeer-max-cost"], 10) || 0;
+  // Shared byte cap (MB → bytes) for rfed blobs + LXMF messages.
+  const storageLimitBytes = values["storage-limit-mb"]
+    ? Number.parseInt(values["storage-limit-mb"], 10) * 1000 * 1000
+    : null;
+  const blobTtlSecs =
+    (Number.parseInt(values["blob-ttl-days"], 10) || 30) * 24 * 3600;
+  const deferredTtlSecs =
+    (Number.parseInt(values["deferred-ttl-days"], 10) || 7) * 24 * 3600;
+  const lxmfMessageTtlSecs = values["lxmf-message-ttl-days"]
+    ? Number.parseInt(values["lxmf-message-ttl-days"], 10) * 24 * 3600
+    : null;
 
-  // ── Reticulum core + mesh interface ───────────────────────────────────
+  console.log(
+    `rfed runner — store: ${rfedDir}, interface: ${iface}` +
+      (enableLxmf ? " (+ LXMF propagation)" : ""),
+  );
+
+  // ── Reticulum core + mesh interface (shared by both roles) ───────────
   const rns = new Reticulum({
     storageAdapter: new FileStorageAdapter(values["rns-dir"]),
   });
@@ -131,58 +196,101 @@ async function main() {
     );
   }
 
-  // ── Node identity (persistent) ───────────────────────────────────────
+  // ── Node identity (persistent, shared by both roles) ─────────────────
   const identity = await Identity.loadOrGenerate(rns.storage);
   console.log(`Node identity: ${toHex(identity.identityHash)}`);
 
-  // ── Hydrate rfed stores from disk ────────────────────────────────────
-  const stores = await loadRFedStores(rfedDir);
-  console.log(
-    `Loaded stores: ${stores.blobStore.allMessageIds().length} blob(s), ` +
-      `${stores.subscriptions.length} subscription(s), ` +
-      `${stores.deferred.totalLen()} deferred, ` +
-      `${stores.notify.count} notify registration(s).`,
-  );
-
-  // ── RFed node ────────────────────────────────────────────────────────
-  const node = new RFedNode({
-    identity,
-    rns,
-    stores,
-    config: {
-      name: values.name,
-      stampCost,
-      stampFlexibility: stampFlex,
-      primaryNode,
-      secondaryNodes,
-      ownerOfflineSecs,
-      trustedBackupPeers,
-    },
-  });
-  await node.start();
-  console.log(
-    `rfed.node up — ${toHex(node.nodeHash ?? new Uint8Array())} (stamp cost ${stampCost || "off"}, flex ${stampFlex})`,
-  );
-
-  // Request paths to static sync peers so links can establish.
-  for (const peerHex of syncPeers) {
-    rns.transport.requestPath(fromHex(peerHex));
+  // ── rfed node (default on) ───────────────────────────────────────────
+  /** @type {RFedNode|null} */
+  let node = null;
+  if (enableRfed) {
+    const stores = await loadRFedStores(rfedDir, {
+      storageLimitBytes: storageLimitBytes ?? undefined,
+    });
+    console.log(
+      `Loaded rfed stores: ${stores.blobStore.allMessageIds().length} blob(s), ` +
+        `${stores.subscriptions.length} subscription(s), ` +
+        `${stores.deferred.totalLen()} deferred, ` +
+        `${stores.notify.count} notify registration(s).`,
+    );
+    node = new RFedNode({
+      identity,
+      rns,
+      stores,
+      config: {
+        name: values.name,
+        stampCost,
+        stampFlexibility: stampFlex,
+        storageLimitBytes: storageLimitBytes ?? undefined,
+        blobTtlSecs,
+        deferredTtlSecs,
+        primaryNode,
+        secondaryNodes,
+        ownerOfflineSecs,
+        trustedBackupPeers,
+      },
+    });
+    await node.start();
+    console.log(
+      `rfed.node up — ${toHex(node.nodeHash ?? new Uint8Array())} (stamp cost ${stampCost || "off"}, flex ${stampFlex})`,
+    );
+    for (const peerHex of syncPeers) {
+      rns.transport.requestPath(fromHex(peerHex));
+    }
   }
 
-  // ── Periodic: maintenance + persist ──────────────────────────────────
+  // ── LXMF propagation node (optional) ─────────────────────────────────
+  /** @type {LXMRouter|null} */
+  let lxmfRouter = null;
+  if (enableLxmf) {
+    lxmfRouter = new LXMRouter(identity, /** @type {any} */ (rns));
+    await lxmfRouter.init();
+    const lxmfStore = await loadLXMFStore(rfedDir, {
+      storageLimitBytes,
+      messageTtlSecs: lxmfMessageTtlSecs,
+    });
+    const pn = await lxmfRouter.enablePropagation({
+      stampCost: lxmfStampCost,
+      name: values["lxmf-name"] ?? values.name,
+      peeringCost: lxmfPeeringCost,
+      storageLimitBytes,
+      messageTtlSecs: lxmfMessageTtlSecs,
+      store: lxmfStore,
+    });
+    if (values.autopeer) lxmfRouter.enableAutopeer(autopeerMaxCost);
+    await lxmfRouter.announcePropagationNode();
+    console.log(
+      `lxmf.propagation up — ${pn.store.size} stored message(s)` +
+        (values.autopeer ? " (autopeer on)" : ""),
+    );
+    for (const peerHex of propagationPeers) {
+      rns.transport.requestPath(fromHex(peerHex));
+    }
+  }
+
+  // ── Periodic: maintenance + persist (per role) ───────────────────────
   const persist = async () => {
     try {
-      const { blobsEvicted, deferredEvicted } = node.tickMaintenance();
-      await saveRFedStores(rfedDir, {
-        blobStore: node.blobStore,
-        subscriptions: node.subscriptions,
-        deferred: node.deferred,
-        notify: node.notifyRegistry,
-      });
-      if (blobsEvicted || deferredEvicted) {
-        console.log(
-          `maintenance: evicted ${blobsEvicted} blob(s), ${deferredEvicted} deferred; persisted.`,
-        );
+      if (node) {
+        const { blobsEvicted, deferredEvicted } = node.tickMaintenance();
+        await saveRFedStores(rfedDir, {
+          blobStore: node.blobStore,
+          subscriptions: node.subscriptions,
+          deferred: node.deferred,
+          notify: node.notifyRegistry,
+        });
+        if (blobsEvicted || deferredEvicted) {
+          console.log(
+            `rfed maintenance: evicted ${blobsEvicted} blob(s), ${deferredEvicted} deferred; persisted.`,
+          );
+        }
+      }
+      if (lxmfRouter?.propagationNode) {
+        const { aged } = lxmfRouter.propagationNode.tickMaintenance();
+        await saveLXMFStore(rfedDir, lxmfRouter.propagationNode.store);
+        if (aged > 0) {
+          console.log(`lxmf maintenance: pruned ${aged} aged message(s).`);
+        }
       }
     } catch (err) {
       console.error(`maintenance/persist failed: ${String(err)}`);
@@ -190,41 +298,57 @@ async function main() {
   };
   const maintenanceTimer = setInterval(persist, maintenanceInterval * 1000);
 
-  // ── Periodic: backup push + failover (SPEC §11) ─────────────────────
-  const backupTick = async () => {
-    try {
-      const res = await node.tickBackupDelivery();
-      if (res.pushed || res.adopted || res.pruned || res.repushed) {
-        console.log(
-          `backup: pushed ${res.pushed}, adopted ${res.adopted}, ` +
-            `repushed ${res.repushed}, pruned ${res.pruned}.`,
-        );
+  // ── Periodic: rfed backup push + failover (SPEC §11) ─────────────────
+  let backupTimer = null;
+  if (node) {
+    const backupTick = async () => {
+      try {
+        const res = await node.tickBackupDelivery();
+        if (res.pushed || res.adopted || res.pruned || res.repushed) {
+          console.log(
+            `backup: pushed ${res.pushed}, adopted ${res.adopted}, ` +
+              `repushed ${res.repushed}, pruned ${res.pruned}.`,
+          );
+        }
+      } catch (err) {
+        console.warn(`backup tick failed: ${String(err)}`);
       }
-    } catch (err) {
-      console.warn(`backup tick failed: ${String(err)}`);
-    }
-  };
-  const backupTimer = setInterval(backupTick, backupInterval * 1000);
+    };
+    backupTimer = setInterval(backupTick, backupInterval * 1000);
+  }
 
-  // ── Periodic: peer sync ──────────────────────────────────────────────
+  // ── Periodic: rfed peer sync ─────────────────────────────────────────
   let syncTimer = null;
-  if (syncPeers.length > 0) {
+  if (node && syncPeers.length > 0) {
     const syncOnce = async () => {
       for (const peerHex of syncPeers) {
         try {
           const n = await node.syncWithPeer(fromHex(peerHex));
-          if (n > 0) console.log(`sync: ${n} blob(s) from ${peerHex}`);
+          if (n > 0) console.log(`rfed sync: ${n} blob(s) from ${peerHex}`);
         } catch (err) {
-          console.warn(`sync with ${peerHex} failed: ${String(err)}`);
+          console.warn(`rfed sync with ${peerHex} failed: ${String(err)}`);
         }
       }
     };
     syncTimer = setInterval(syncOnce, syncInterval * 1000);
-    // Kick one off shortly after startup (let paths settle).
     setTimeout(syncOnce, 5000);
   }
 
-  // ── Shutdown ────────────────────────────────────────────────────────
+  // ── Periodic: LXMF propagation peer sync ─────────────────────────────
+  let lxmfSyncTimer = null;
+  if (lxmfRouter && propagationPeers.length > 0) {
+    const lxmfSyncOnce = async () => {
+      try {
+        await lxmfRouter.syncPeers();
+      } catch (err) {
+        console.warn(`lxmf sync failed: ${String(err)}`);
+      }
+    };
+    lxmfSyncTimer = setInterval(lxmfSyncOnce, syncInterval * 1000);
+    setTimeout(lxmfSyncOnce, 5000);
+  }
+
+  // ── Shutdown ─────────────────────────────────────────────────────────
   let shuttingDown = false;
   /** @param {string} sig */
   const shutdown = async (sig) => {
@@ -232,16 +356,22 @@ async function main() {
     shuttingDown = true;
     console.log(`\n${sig} received — flushing stores and shutting down…`);
     clearInterval(maintenanceTimer);
-    clearInterval(backupTimer);
+    if (backupTimer) clearInterval(backupTimer);
     if (syncTimer) clearInterval(syncTimer);
+    if (lxmfSyncTimer) clearInterval(lxmfSyncTimer);
     try {
-      node.stop();
-      await saveRFedStores(rfedDir, {
-        blobStore: node.blobStore,
-        subscriptions: node.subscriptions,
-        deferred: node.deferred,
-        notify: node.notifyRegistry,
-      });
+      if (node) {
+        node.stop();
+        await saveRFedStores(rfedDir, {
+          blobStore: node.blobStore,
+          subscriptions: node.subscriptions,
+          deferred: node.deferred,
+          notify: node.notifyRegistry,
+        });
+      }
+      if (lxmfRouter?.propagationNode) {
+        await saveLXMFStore(rfedDir, lxmfRouter.propagationNode.store);
+      }
     } catch (err) {
       console.error(`flush failed: ${String(err)}`);
     }

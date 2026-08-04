@@ -7,8 +7,9 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { Identity } from "../../src/core/identity.js";
-import { parsePropagationNodeAppData } from "../../src/lxmf/announce_data.js";
+import { buildPropagationNodeAppData, parsePropagationNodeAppData } from "../../src/lxmf/announce_data.js";
 import { LXMRouter } from "../../src/lxmf/router.js";
+import { toHex } from "../../src/utils/encoding.js";
 
 /**
  * Mock RNS core: real EventTargets for transport + interface so the router's
@@ -89,5 +90,89 @@ describe("LXMRouter.enablePropagation wiring", () => {
     const a = await router.enablePropagation();
     const b = await router.enablePropagation();
     assert.strictEqual(a, b);
+  });
+});
+
+// ─── Autopeering (work doc #27) ──────────────────────────────────────────
+
+describe("LXMRouter.enableAutopeer", () => {
+  test("auto-peers with a propagation node whose peering cost ≤ threshold", async () => {
+    const identity = await Identity.generate();
+    const router = new LXMRouter(identity, mockRns([]));
+    await router.init();
+    await router.enablePropagation({ stampCost: 0 });
+    router.enableAutopeer(8);
+
+    // A remote propagation node's announce app_data (peering cost 5 ≤ 8).
+    const remoteHash = new Uint8Array(16);
+    crypto.getRandomValues(remoteHash);
+    const appData = buildPropagationNodeAppData({
+      timebase: Math.floor(Date.now() / 1000),
+      nodeState: true,
+      perTransferLimitKb: 256,
+      perSyncLimitKb: 10240,
+      stampCost: 8,
+      stampCostFlexibility: 2,
+      peeringCost: 5,
+      name: "remote-pn",
+    });
+    /** @type {any} */ (router.rns.transport).dispatchEvent(
+      new CustomEvent("announce", {
+        detail: { destinationHash: remoteHash, identity, appData },
+      }),
+    );
+    await Promise.resolve(); // listener is sync but defensive
+    assert.strictEqual(router.peers.size, 1);
+    const peer = router.peers.get(toHex(remoteHash));
+    assert.ok(peer);
+    assert.strictEqual(peer.peeringCost, 5);
+  });
+
+  test("does not auto-peer above the threshold, or when disabled", async () => {
+    const identity = await Identity.generate();
+    const router = new LXMRouter(identity, mockRns([]));
+    await router.init();
+    await router.enablePropagation({ stampCost: 0 });
+    router.enableAutopeer(8);
+
+    const remoteHash = new Uint8Array(16);
+    crypto.getRandomValues(remoteHash);
+    const appData = buildPropagationNodeAppData({
+      timebase: Math.floor(Date.now() / 1000),
+      nodeState: true,
+      perTransferLimitKb: 256,
+      perSyncLimitKb: 10240,
+      stampCost: 8,
+      stampCostFlexibility: 2,
+      peeringCost: 12, // > 8 threshold
+      name: "costly-pn",
+    });
+    /** @type {any} */ (router.rns.transport).dispatchEvent(
+      new CustomEvent("announce", {
+        detail: { destinationHash: remoteHash, identity, appData },
+      }),
+    );
+    assert.strictEqual(router.peers.size, 0);
+
+    // And not when autopeer is disabled entirely (fresh router).
+    const router2 = new LXMRouter(identity, mockRns([]));
+    await router2.init();
+    await router2.enablePropagation({ stampCost: 0 });
+    const cheap = buildPropagationNodeAppData({
+      timebase: Math.floor(Date.now() / 1000),
+      nodeState: true,
+      perTransferLimitKb: 256,
+      perSyncLimitKb: 10240,
+      stampCost: 8,
+      stampCostFlexibility: 2,
+      peeringCost: 1,
+      name: "cheap-pn",
+    });
+    /** @type {any} */ (router2.rns.transport).dispatchEvent(
+      new CustomEvent("announce", {
+        detail: { destinationHash: remoteHash, identity, appData: cheap },
+      }),
+    );
+    assert.strictEqual(router2.peers.size, 0);
   });
 });

@@ -30,10 +30,15 @@ import { toHex } from "../utils/encoding.js";
 /** Seconds per 4-day age-weight unit (Python `get_weight`). */
 const AGE_WEIGHT_UNIT = 60 * 60 * 24 * 4;
 
+/** Default TTL: none (messages live until the byte cap evicts them), matching
+ * the Python reference, which has no message-age TTL — only a byte limit. */
+const DEFAULT_MESSAGE_TTL_SECS = null;
+
 /**
  * Transfer weight used to order a sync offer (`LXMRouter.get_weight`):
  * `priority * max(1, age/4days) * size`, ascending. There is no prioritised
- * list yet, so priority is always 1.0.
+ * list yet, so priority is always 1.0. Reused for capacity eviction (where the
+ * *highest*-weight entries are culled first, mirroring Python `clean_messages`).
  *
  * @param {PropagationEntry} entry
  * @returns {number}
@@ -46,15 +51,39 @@ function weightOf(entry) {
   return ageWeight * entry.size;
 }
 
+/**
+ * @typedef {Object} MessageStoreOptions
+ * @property {number|null} [storageLimitBytes] Byte cap; when set, the
+ *   highest-weight entries are evicted after an add to stay under it (Python
+ *   `message_storage_limit`). `null` = unlimited.
+ * @property {number|null} [messageTtlSecs] Age TTL; entries older than this are
+ *   pruned by {@link MessageStore#prune}. `null` = no age TTL (default; the
+ *   Python reference relies on the byte cap alone).
+ */
+
 export class MessageStore {
-  constructor() {
+  /**
+   * @param {MessageStoreOptions} [options]
+   */
+  constructor({ storageLimitBytes = null, messageTtlSecs = null } = {}) {
     /** @type {Map<string, PropagationEntry>} keyed by hex(transientId). */
     this._entries = new Map();
+    /** @type {number|null} */
+    this.storageLimitBytes = storageLimitBytes;
+    /** @type {number|null} */
+    this.messageTtlSecs = messageTtlSecs ?? DEFAULT_MESSAGE_TTL_SECS;
+    /** Running total of stored bytes (sum of `entry.size`). */
+    this._totalBytes = 0;
   }
 
   /** @returns {number} number of stored messages. */
   get size() {
     return this._entries.size;
+  }
+
+  /** @returns {number} total stored bytes. */
+  get totalBytes() {
+    return this._totalBytes;
   }
 
   /**
@@ -85,6 +114,8 @@ export class MessageStore {
     entry.handledPeers ??= new Set();
     entry.unhandledPeers ??= new Set();
     this._entries.set(key, entry);
+    this._totalBytes += entry.size;
+    this._enforceCapacity();
     return true;
   }
 
@@ -95,7 +126,12 @@ export class MessageStore {
    * @returns {boolean} true if an entry was removed.
    */
   remove(transientId) {
-    return this._entries.delete(toHex(transientId));
+    const key = toHex(transientId);
+    const entry = this._entries.get(key);
+    if (!entry) return false;
+    this._entries.delete(key);
+    this._totalBytes -= entry.size;
+    return true;
   }
 
   /**
@@ -110,7 +146,51 @@ export class MessageStore {
     const entry = this.get(transientId);
     if (!entry) return false;
     if (toHex(entry.destinationHash) !== toHex(ownerHash)) return false;
-    return this._entries.delete(toHex(transientId));
+    return this.remove(transientId);
+  }
+
+  /**
+   * Evicts the highest-weight entries until `totalBytes ≤ storageLimitBytes`
+   * (Python `clean_messages` cull: weight descending). No-op when no cap.
+   * @private
+   */
+  _enforceCapacity() {
+    if (this.storageLimitBytes == null) return;
+    if (this._totalBytes <= this.storageLimitBytes) return;
+    /** @type {{key: string, entry: PropagationEntry, weight: number}[]} */
+    const ranked = [];
+    for (const [key, entry] of this._entries) {
+      ranked.push({ key, entry, weight: weightOf(entry) });
+    }
+    ranked.sort((a, b) => b.weight - a.weight);
+    for (const { key, entry } of ranked) {
+      if (this._totalBytes <= this.storageLimitBytes) break;
+      this._entries.delete(key);
+      this._totalBytes -= entry.size;
+    }
+  }
+
+  /**
+   * Periodic maintenance — prunes entries older than `messageTtlSecs` (when set)
+   * and re-runs capacity enforcement. A runner calls this hourly (Python calls
+   * `clean_messages` from its job loop).
+   *
+   * @returns {{ aged: number }} counts of pruned entries.
+   */
+  prune() {
+    let aged = 0;
+    if (this.messageTtlSecs != null) {
+      const cutoff = Date.now() / 1000 - this.messageTtlSecs;
+      for (const [key, entry] of this._entries) {
+        if (entry.received < cutoff) {
+          this._entries.delete(key);
+          this._totalBytes -= entry.size;
+          aged++;
+        }
+      }
+    }
+    this._enforceCapacity();
+    return { aged };
   }
 
   /**
@@ -206,5 +286,58 @@ export class MessageStore {
     }
     out.sort((a, b) => a.weight - b.weight);
     return out;
+  }
+
+  /**
+   * Exports all entries as serializable records (Sets → arrays) for the
+   * `@reticulum/node` FS adapter. The hex-keyed Sets are kept as arrays so the
+   * payload round-trips through msgpack cleanly.
+   *
+   * @returns {Array<{ transientId: Uint8Array, destinationHash: Uint8Array, lxmfData: Uint8Array, stampData: Uint8Array, received: number, stampValue: number, size: number, handledPeers: string[], unhandledPeers: string[] }>}
+   */
+  exportRecords() {
+    /** @type {any[]} */
+    const out = [];
+    for (const e of this._entries.values()) {
+      out.push({
+        transientId: new Uint8Array(e.transientId),
+        destinationHash: new Uint8Array(e.destinationHash),
+        lxmfData: new Uint8Array(e.lxmfData),
+        stampData: new Uint8Array(e.stampData),
+        received: e.received,
+        stampValue: e.stampValue,
+        size: e.size,
+        handledPeers: Array.from(e.handledPeers),
+        unhandledPeers: Array.from(e.unhandledPeers),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Replaces the store with the given records (arrays → Sets). Used on load.
+   * Re-computes `totalBytes`. Does NOT re-run capacity eviction (the caller
+   * should call {@link prune} afterwards if limits may have changed).
+   *
+   * @param {Array<{ transientId: Uint8Array, destinationHash: Uint8Array, lxmfData: Uint8Array, stampData: Uint8Array, received: number, stampValue: number, size: number, handledPeers: string[], unhandledPeers: string[] }>} records
+   */
+  importRecords(records) {
+    this._entries.clear();
+    this._totalBytes = 0;
+    for (const r of records) {
+      const entry = {
+        transientId: new Uint8Array(r.transientId),
+        destinationHash: new Uint8Array(r.destinationHash),
+        lxmfData: new Uint8Array(r.lxmfData),
+        stampData: new Uint8Array(r.stampData),
+        received: r.received,
+        stampValue: r.stampValue,
+        size: r.size,
+        handledPeers: new Set(r.handledPeers ?? []),
+        unhandledPeers: new Set(r.unhandledPeers ?? []),
+      };
+      this._entries.set(toHex(entry.transientId), entry);
+      this._totalBytes += entry.size;
+    }
   }
 }

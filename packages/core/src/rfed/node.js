@@ -113,6 +113,10 @@ const PENDING_BACKUP_CAP = 1024;
  * @property {number} [config.deferredQueueLimit] Per-subscriber deferred cap (default 256).
  * @property {number} [config.globalDeferredLimit] Global deferred cap (default 4096).
  * @property {number} [config.storageLimitBytes] Blob-store capacity (default 2 GiB).
+ * @property {number} [config.blobTtlSecs] Blob age TTL pruned by
+ *   {@link RFedNode#tickMaintenance} (default 30 days; SPEC §5).
+ * @property {number} [config.deferredTtlSecs] Deferred-queue entry age TTL
+ *   pruned by {@link RFedNode#tickMaintenance} (default 7 days; SPEC §7).
  * @property {number} [config.presenceTtlSec] Subscriber presence TTL (default 3600).
  * @property {string} [config.name] Display name for the `rfed.node` announce.
  * @property {(subscriberHash: Uint8Array) => { deferredQueueLimit: number }} [config.policyFor]
@@ -165,6 +169,10 @@ export class RFedNode {
       config.deferredQueueLimit ?? DEFAULT_DEFERRED_QUEUE_LIMIT;
     this.name = config.name ?? "rfed";
     this.presenceTtlSec = config.presenceTtlSec ?? DEFAULT_PRESENCE_TTL_SEC;
+    /** @type {number} */
+    this.blobTtlSecs = config.blobTtlSecs ?? BLOB_TTL_SECS;
+    /** @type {number} */
+    this.deferredTtlSecs = config.deferredTtlSecs ?? DEFERRED_TTL_SECS;
     /** @type {number|null} */
     this.transferLimitBytes = config.transferLimitBytes ?? null;
 
@@ -397,8 +405,8 @@ export class RFedNode {
    * @returns {{ blobsEvicted: number, deferredEvicted: number }}
    */
   tickMaintenance() {
-    const blobsEvicted = this.blobStore.pruneOlderThan(BLOB_TTL_SECS);
-    const deferredEvicted = this.deferred.evictExpired(DEFERRED_TTL_SECS);
+    const blobsEvicted = this.blobStore.pruneOlderThan(this.blobTtlSecs);
+    const deferredEvicted = this.deferred.evictExpired(this.deferredTtlSecs);
     return { blobsEvicted, deferredEvicted };
   }
 

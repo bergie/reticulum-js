@@ -98,6 +98,12 @@ export class LXMRouter extends EventTarget {
     // --- Peer mesh (§5.8.4): peered propagation nodes keyed by dest hash. ---
     /** @type {Map<string, LXMPeer>} */
     this.peers = new Map();
+    // --- Autopeer (Python lxmd / LXMRouter): auto-peer with discovered ---
+    // propagation nodes whose advertised peering cost ≤ this threshold.
+    /** @type {boolean} */
+    this.autopeerEnabled = false;
+    /** @type {number} max advertised peering cost to auto-peer at. */
+    this.autopeerMaxPeeringCost = MAX_PEERING_COST;
   }
 
   /**
@@ -203,6 +209,21 @@ export class LXMRouter extends EventTarget {
    */
   stopAnnouncing() {
     this.deliveryDest?.stopAnnouncing();
+  }
+
+  /**
+   * Enables autopeering (Python `lxmd` autopeer): when a `lxmf.propagation`
+   * announce is heard whose advertised peering cost is ≤ `maxPeeringCost`, a
+   * peering relationship is established automatically. Requires
+   * {@link enablePropagation} (this node must itself be a propagation node to
+   * peer).
+   *
+   * @param {number} [maxPeeringCost] Max advertised peering cost to auto-peer
+   *   at (default {@link MAX_PEERING_COST}).
+   */
+  enableAutopeer(maxPeeringCost = MAX_PEERING_COST) {
+    this.autopeerEnabled = true;
+    this.autopeerMaxPeeringCost = maxPeeringCost;
   }
 
   /**
@@ -899,6 +920,31 @@ export class LXMRouter extends EventTarget {
           },
         }),
       );
+      // Autopeer: a `lxmf.propagation` announce advertises the node's costs in
+      // its app_data. If autopeering is on and the announced peering cost is
+      // within our threshold, establish a peering relationship (Python lxmd).
+      if (this.autopeerEnabled && this.propagationNode) {
+        const pn = parsePropagationNodeAppData(appData);
+        if (
+          pn &&
+          pn.nodeState &&
+          pn.peeringCost <= this.autopeerMaxPeeringCost &&
+          !this.peers.has(toHex(destinationHash))
+        ) {
+          this.peer(destinationHash, {
+            stampCost: pn.stampCost,
+            stampCostFlexibility: pn.stampCostFlexibility,
+            peeringCost: pn.peeringCost,
+            perTransferLimitKb: pn.perTransferLimitKb,
+            perSyncLimitKb: pn.perSyncLimitKb,
+          });
+          log(
+            "LXMF",
+            `Auto-peered with propagation node ${toHex(destinationHash)} (peering cost ${pn.peeringCost})`,
+            LogLevel.NOTICE,
+          );
+        }
+      }
       // A just-validated announce may have made a previously-unknown sender's
       // identity available, so re-process any messages parked waiting for it
       // (first-contact opportunistic delivery). Harmless when nothing is

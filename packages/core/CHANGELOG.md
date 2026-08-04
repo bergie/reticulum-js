@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 ### Added
+- **LXMF propagation-node runner support** (work doc #27): persistence,
+  configurable limits/TTLs, and autopeering so a propagation node can run as a
+  standalone daemon (alongside rfed).
+  - `MessageStore` gained `storageLimitBytes` (weighted eviction, mirroring
+    Python `get_weight` cull) + optional `messageTtlSecs`; new `prune()` +
+    `totalBytes`; and `exportRecords()`/`importRecords()` persistence seams.
+  - `PropagationNode` accepts `storageLimitBytes`/`messageTtlSecs`/`store`
+    options and gained `tickMaintenance()`.
+  - `LXMRouter.enableAutopeer(maxPeeringCost)`: auto-`peer()` with discovered
+    `lxmf.propagation` nodes whose advertised peering cost is within the
+    threshold (Python `lxmd` autopeer).
+- **rfed configurable TTLs**: `RFedNode` now takes `blobTtlSecs` (default 30d)
+  and `deferredTtlSecs` (default 7d) instead of hardcoding them (work doc #27).
 - **rfed (Reticulum Federation) Phase 6** — backup failover (work doc #25,
   SPEC §11). Chain-of-custody subscriber backup: a primary periodically pushes
   its `(subscriber, channel)` pairs to a designated backup; the backup holds
