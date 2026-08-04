@@ -1,6 +1,21 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **rfed filesystem persistence + CLI runner** (work doc #25).
+  - `loadRFedStores(dir)` / `saveRFedStores(dir, stores)` (`storage/rfed.js`)
+    persist the four rfed in-memory stores to disk: blobs as
+    `blobs/<ch_hex>/<id_hex>.bin` (mtime preserves `received` for TTL) and
+    the subscription/deferred/notify tables as `subscriptions.rmp`,
+    `deferred_delivery.rmp`, `notify_registrations.rmp` (msgpack via
+    `@reticulum/core`'s `MsgPack`). Missing files/dirs yield fresh stores.
+  - `rfed` CLI (`src/cli/rfed.js`, exposed as the `rfed` bin): boots a
+    `Reticulum` instance + mesh interface (`--interface shared|auto|tcp`),
+    loads/creates the node identity, hydrates stores from disk, runs an
+    `RFedNode`, and schedules hourly maintenance+persistence plus optional
+    static-peer sync (`--sync-peer`, repeatable). Default stamp cost 16
+    (flex 3), matching the Rust `TierPolicy::default`. SIGINT/SIGTERM flush
+    stores and exit.
 
 ## [0.5.3] - 2026-08-02
 

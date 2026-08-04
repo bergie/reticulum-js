@@ -19,6 +19,9 @@
   "type": "module",
   "main": "src/index.js",
   "types": "types/src/index.d.ts",
+  "bin": {
+    "rfed": "src/cli/rfed.js"
+  },
   "files": [
     "src",
     "types",

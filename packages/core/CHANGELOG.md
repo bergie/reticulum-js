@@ -62,6 +62,29 @@
   Sync ingest stores stamp-stripped blobs verbatim (the origin node validated
   and stripped on first ingest); no stamp re-check, matching Rust. Pure codec
   + manifest/gap helpers are exported for reuse.
+- **rfed (Reticulum Federation) Phase 5** — notify wake-ups (`rfed/notify.js`,
+  work doc #25). When a blob is deferred for an offline subscriber, the node
+  sends a lightweight §9.3 wake packet to each notify relay the subscriber has
+  registered, so a relay (APNs/FCM/UnifiedPush bridge) can poke the device:
+  - `/rfed/notify/register`, `/rfed/notify/unregister`, `/rfed/notify/clear`
+    are served on the legacy `rfed.notify` destination, with register/
+    unregister also on the split `rfed.notify.register`/
+    `rfed.notify.unregister`. Commands are signed
+    `[bin(command), bin(64) pubkey, bin(64) sig]` (the shared
+    `verify_signed_payload` contract); the command is the modern
+    `[op, relay_hex|nil, bin(16) channel_hash|nil]` or the legacy
+    `[relay_hex, bin(16) ch|nil]`.
+  - `RFedClient` gains `registerNotify`/`unregisterNotify`/`clearNotify`.
+  - Wake dispatch (`_dispatchNotify`) sends a msgpack Map `{receiver, sender?,
+    channel?}` (destination hashes only — no message content) to the relay's
+    `rfed.notify` destination; failures are logged and swallowed (the blob is
+    still pulled later). `NotifyRegistry` is per-node and never synced.
+  - `_verifySignedChannel` was refactored into a shared `_verifySignedPayload`.
+- **rfed store serialization seam**: `BlobStore`, `SubscriptionTable`,
+  `DeferredQueue`, and `NotifyRegistry` gained `exportRecords()` /
+  `importRecords()` so a runner (e.g. `@reticulum/node`'s `loadRFedStores` /
+  `saveRFedStores`) can persist them across restarts. `RFedNode` accepts an
+  injected `stores` option to adopt pre-loaded stores.
 
 ### Changed
 - **rfed stamp workblock is now a single, documented switch point**

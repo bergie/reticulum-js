@@ -25,6 +25,7 @@ import {
 } from "../../src/core/packet.js";
 import { Message } from "../../src/lxmf/message.js";
 import { unwrapChannelMessage } from "../../src/rfed/blob.js";
+import { MicroMsgPack } from "../../src/utils/msgpack.js";
 import { deliveryHashFor, deriveChannel } from "../../src/rfed/channel.js";
 import { RFedClient } from "../../src/rfed/client.js";
 import { RFedNode } from "../../src/rfed/node.js";
@@ -662,5 +663,111 @@ describe("RFedNode — peer sync (Phase 4)", () => {
     // Second sync: B already holds the id → gap empty → 0 pulled.
     const second = await nodeB.syncWithPeer(aNodeHash);
     assert.strictEqual(second, 0);
+  });
+});
+
+describe("RFedNode — notify wake-ups (Phase 5)", () => {
+  test("offline subscriber: deferred publish wakes the registered relay", async () => {
+    const wire = new Wire();
+    const nodeRns = await makeRns();
+    const subRns = await makeRns();
+    const pubRns = await makeRns();
+    const relayRns = await makeRns();
+    wire.attach(nodeRns.transport);
+    wire.attach(subRns.transport);
+    wire.attach(pubRns.transport);
+    wire.attach(relayRns.transport);
+
+    const node = new RFedNode({ identity: nodeRns.identity, rns: nodeRns.rns });
+    await node.start();
+    for (const name of [
+      "rfed.node",
+      "rfed.channel.subscribe",
+      "rfed.channel.unsubscribe",
+      "rfed.channel.publish",
+      "rfed.channel.pull",
+      "rfed.notify",
+      "rfed.notify.register",
+      "rfed.notify.unregister",
+    ]) {
+      const d = await Destination.OUT(name, DestType.SINGLE, nodeRns.identity);
+      await Destination.remember(
+        rnd(16),
+        d.destinationHash,
+        nodeRns.identity.publicKey,
+        null,
+      );
+    }
+    const nodeHash = (
+      await Destination.OUT(
+        "rfed.notify.register",
+        DestType.SINGLE,
+        nodeRns.identity,
+      )
+    ).destinationHash;
+
+    // Relay: an inbound rfed.notify destination that records wake packets.
+    const relayDest = await Destination.IN(
+      "rfed.notify",
+      DestType.SINGLE,
+      relayRns.identity,
+      relayRns.rns,
+    );
+    const relayHash = relayDest.destinationHash;
+    const wakes = [];
+    relayDest.addEventListener("data", (/** @type {any} */ e) =>
+      wakes.push(e.detail.plaintext),
+    );
+    relayRns.transport.bindLocalDestination(relayDest);
+    // Make the relay identity recallable by its rfed.notify hash (the node
+    // builds an OUT dest from it on wake dispatch).
+    await Destination.remember(
+      rnd(16),
+      relayHash,
+      relayRns.identity.publicKey,
+      null,
+    );
+
+    const subscriber = new RFedClient({ identity: subRns.identity, rns: subRns.rns });
+    const publisher = new RFedClient({ identity: pubRns.identity, rns: pubRns.rns });
+
+    // Subscribe but DO NOT listen → offline. Register a notify relay for the
+    // channel, scoped to the relay's rfed.notify hash.
+    await subscriber.subscribe(nodeHash, "public.notify");
+    const ok = await subscriber.registerNotify(
+      nodeHash,
+      toHex(relayHash),
+      "public.notify",
+    );
+    assert.strictEqual(ok, true);
+    assert.strictEqual(node.notifyRegistry.count, 1);
+
+    // Publish while the subscriber is offline → deferred + notify wake.
+    await publisher.publish(
+      nodeHash,
+      "public.notify",
+      new Message({ content: "wake me up" }),
+    );
+
+    const wake = await waitFor(() => wakes[0]);
+    const map = MicroMsgPack.decode(wake);
+    // §9.3: receiver = subscriber identity hash, channel = channel hash.
+    const channel = await deriveChannel("public.notify");
+    assert.deepStrictEqual(toHex(map.channel), toHex(channel.channelHash));
+    assert.strictEqual(map.sender, undefined); // fire-and-forget SEND has no sender
+    assert.strictEqual(wakes.length, 1);
+  });
+
+  test("clearNotify removes all registrations for the subscriber", async () => {
+    const { nodeHash, client, node } = await fixture();
+    const relay = toHex(rnd(16));
+
+    await client.registerNotify(nodeHash, relay, "public.a");
+    await client.registerNotify(nodeHash, relay, "public.b");
+    assert.strictEqual(node.notifyRegistry.count, 2);
+
+    const cleared = await client.clearNotify(nodeHash);
+    assert.strictEqual(cleared, true);
+    assert.strictEqual(node.notifyRegistry.count, 0);
   });
 });

@@ -44,6 +44,16 @@ import {
   fullManifest,
   gapFromPeer,
 } from "./sync.js";
+import {
+  NOTIFY_CLEAR,
+  NOTIFY_REGISTER,
+  NOTIFY_UNREGISTER,
+  NotifyRegistry,
+  encodeWakePayload,
+  fromHex,
+  parseNotifyCommand,
+  validateRelayHash,
+} from "./notify.js";
 
 /** rfed app namespace (shared by all rfed destinations). */
 const APP_NAME = "rfed";
@@ -55,6 +65,10 @@ const PULL_NAME = "rfed.channel.pull";
 const NODE_NAME = "rfed.node";
 /** Subscriber's inbound delivery destination name. */
 const DELIVERY_NAME = "rfed.delivery";
+/** Notify registration destinations (SPEC §2/§9): legacy combined + split. */
+const NOTIFY_NAME = "rfed.notify";
+const NOTIFY_REGISTER_NAME = "rfed.notify.register";
+const NOTIFY_UNREGISTER_NAME = "rfed.notify.unregister";
 
 /** `/rfed/*` request paths. */
 const SUBSCRIBE_PATH = "/rfed/subscribe";
@@ -63,6 +77,10 @@ const PULL_PATH = "/rfed/pull";
 /** `/rfed/*` peer-sync paths (SPEC §4). */
 const OFFER_PATH = "/rfed/offer";
 const MESSAGE_GET_PATH = "/rfed/get";
+/** `/rfed/notify/*` registration paths (SPEC §9.1). */
+const NOTIFY_REGISTER_PATH = "/rfed/notify/register";
+const NOTIFY_UNREGISTER_PATH = "/rfed/notify/unregister";
+const NOTIFY_CLEAR_PATH = "/rfed/notify/clear";
 
 /** rfed protocol version advertised in the `rfed.node` announce app_data. */
 const PROTOCOL_VERSION = 1;
@@ -99,6 +117,10 @@ const DEFERRED_TTL_SECS = 7 * 24 * 3600;
  *   byte cap (SPEC §4). When set, the GET response stops emitting records once
  *   this would be exceeded (default `null` = unlimited for the in-memory node;
  *   a runner should bound it).
+ * @property {{ blobStore?: BlobStore, subscriptions?: SubscriptionTable, deferred?: DeferredQueue, notify?: NotifyRegistry }} [stores]
+ *   Pre-built stores to adopt instead of fresh in-memory ones. A runner passes
+ *   stores loaded from disk (via `@reticulum/node`'s `loadRFedStores`) so state
+ *   survives restarts; the node then owns and mutates them.
  */
 
 /**
@@ -112,7 +134,7 @@ export class RFedNode {
   /**
    * @param {RFedNodeOptions} opts
    */
-  constructor({ identity, rns, config = {} }) {
+  constructor({ identity, rns, config = {}, stores = {} }) {
     this.identity = identity;
     this.rns = rns;
 
@@ -143,15 +165,17 @@ export class RFedNode {
       (() => ({ deferredQueueLimit: this.deferredQueueLimit }));
 
     /** @type {BlobStore} */
-    this.blobStore = new BlobStore({
-      storageLimitBytes: config.storageLimitBytes,
-    });
+    this.blobStore =
+      stores.blobStore ??
+      new BlobStore({ storageLimitBytes: config.storageLimitBytes });
     /** @type {SubscriptionTable} */
-    this.subscriptions = new SubscriptionTable();
+    this.subscriptions = stores.subscriptions ?? new SubscriptionTable();
     /** @type {DeferredQueue} */
-    this.deferred = new DeferredQueue({
-      globalLimit: config.globalDeferredLimit,
-    });
+    this.deferred =
+      stores.deferred ??
+      new DeferredQueue({ globalLimit: config.globalDeferredLimit });
+    /** @type {NotifyRegistry} Per-node, never synced (SPEC §9). */
+    this.notifyRegistry = stores.notify ?? new NotifyRegistry();
 
     /**
      * Subscriber presence: hex(rfed.delivery hash) → Unix seconds of last
@@ -171,6 +195,12 @@ export class RFedNode {
     this._publishDest = null;
     /** @type {import("../core/destination.js").Destination|null} */
     this._pullDest = null;
+    /** @type {import("../core/destination.js").Destination|null} */
+    this._notifyDest = null;
+    /** @type {import("../core/destination.js").Destination|null} */
+    this._notifyRegisterDest = null;
+    /** @type {import("../core/destination.js").Destination|null} */
+    this._notifyUnregisterDest = null;
 
     /** Bound announce listener (so stop() can detach it). */
     this._announceListener = null;
@@ -249,6 +279,39 @@ export class RFedNode {
     });
     this.rns.transport.bindLocalDestination(this._publishDest);
 
+    // Notify registration destinations (SPEC §9). The legacy combined
+    // `rfed.notify` serves register/unregister/clear; the split
+    // `rfed.notify.register`/`rfed.notify.unregister` serve register/unregister.
+    this._notifyDest = await this._bringUpDest(NOTIFY_NAME);
+    await this._notifyDest.registerRequestHandler(NOTIFY_REGISTER_PATH, {
+      allow: Allow.ALL,
+      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ d) =>
+        this._handleNotifyRegister(d),
+    });
+    await this._notifyDest.registerRequestHandler(NOTIFY_UNREGISTER_PATH, {
+      allow: Allow.ALL,
+      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ d) =>
+        this._handleNotifyUnregister(d),
+    });
+    await this._notifyDest.registerRequestHandler(NOTIFY_CLEAR_PATH, {
+      allow: Allow.ALL,
+      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ d) =>
+        this._handleNotifyClear(d),
+    });
+    this._notifyRegisterDest = await this._bringUpRequestDest(NOTIFY_REGISTER_NAME, {
+      path: NOTIFY_REGISTER_PATH,
+      handler: async (/** @type {string} */ _p, /** @type {any} */ d) =>
+        this._handleNotifyRegister(d),
+    });
+    this._notifyUnregisterDest = await this._bringUpRequestDest(
+      NOTIFY_UNREGISTER_NAME,
+      {
+        path: NOTIFY_UNREGISTER_PATH,
+        handler: async (/** @type {string} */ _p, /** @type {any} */ d) =>
+          this._handleNotifyUnregister(d),
+      },
+    );
+
     // Track subscriber presence from rfed.delivery announces (and drain
     // deferred queues for subscribers coming back online).
     this._announceListener = (/** @type {any} */ event) => {
@@ -300,6 +363,9 @@ export class RFedNode {
       this._unsubscribeDest?.announce(),
       this._publishDest?.announce(),
       this._pullDest?.announce(),
+      this._notifyDest?.announce(),
+      this._notifyRegisterDest?.announce(),
+      this._notifyUnregisterDest?.announce(),
     ]);
   }
 
@@ -338,6 +404,90 @@ export class RFedNode {
     if (!parsed) return false;
     const { identity, channelHash } = parsed;
     return this.subscriptions.unsubscribe(identity.identityHash, channelHash);
+  }
+
+  /**
+   * `/rfed/notify/register` (SPEC §9.1) — verifies the signed command, validates
+   * the relay hash, remembers the relay identity (so we can later route a wake
+   * to it), issues a path request, and records the registration.
+   *
+   * @param {any} data
+   * @returns {Promise<boolean>}
+   */
+  async _handleNotifyRegister(data) {
+    const parsed = await this._verifySignedPayload(data);
+    if (!parsed) return false;
+    const subscriberHash = parsed.identity.identityHash;
+    let cmd;
+    try {
+      cmd = parseNotifyCommand(parsed.value, NOTIFY_REGISTER);
+    } catch (err) {
+      log("RFedNode", `notify/register: ${String(err).slice(0, 120)}`, LogLevel.WARNING);
+      return false;
+    }
+    if (!cmd.relayHash) return false;
+    const err = validateRelayHash(cmd.relayHash);
+    if (err) {
+      log("RFedNode", `notify registration rejected: ${err}`, LogLevel.WARNING);
+      return false;
+    }
+    const relayBytes = fromHex(cmd.relayHash);
+    if (!relayBytes || relayBytes.length !== 16) return false;
+    // Request a path to the relay so future wakes can route. The relay's
+    // identity is learned from its own `rfed.notify` announce (transport cache),
+    // NOT from this registration — a registration carries only the relay hash.
+    this.rns.transport?.requestPath?.(relayBytes);
+    this.notifyRegistry.register(
+      subscriberHash,
+      cmd.channelHash,
+      cmd.relayHash,
+    );
+    log(
+      "RFedNode",
+      `notify/register relay=${cmd.relayHash} ← ${toHex(subscriberHash)}`,
+      LogLevel.DEBUG,
+    );
+    return true;
+  }
+
+  /**
+   * `/rfed/notify/unregister` — removes one `(subscriber, channel, relay)`
+   * registration.
+   *
+   * @param {any} data
+   * @returns {Promise<boolean>}
+   */
+  async _handleNotifyUnregister(data) {
+    const parsed = await this._verifySignedPayload(data);
+    if (!parsed) return false;
+    const subscriberHash = parsed.identity.identityHash;
+    let cmd;
+    try {
+      cmd = parseNotifyCommand(parsed.value, NOTIFY_UNREGISTER);
+    } catch {
+      return false;
+    }
+    if (!cmd.relayHash) return false;
+    this.notifyRegistry.unregister(
+      subscriberHash,
+      cmd.channelHash,
+      cmd.relayHash,
+    );
+    return true;
+  }
+
+  /**
+   * `/rfed/notify/clear` — removes ALL relay registrations for the caller
+   * (every channel + LXMF). Served on legacy `rfed.notify` only.
+   *
+   * @param {any} data
+   * @returns {Promise<boolean>}
+   */
+  async _handleNotifyClear(data) {
+    const parsed = await this._verifySignedPayload(data);
+    if (!parsed) return false;
+    this.notifyRegistry.clear(parsed.identity.identityHash);
+    return true;
   }
 
   /**
@@ -552,6 +702,17 @@ export class RFedNode {
           innerBlob,
           policy.deferredQueueLimit,
         );
+        // Notify wake-ups (SPEC §9.4): poke each registered relay for this
+        // (subscriber, channel) so the device can pull while offline.
+        for (const reg of this.notifyRegistry.getForSubscriber(
+          sub.subscriberHash,
+          channelHash,
+        )) {
+          this._dispatchNotify(reg, {
+            receiver: sub.subscriberHash,
+            channel: channelHash,
+          }).catch(() => {});
+        }
       }
     }
   }
@@ -578,6 +739,60 @@ export class RFedNode {
       payload,
     });
     await dest.send(packet);
+  }
+
+  /**
+   * Sends a §9.3 notify wake packet to a registered relay's `rfed.notify`
+   * destination. Fire-and-forget: failures are logged and swallowed (the
+   * subscriber still gets the blob via deferred pull / live fanout later).
+   * The relay identity must be recallable (it was remembered at registration).
+   *
+   * @param {{ relayHash: string }} reg
+   * @param {{ receiver: Uint8Array, sender?: Uint8Array|null, channel?: Uint8Array|null }} parts
+   */
+  async _dispatchNotify(reg, parts) {
+    const relayBytes = fromHex(reg.relayHash);
+    if (!relayBytes || relayBytes.length !== HASH_LENGTH) return;
+    let identity;
+    try {
+      identity = await Destination.recall(relayBytes);
+    } catch {
+      log(
+        "RFedNode",
+        `notify: relay identity not cached for ${reg.relayHash}`,
+        LogLevel.DEBUG,
+      );
+      return;
+    }
+    const dest = await Destination.OUT(
+      NOTIFY_NAME,
+      DestType.SINGLE,
+      identity,
+      this.rns,
+    );
+    const payload = encodeWakePayload(parts);
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      contextFlag: true,
+      contextByte: ContextType.NONE,
+      destinationType: DestType.SINGLE,
+      destinationHash: /** @type {Uint8Array} */ (dest.destinationHash),
+      payload,
+    });
+    try {
+      await dest.send(packet);
+      log(
+        "RFedNode",
+        `notify wake → relay ${reg.relayHash}`,
+        LogLevel.DEBUG,
+      );
+    } catch (err) {
+      log(
+        "RFedNode",
+        `notify send failed for relay ${reg.relayHash}: ${String(err).slice(0, 120)}`,
+        LogLevel.WARNING,
+      );
+    }
   }
 
   // ── presence ──────────────────────────────────────────────────────────────
@@ -680,18 +895,21 @@ export class RFedNode {
   }
 
   /**
-   * Verifies a `[channel_hash, pubkey, sig]` payload: derives the identity from
-   * the pubkey and checks `sig(channel_hash)`. Matches Rust `verify_signed_payload`.
+   * Verifies the shared `[value, pubkey, sig]` signed payload (Rust
+   * `verify_signed_payload`): derives the identity from `pubkey` and checks
+   * `sig(value)`. Returns the verified identity + the signed value bytes, or
+   * `null`. Used by subscribe/unsubscribe (value = channel hash) and notify
+   * register/unregister/clear (value = command msgpack).
    *
    * @param {any} data
-   * @returns {Promise<{ identity: Identity, channelHash: Uint8Array }|null>}
+   * @returns {Promise<{ identity: Identity, value: Uint8Array }|null>}
    * @private
    */
-  async _verifySignedChannel(data) {
+  async _verifySignedPayload(data) {
     if (!Array.isArray(data) || data.length !== 3) return null;
-    const [channelHash, pubkey, sig] = data;
+    const [value, pubkey, sig] = data;
     if (
-      !(channelHash instanceof Uint8Array) ||
+      !(value instanceof Uint8Array) ||
       !(pubkey instanceof Uint8Array) ||
       !(sig instanceof Uint8Array)
     ) {
@@ -699,9 +917,24 @@ export class RFedNode {
     }
     if (pubkey.length !== 64 || sig.length !== 64) return null;
     const identity = await Identity.fromPublicKey(pubkey);
-    const ok = await identity.validate(sig, channelHash);
+    const ok = await identity.validate(sig, value);
     if (!ok) return null;
-    return { identity, channelHash };
+    return { identity, value };
+  }
+
+  /**
+   * Verifies a `[channel_hash, pubkey, sig]` subscribe/unsubscribe payload:
+   * the signed value IS the channel hash.
+   *
+   * @param {any} data
+   * @returns {Promise<{ identity: Identity, channelHash: Uint8Array }|null>}
+   * @private
+   */
+  async _verifySignedChannel(data) {
+    const parsed = await this._verifySignedPayload(data);
+    if (!parsed) return null;
+    if (parsed.value.length !== HASH_LENGTH) return null;
+    return { identity: parsed.identity, channelHash: parsed.value };
   }
 
   /**

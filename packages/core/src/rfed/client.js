@@ -23,6 +23,7 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { Message } from "../lxmf/message.js";
+import { MicroMsgPack } from "../utils/msgpack.js";
 import { toHex } from "../utils/encoding.js";
 import {
   parseFanoutPayload,
@@ -37,6 +38,10 @@ const SUBSCRIBE_PATH = "/rfed/subscribe";
 const UNSUBSCRIBE_PATH = "/rfed/unsubscribe";
 /** `/rfed/pull` request path. */
 const PULL_PATH = "/rfed/pull";
+/** `/rfed/notify/*` registration paths (SPEC §9.1). */
+const NOTIFY_REGISTER_PATH = "/rfed/notify/register";
+const NOTIFY_UNREGISTER_PATH = "/rfed/notify/unregister";
+const NOTIFY_CLEAR_PATH = "/rfed/notify/clear";
 
 /** Modern split rfed destination names (SPEC §2). Share the node identity. */
 const CHANNEL_SUBSCRIBE_NAME = "rfed.channel.subscribe";
@@ -45,6 +50,10 @@ const CHANNEL_PUBLISH_NAME = "rfed.channel.publish";
 const CHANNEL_PULL_NAME = "rfed.channel.pull";
 /** The client's own inbound delivery destination name. */
 const DELIVERY_NAME = "rfed.delivery";
+/** Split notify registration destination names (SPEC §2). */
+const NOTIFY_REGISTER_NAME = "rfed.notify.register";
+const NOTIFY_UNREGISTER_NAME = "rfed.notify.unregister";
+const NOTIFY_LEGACY_NAME = "rfed.notify";
 
 /**
  * Builds the msgpack `[bin(16) channel_hash, bin(64) pubkey, bin(64) sig]`
@@ -59,6 +68,22 @@ async function signedChannelPayload(identity, channelHash) {
   const pubkey = await identity.getPublicKey();
   const sig = await identity.sign(channelHash);
   return [channelHash, pubkey, sig];
+}
+
+/**
+ * Builds the msgpack `[bin(value), bin(64) pubkey, bin(64) sig]` signed payload
+ * for an arbitrary signed value (used by notify register/unregister/clear).
+ * The signature is over `value` (the raw command msgpack bytes). Matches the
+ * Rust `verify_signed_payload` contract.
+ *
+ * @param {Identity} identity
+ * @param {Uint8Array} value
+ * @returns {Promise<[Uint8Array, Uint8Array, Uint8Array]>}
+ */
+async function signedValuePayload(identity, value) {
+  const pubkey = await identity.getPublicKey();
+  const sig = await identity.sign(value);
+  return [value, pubkey, sig];
 }
 
 /**
@@ -306,6 +331,105 @@ export class RFedClient {
       }),
     );
     return { items, morePending };
+  }
+
+  /**
+   * Registers a notify relay for wake-ups (SPEC §9.1). When a blob is deferred
+   * for this subscriber on the given channel (or globally if `channelName` is
+   * omitted), the node sends a §9.3 wake packet to the relay.
+   *
+   * `relayHash` is the 32-char lowercase hex destination hash of the relay's
+   * `rfed.notify` destination.
+   *
+   * @param {Uint8Array} nodeHash
+   * @param {string} relayHash
+   * @param {string} [channelName] - Optional channel scope; omit for LXMF/global.
+   * @returns {Promise<boolean>} `true` if the node accepted the registration.
+   */
+  async registerNotify(nodeHash, relayHash, channelName) {
+    return this._notifyCommand(
+      nodeHash,
+      "register",
+      relayHash,
+      channelName,
+      NOTIFY_REGISTER_PATH,
+      NOTIFY_REGISTER_NAME,
+    );
+  }
+
+  /**
+   * Removes a specific notify relay registration (SPEC §9.1).
+   *
+   * @param {Uint8Array} nodeHash
+   * @param {string} relayHash
+   * @param {string} [channelName]
+   * @returns {Promise<boolean>}
+   */
+  async unregisterNotify(nodeHash, relayHash, channelName) {
+    return this._notifyCommand(
+      nodeHash,
+      "unregister",
+      relayHash,
+      channelName,
+      NOTIFY_UNREGISTER_PATH,
+      NOTIFY_UNREGISTER_NAME,
+    );
+  }
+
+  /**
+   * Removes ALL notify relay registrations for this subscriber (every channel
+   * + LXMF). Served on the legacy `rfed.notify` destination (SPEC §9.1).
+   *
+   * @param {Uint8Array} nodeHash
+   * @returns {Promise<boolean>}
+   */
+  async clearNotify(nodeHash) {
+    const nodeIdentity = await this._nodeIdentity(nodeHash);
+    // Clear carries no relay/channel — an empty signed value.
+    const value = new Uint8Array(0);
+    const payload = await signedValuePayload(this.identity, value);
+    const dest = await Destination.OUT(
+      NOTIFY_LEGACY_NAME,
+      DestType.SINGLE,
+      nodeIdentity,
+      this.rns,
+    );
+    const link = await dest.createLink();
+    await link.identify(this.identity);
+    const response = await link.request(NOTIFY_CLEAR_PATH, payload);
+    return response === true;
+  }
+
+  /**
+   * Shared register/unregister driver: builds the modern
+   * `[op, relay_hex, channel_hash_bin|null]` command, signs it, and sends it.
+   *
+   * @param {Uint8Array} nodeHash
+   * @param {"register"|"unregister"} op
+   * @param {string} relayHash
+   * @param {string|undefined} channelName
+   * @param {string} path
+   * @param {string} destName
+   * @returns {Promise<boolean>}
+   * @private
+   */
+  async _notifyCommand(nodeHash, op, relayHash, channelName, path, destName) {
+    const nodeIdentity = await this._nodeIdentity(nodeHash);
+    const channelHash =
+      channelName !== undefined ? (await this._channel(channelName)).channelHash : null;
+    const command = [op, relayHash, channelHash];
+    const value = MicroMsgPack.encode(command);
+    const payload = await signedValuePayload(this.identity, value);
+    const dest = await Destination.OUT(
+      destName,
+      DestType.SINGLE,
+      nodeIdentity,
+      this.rns,
+    );
+    const link = await dest.createLink();
+    await link.identify(this.identity);
+    const response = await link.request(path, payload);
+    return response === true;
   }
 
   /**

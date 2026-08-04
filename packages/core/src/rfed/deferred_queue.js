@@ -18,7 +18,7 @@
  * concern; this in-memory form satisfies Phase 2.
  */
 
-import { toHex } from "../utils/encoding.js";
+import { fromHex, toHex } from "../utils/encoding.js";
 
 /**
  * @typedef {Object} PendingBlob
@@ -176,5 +176,47 @@ export class DeferredQueue {
       else this._buckets.set(key, kept);
     }
     return count;
+  }
+
+  /**
+   * Exports every pending blob as serializable records (grouped by subscriber).
+   * Used by the `@reticulum/node` FS adapter.
+   *
+   * @returns {Array<{ subscriberHash: Uint8Array, channelHash: Uint8Array, blob: Uint8Array, enqueuedAt: number }>}
+   */
+  exportRecords() {
+    /** @type {any[]} */
+    const out = [];
+    for (const [key, bucket] of this._buckets) {
+      for (const e of bucket) {
+        out.push({
+          subscriberHash: fromHex(key),
+          channelHash: new Uint8Array(e.channelHash),
+          blob: new Uint8Array(e.blob),
+          enqueuedAt: e.enqueuedAt,
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Replaces the queue with the given records (direct population, used on
+   * load). Clears any existing buckets first.
+   *
+   * @param {Array<{ subscriberHash: Uint8Array, channelHash: Uint8Array, blob: Uint8Array, enqueuedAt: number }>} records
+   */
+  importRecords(records) {
+    this._buckets.clear();
+    for (const r of records) {
+      const key = toHex(r.subscriberHash);
+      const bucket = this._buckets.get(key) ?? [];
+      bucket.push({
+        channelHash: new Uint8Array(r.channelHash),
+        blob: new Uint8Array(r.blob),
+        enqueuedAt: r.enqueuedAt,
+      });
+      this._buckets.set(key, bucket);
+    }
   }
 }

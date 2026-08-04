@@ -158,6 +158,53 @@ export class SubscriptionTable {
   }
 
   /**
+   * Exports all subscriptions as serializable records (the subscriber identity
+   * is serialized as its 64-byte public key; the `Identity` object is rebuilt
+   * on import). Used by the `@reticulum/node` FS adapter.
+   *
+   * @returns {Promise<Array<{ subscriberHash: Uint8Array, channelHash: Uint8Array, pubkey: Uint8Array, deliveryHash: Uint8Array, added: number, lastRefreshed: number }>>}
+   */
+  async exportRecords() {
+    /** @type {any[]} */
+    const out = [];
+    for (const e of this._entries) {
+      const pubkey = await e.identity.getPublicKey();
+      out.push({
+        subscriberHash: new Uint8Array(e.subscriberHash),
+        channelHash: new Uint8Array(e.channelHash),
+        pubkey: new Uint8Array(pubkey),
+        deliveryHash: new Uint8Array(e.deliveryHash),
+        added: e.added,
+        lastRefreshed: e.lastRefreshed,
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Replaces the table with the given records (rebuilt identities from their
+   * public keys). Used on load.
+   *
+   * @param {Array<{ subscriberHash: Uint8Array, channelHash: Uint8Array, pubkey: Uint8Array, deliveryHash: Uint8Array, added: number, lastRefreshed: number }>} records
+   */
+  async importRecords(records) {
+    const { Identity } = await import("../core/identity.js");
+    this._entries = [];
+    for (const r of records) {
+      const identity = await Identity.fromPublicKey(r.pubkey);
+      this._entries.push({
+        subscriberHash: new Uint8Array(r.subscriberHash),
+        channelHash: new Uint8Array(r.channelHash),
+        identity,
+        deliveryHash: new Uint8Array(r.deliveryHash),
+        added: r.added,
+        ownerNodeHash: null,
+        lastRefreshed: r.lastRefreshed,
+      });
+    }
+  }
+
+  /**
    * @param {Uint8Array} subscriberHash
    * @param {Uint8Array} channelHash
    * @returns {SubscriptionEntry|undefined}

@@ -230,4 +230,45 @@ export class BlobStore {
       this.delete(m.messageId);
     }
   }
+
+  /**
+   * Exports the full store as serializable records (msgpack-friendly). Used by
+   * the `@reticulum/node` FS adapter to persist blobs across restarts.
+   *
+   * @returns {Array<{ channelHash: Uint8Array, messageId: Uint8Array, blob: Uint8Array, received: number }>}
+   */
+  exportRecords() {
+    return Array.from(this._meta.values(), (m) => ({
+      channelHash: new Uint8Array(m.destinationHash),
+      messageId: new Uint8Array(m.messageId),
+      blob: new Uint8Array(
+        this._blobs.get(toHex(m.messageId)) ?? new Uint8Array(),
+      ),
+      received: m.received,
+    }));
+  }
+
+  /**
+   * Replaces the store contents with the given records (direct population,
+   * bypassing eviction — used on load). Clears any existing data first.
+   *
+   * @param {Array<{ channelHash: Uint8Array, messageId: Uint8Array, blob: Uint8Array, received: number }>} records
+   */
+  importRecords(records) {
+    this._blobs.clear();
+    this._meta.clear();
+    this.usedBytes = 0;
+    for (const r of records) {
+      const key = toHex(r.messageId);
+      const blob = new Uint8Array(r.blob);
+      this._blobs.set(key, blob);
+      this._meta.set(key, {
+        messageId: new Uint8Array(r.messageId),
+        destinationHash: new Uint8Array(r.channelHash),
+        received: r.received,
+        size: blob.length,
+      });
+      this.usedBytes += blob.length;
+    }
+  }
 }

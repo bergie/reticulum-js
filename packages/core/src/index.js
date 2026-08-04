@@ -64,6 +64,12 @@ export { DeferredQueue } from "./rfed/deferred_queue.js";
 export { RFedNode } from "./rfed/node.js";
 export { SubscriptionTable } from "./rfed/subscription.js";
 export {
+  NotifyRegistry,
+  encodeWakePayload,
+  parseNotifyCommand,
+  validateRelayHash,
+} from "./rfed/notify.js";
+export {
   decodeBlobStream,
   encodeBlobStream,
   fullManifest,

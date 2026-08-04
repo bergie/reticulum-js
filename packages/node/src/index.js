@@ -32,3 +32,7 @@ export {
 } from "./interfaces/rnode-serial.js";
 export { TCPClientInterface, TCPServerInterface } from "./interfaces/tcp.js";
 export { FileStorageAdapter } from "./storage/file.js";
+export {
+  loadRFedStores,
+  saveRFedStores,
+} from "./storage/rfed.js";
