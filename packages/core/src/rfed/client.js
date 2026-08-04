@@ -23,8 +23,8 @@ import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { Message } from "../lxmf/message.js";
-import { MicroMsgPack } from "../utils/msgpack.js";
 import { toHex } from "../utils/encoding.js";
+import { MicroMsgPack } from "../utils/msgpack.js";
 import {
   parseFanoutPayload,
   unwrapChannelMessage,
@@ -416,7 +416,9 @@ export class RFedClient {
   async _notifyCommand(nodeHash, op, relayHash, channelName, path, destName) {
     const nodeIdentity = await this._nodeIdentity(nodeHash);
     const channelHash =
-      channelName !== undefined ? (await this._channel(channelName)).channelHash : null;
+      channelName !== undefined
+        ? (await this._channel(channelName)).channelHash
+        : null;
     const command = [op, relayHash, channelHash];
     const value = MicroMsgPack.encode(command);
     const payload = await signedValuePayload(this.identity, value);

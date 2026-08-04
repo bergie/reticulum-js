@@ -35,9 +35,9 @@
 import { parseArgs } from "node:util";
 import {
   Destination,
+  fromHex,
   Identity,
   Reticulum,
-  fromHex,
   toHex,
 } from "@reticulum/core";
 import { RFedNode } from "@reticulum/core/src/rfed/index.js";
@@ -68,7 +68,10 @@ async function main() {
       "stamp-flex": { type: "string", default: "3" },
       interface: { type: "string", default: "shared" },
       "sync-peer": { type: "string", multiple: true, default: [] },
-      "sync-interval": { type: "string", default: String(SYNC_INTERVAL_DEFAULT) },
+      "sync-interval": {
+        type: "string",
+        default: String(SYNC_INTERVAL_DEFAULT),
+      },
       "maintenance-interval": {
         type: "string",
         default: String(MAINTENANCE_INTERVAL_DEFAULT),

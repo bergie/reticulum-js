@@ -43,8 +43,14 @@ describe("rfed sync — §3 blob-stream codec", () => {
     const decoded = decodeBlobStream(encodeBlobStream(records));
     assert.strictEqual(decoded.length, 3);
     for (let i = 0; i < records.length; i++) {
-      assert.strictEqual(toHex(decoded[i].channelHash), toHex(records[i].channelHash));
-      assert.strictEqual(toHex(decoded[i].messageId), toHex(records[i].messageId));
+      assert.strictEqual(
+        toHex(decoded[i].channelHash),
+        toHex(records[i].channelHash),
+      );
+      assert.strictEqual(
+        toHex(decoded[i].messageId),
+        toHex(records[i].messageId),
+      );
       assert.strictEqual(toHex(decoded[i].blob), toHex(records[i].blob));
     }
   });

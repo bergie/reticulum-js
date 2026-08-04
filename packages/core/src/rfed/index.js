@@ -22,28 +22,28 @@ export {
   unwrapChannelMessage,
   wrapChannelMessage,
 } from "./blob.js";
+export { BlobStore } from "./blob_store.js";
 export { channelPath, deliveryHashFor, deriveChannel } from "./channel.js";
 export { RFedClient } from "./client.js";
 export * as RFedConstants from "./constants.js";
-export { BlobStore } from "./blob_store.js";
 export { DeferredQueue } from "./deferred_queue.js";
 export { RFedNode } from "./node.js";
-export { SubscriptionTable } from "./subscription.js";
 export {
-  NotifyRegistry,
   encodeWakePayload,
+  NotifyRegistry,
   parseNotifyCommand,
   validateRelayHash,
 } from "./notify.js";
-export {
-  decodeBlobStream,
-  encodeBlobStream,
-  fullManifest,
-  gapFromPeer,
-} from "./sync.js";
 export {
   channelStampWorkblock,
   generateChannelStamp,
   STAMP_SIZE as RFED_STAMP_SIZE,
   validateChannelStamp,
 } from "./stamp.js";
+export { SubscriptionTable } from "./subscription.js";
+export {
+  decodeBlobStream,
+  encodeBlobStream,
+  fullManifest,
+  gapFromPeer,
+} from "./sync.js";

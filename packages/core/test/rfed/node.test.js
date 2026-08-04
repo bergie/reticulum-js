@@ -25,12 +25,12 @@ import {
 } from "../../src/core/packet.js";
 import { Message } from "../../src/lxmf/message.js";
 import { unwrapChannelMessage } from "../../src/rfed/blob.js";
-import { MicroMsgPack } from "../../src/utils/msgpack.js";
 import { deliveryHashFor, deriveChannel } from "../../src/rfed/channel.js";
 import { RFedClient } from "../../src/rfed/client.js";
 import { RFedNode } from "../../src/rfed/node.js";
 import { SubscriptionTable } from "../../src/rfed/subscription.js";
 import { toHex } from "../../src/utils/encoding.js";
+import { MicroMsgPack } from "../../src/utils/msgpack.js";
 
 /** Polls `fn` every 10 ms until truthy or `timeoutMs` elapses. */
 async function waitFor(fn, timeoutMs = 5000) {
@@ -318,7 +318,10 @@ describe("RFedNode — deferred delivery", () => {
     assert.strictEqual(items.length, 1);
     assert.strictEqual(morePending, false);
 
-    const decoded = await unwrapForChannelName(items[0].blob, "public.deferred");
+    const decoded = await unwrapForChannelName(
+      items[0].blob,
+      "public.deferred",
+    );
     assert.strictEqual(decoded.message.content, "while away");
     assert.strictEqual(decoded.signatureValid, true);
   });
@@ -342,7 +345,10 @@ describe("RFedNode — deferred delivery", () => {
     assert.strictEqual(decoded.message.content, "queued");
     assert.strictEqual(decoded.signatureValid, true);
     // The queue has been drained for this subscriber.
-    assert.strictEqual(node.deferred.hasPending(client.identity.identityHash), false);
+    assert.strictEqual(
+      node.deferred.hasPending(client.identity.identityHash),
+      false,
+    );
   });
 });
 
@@ -422,7 +428,11 @@ describe("RFedNode — unsubscribe", () => {
       new Message({ content: "after" }),
     );
     await new Promise((r) => setTimeout(r, 200));
-    assert.strictEqual(received.length, 1, "no further fanout after unsubscribe");
+    assert.strictEqual(
+      received.length,
+      1,
+      "no further fanout after unsubscribe",
+    );
   });
 });
 
@@ -515,12 +525,22 @@ describe("RFedNode — tiered deferred limits (Phase 3)", () => {
     // Default-tier subscriber: cap 2 → 3rd enqueue evicts the oldest.
     const defSub = rnd(16);
     for (let i = 0; i < 3; i++)
-      node.deferred.enqueue(defSub, chan, new Uint8Array([i]), node.policyFor(defSub).deferredQueueLimit);
+      node.deferred.enqueue(
+        defSub,
+        chan,
+        new Uint8Array([i]),
+        node.policyFor(defSub).deferredQueueLimit,
+      );
     assert.strictEqual(node.deferred.drain(defSub).length, 2);
 
     // VIP subscriber: cap 10 → all 3 survive.
     for (let i = 0; i < 3; i++)
-      node.deferred.enqueue(vipHash, chan, new Uint8Array([i]), node.policyFor(vipHash).deferredQueueLimit);
+      node.deferred.enqueue(
+        vipHash,
+        chan,
+        new Uint8Array([i]),
+        node.policyFor(vipHash).deferredQueueLimit,
+      );
     assert.strictEqual(node.deferred.drain(vipHash).length, 3);
   });
 });
@@ -579,8 +599,14 @@ describe("RFedNode — peer sync (Phase 4)", () => {
       await Destination.OUT("rfed.node", DestType.SINGLE, aRns.identity)
     ).destinationHash;
 
-    const publisher = new RFedClient({ identity: pubRns.identity, rns: pubRns.rns });
-    const subscriber = new RFedClient({ identity: subRns.identity, rns: subRns.rns });
+    const publisher = new RFedClient({
+      identity: pubRns.identity,
+      rns: pubRns.rns,
+    });
+    const subscriber = new RFedClient({
+      identity: subRns.identity,
+      rns: subRns.rns,
+    });
     const subDeliveryHash = await rfedDeliveryHash(subRns.identity);
 
     // Subscriber on B subscribes + listens (online on B).
@@ -655,7 +681,7 @@ describe("RFedNode — peer sync (Phase 4)", () => {
     const innerBlob = rnd(32);
     nodeA.blobStore.store(channel.channelHash, innerBlob);
     await nodeB.subscriptions.subscribe(
-      (await Identity.generate()),
+      await Identity.generate(),
       channel.channelHash,
     );
 
@@ -729,8 +755,14 @@ describe("RFedNode — notify wake-ups (Phase 5)", () => {
       null,
     );
 
-    const subscriber = new RFedClient({ identity: subRns.identity, rns: subRns.rns });
-    const publisher = new RFedClient({ identity: pubRns.identity, rns: pubRns.rns });
+    const subscriber = new RFedClient({
+      identity: subRns.identity,
+      rns: subRns.rns,
+    });
+    const publisher = new RFedClient({
+      identity: pubRns.identity,
+      rns: pubRns.rns,
+    });
 
     // Subscribe but DO NOT listen → offline. Register a notify relay for the
     // channel, scoped to the relay's rfed.notify hash.
@@ -813,7 +845,8 @@ describe("RFedNode — backup failover (Phase 6)", () => {
 
     // Owner identity + the pairs it pushes.
     const owner = await Identity.generate();
-    const subHash = (await Identity.fromPublicKey(owner.publicKey)).identityHash;
+    const subHash = (await Identity.fromPublicKey(owner.publicKey))
+      .identityHash;
     const ch = rnd(16);
     const pairsMsgpack = MicroMsgPack.encode([[subHash, ch]]);
     const pubkey = await owner.getPublicKey();
@@ -914,7 +947,10 @@ describe("RFedNode — backup failover (Phase 6)", () => {
       await Destination.OUT("rfed.node", DestType.SINGLE, backupRns.identity)
     ).destinationHash;
     primary.primaryNode = backupNodeHash;
-    const backup = new RFedNode({ identity: backupRns.identity, rns: backupRns.rns });
+    const backup = new RFedNode({
+      identity: backupRns.identity,
+      rns: backupRns.rns,
+    });
     await primary.start();
     await backup.start();
 
@@ -943,7 +979,9 @@ describe("RFedNode — backup failover (Phase 6)", () => {
     const res = await primary.tickBackupDelivery();
     assert.strictEqual(res.pushed, 1);
     // The backup now holds a backup entry tagged with the primary's node hash.
-    await waitFor(() => backup.subscriptions.backupEntriesForTick().length === 1);
+    await waitFor(
+      () => backup.subscriptions.backupEntriesForTick().length === 1,
+    );
     const held = backup.subscriptions.backupEntriesForTick()[0];
     assert.strictEqual(toHex(held.ownerNodeHash), toHex(primaryNodeHash));
     assert.strictEqual(toHex(held.subscriberHash), toHex(subHash));

@@ -22,21 +22,21 @@
 import { existsSync } from "node:fs";
 import {
   mkdir,
-  readFile,
   readdir,
+  readFile,
   rm,
   stat,
   utimes,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { MsgPack } from "@reticulum/core";
 import {
   BlobStore,
   DeferredQueue,
   NotifyRegistry,
   SubscriptionTable,
 } from "@reticulum/core/src/rfed/index.js";
-import { MsgPack } from "@reticulum/core";
 import { fromHex, toHex } from "@reticulum/core/src/utils/encoding.js";
 
 /**

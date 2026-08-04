@@ -17,20 +17,20 @@
  * in every LXMF module.
  */
 
-export * as LXMFConstants from "./constants.js";
-export { Message as LXMessage } from "./message.js";
-export { MessageStore } from "./message_store.js";
-export { LXMRouter } from "./router.js";
-export { LXMPeer, PeerState } from "./peer.js";
-export { PropagationNode } from "./propagation_node.js";
-export * as LXStamper from "./stamper.js";
 export {
   buildAnnounceAppData,
   buildPropagationNodeAppData,
   parseAnnounceAppData,
   parsePropagationNodeAppData,
 } from "./announce_data.js";
+export * as LXMFConstants from "./constants.js";
+export { Message as LXMessage } from "./message.js";
+export { MessageStore } from "./message_store.js";
+export { LXMPeer, PeerState } from "./peer.js";
 export {
   packPropagationContainer,
   unpackPropagationContainer,
 } from "./propagation.js";
+export { PropagationNode } from "./propagation_node.js";
+export { LXMRouter } from "./router.js";
+export * as LXStamper from "./stamper.js";

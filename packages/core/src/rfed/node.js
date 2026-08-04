@@ -23,20 +23,25 @@
 
 import { Allow, Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
-import {
-  ContextType,
-  DestType,
-  Packet,
-  PacketType,
-} from "../core/packet.js";
-import { MicroMsgPack } from "../utils/msgpack.js";
+import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
 import { concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
+import { MicroMsgPack } from "../utils/msgpack.js";
 import { parseSendPayload } from "./blob.js";
-import { HASH_LENGTH, STAMP_SIZE } from "./constants.js";
-import { validateChannelStamp } from "./stamp.js";
 import { BlobStore } from "./blob_store.js";
+import { HASH_LENGTH, STAMP_SIZE } from "./constants.js";
 import { DeferredQueue } from "./deferred_queue.js";
+import {
+  encodeWakePayload,
+  fromHex,
+  NOTIFY_CLEAR,
+  NOTIFY_REGISTER,
+  NOTIFY_UNREGISTER,
+  NotifyRegistry,
+  parseNotifyCommand,
+  validateRelayHash,
+} from "./notify.js";
+import { validateChannelStamp } from "./stamp.js";
 import { SubscriptionTable } from "./subscription.js";
 import {
   decodeBlobStream,
@@ -44,16 +49,6 @@ import {
   fullManifest,
   gapFromPeer,
 } from "./sync.js";
-import {
-  NOTIFY_CLEAR,
-  NOTIFY_REGISTER,
-  NOTIFY_UNREGISTER,
-  NotifyRegistry,
-  encodeWakePayload,
-  fromHex,
-  parseNotifyCommand,
-  validateRelayHash,
-} from "./notify.js";
 
 /** rfed app namespace (shared by all rfed destinations). */
 const APP_NAME = "rfed";
@@ -270,8 +265,10 @@ export class RFedNode {
     // (blob stream). Both allow any caller (`ALLOW_ALL`) like Rust.
     await this._nodeDest.registerRequestHandler(OFFER_PATH, {
       allow: Allow.ALL,
-      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ _data) =>
-        this._handleOffer(),
+      responseGenerator: async (
+        /** @type {string} */ _p,
+        /** @type {any} */ _data,
+      ) => this._handleOffer(),
     });
     await this._nodeDest.registerRequestHandler(MESSAGE_GET_PATH, {
       allow: Allow.ALL,
@@ -283,22 +280,20 @@ export class RFedNode {
     // `/rfed/backup/push` (SPEC §11) — owner → backup subscription replication.
     await this._nodeDest.registerRequestHandler(BACKUP_PUSH_PATH, {
       allow: Allow.ALL,
-      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ d) =>
-        this._handleBackupPush(d),
+      responseGenerator: async (
+        /** @type {string} */ _p,
+        /** @type {any} */ d,
+      ) => this._handleBackupPush(d),
     });
     this._subscribeDest = await this._bringUpRequestDest(SUBSCRIBE_NAME, {
       path: SUBSCRIBE_PATH,
-      handler: async (
-        /** @type {string} */ _path,
-        /** @type {any} */ data,
-      ) => this._handleSubscribe(data),
+      handler: async (/** @type {string} */ _path, /** @type {any} */ data) =>
+        this._handleSubscribe(data),
     });
     this._unsubscribeDest = await this._bringUpRequestDest(UNSUBSCRIBE_NAME, {
       path: UNSUBSCRIBE_PATH,
-      handler: async (
-        /** @type {string} */ _path,
-        /** @type {any} */ data,
-      ) => this._handleUnsubscribe(data),
+      handler: async (/** @type {string} */ _path, /** @type {any} */ data) =>
+        this._handleUnsubscribe(data),
     });
     this._pullDest = await this._bringUpRequestDest(PULL_NAME, {
       path: PULL_PATH,
@@ -334,24 +329,33 @@ export class RFedNode {
     this._notifyDest = await this._bringUpDest(NOTIFY_NAME);
     await this._notifyDest.registerRequestHandler(NOTIFY_REGISTER_PATH, {
       allow: Allow.ALL,
-      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ d) =>
-        this._handleNotifyRegister(d),
+      responseGenerator: async (
+        /** @type {string} */ _p,
+        /** @type {any} */ d,
+      ) => this._handleNotifyRegister(d),
     });
     await this._notifyDest.registerRequestHandler(NOTIFY_UNREGISTER_PATH, {
       allow: Allow.ALL,
-      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ d) =>
-        this._handleNotifyUnregister(d),
+      responseGenerator: async (
+        /** @type {string} */ _p,
+        /** @type {any} */ d,
+      ) => this._handleNotifyUnregister(d),
     });
     await this._notifyDest.registerRequestHandler(NOTIFY_CLEAR_PATH, {
       allow: Allow.ALL,
-      responseGenerator: async (/** @type {string} */ _p, /** @type {any} */ d) =>
-        this._handleNotifyClear(d),
+      responseGenerator: async (
+        /** @type {string} */ _p,
+        /** @type {any} */ d,
+      ) => this._handleNotifyClear(d),
     });
-    this._notifyRegisterDest = await this._bringUpRequestDest(NOTIFY_REGISTER_NAME, {
-      path: NOTIFY_REGISTER_PATH,
-      handler: async (/** @type {string} */ _p, /** @type {any} */ d) =>
-        this._handleNotifyRegister(d),
-    });
+    this._notifyRegisterDest = await this._bringUpRequestDest(
+      NOTIFY_REGISTER_NAME,
+      {
+        path: NOTIFY_REGISTER_PATH,
+        handler: async (/** @type {string} */ _p, /** @type {any} */ d) =>
+          this._handleNotifyRegister(d),
+      },
+    );
     this._notifyUnregisterDest = await this._bringUpRequestDest(
       NOTIFY_UNREGISTER_NAME,
       {
@@ -376,7 +380,10 @@ export class RFedNode {
   stop() {
     if (!this._started) return;
     if (this._announceListener) {
-      this.rns.transport.removeEventListener("announce", this._announceListener);
+      this.rns.transport.removeEventListener(
+        "announce",
+        this._announceListener,
+      );
       this._announceListener = null;
     }
     this._started = false;
@@ -692,7 +699,11 @@ export class RFedNode {
     try {
       cmd = parseNotifyCommand(parsed.value, NOTIFY_REGISTER);
     } catch (err) {
-      log("RFedNode", `notify/register: ${String(err).slice(0, 120)}`, LogLevel.WARNING);
+      log(
+        "RFedNode",
+        `notify/register: ${String(err).slice(0, 120)}`,
+        LogLevel.WARNING,
+      );
       return false;
     }
     if (!cmd.relayHash) return false;
@@ -843,8 +854,10 @@ export class RFedNode {
       if (!Array.isArray(pair) || pair.length !== 2) continue;
       const [subHash, chHash] = pair;
       if (
-        !(subHash instanceof Uint8Array) || subHash.length !== HASH_LENGTH ||
-        !(chHash instanceof Uint8Array) || chHash.length !== HASH_LENGTH
+        !(subHash instanceof Uint8Array) ||
+        subHash.length !== HASH_LENGTH ||
+        !(chHash instanceof Uint8Array) ||
+        chHash.length !== HASH_LENGTH
       ) {
         continue;
       }
@@ -889,7 +902,11 @@ export class RFedNode {
         minCost,
       );
       if (!ok) {
-        log("RFedNode", "SEND rejected: stamp below required cost", LogLevel.WARNING);
+        log(
+          "RFedNode",
+          "SEND rejected: stamp below required cost",
+          LogLevel.WARNING,
+        );
         return;
       }
     } else {
@@ -1160,11 +1177,7 @@ export class RFedNode {
     });
     try {
       await dest.send(packet);
-      log(
-        "RFedNode",
-        `notify wake → relay ${reg.relayHash}`,
-        LogLevel.DEBUG,
-      );
+      log("RFedNode", `notify wake → relay ${reg.relayHash}`, LogLevel.DEBUG);
     } catch (err) {
       log(
         "RFedNode",

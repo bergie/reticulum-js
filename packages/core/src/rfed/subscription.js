@@ -65,10 +65,7 @@ export class SubscriptionTable {
    * @returns {Promise<SubscriptionEntry>}
    */
   async subscribe(subscriberIdentity, channelHash) {
-    const existing = this._find(
-      subscriberIdentity.identityHash,
-      channelHash,
-    );
+    const existing = this._find(subscriberIdentity.identityHash, channelHash);
     if (existing) return existing;
 
     const { Destination } = await import("../core/destination.js");
@@ -160,7 +157,8 @@ export class SubscriptionTable {
   subscribedChannelHashes() {
     /** @type {Map<string, Uint8Array>} */
     const seen = new Map();
-    for (const e of this._entries) seen.set(toHex(e.channelHash), e.channelHash);
+    for (const e of this._entries)
+      seen.set(toHex(e.channelHash), e.channelHash);
     return Array.from(seen.values());
   }
 

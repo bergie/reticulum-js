@@ -75,15 +75,29 @@ describe("rfed FS persistence — round-trip", () => {
           `${toHex(idA)}.bin`,
         ),
       );
-      for (const f of ["subscriptions.rmp", "deferred_delivery.rmp", "notify_registrations.rmp"]) {
+      for (const f of [
+        "subscriptions.rmp",
+        "deferred_delivery.rmp",
+        "notify_registrations.rmp",
+      ]) {
         assert.ok(readdirSync(dir).includes(f), `missing ${f}`);
       }
 
       // Load into fresh stores and compare.
       const loaded = await loadRFedStores(dir);
       assert.strictEqual(loaded.blobStore.allMessageIds().length, 2);
-      assert.ok(bytesEqual(loaded.blobStore.get(idA) ?? new Uint8Array(), blobStore.get(idA)));
-      assert.ok(bytesEqual(loaded.blobStore.get(idB) ?? new Uint8Array(), blobStore.get(idB)));
+      assert.ok(
+        bytesEqual(
+          loaded.blobStore.get(idA) ?? new Uint8Array(),
+          blobStore.get(idA),
+        ),
+      );
+      assert.ok(
+        bytesEqual(
+          loaded.blobStore.get(idB) ?? new Uint8Array(),
+          blobStore.get(idB),
+        ),
+      );
 
       // Channel attribution survived (metaFor).
       const meta = loaded.blobStore.metaFor(idA);
@@ -130,7 +144,10 @@ describe("rfed FS persistence — round-trip", () => {
         toHex(rebuilt.subscriberHash),
         toHex(id.identityHash),
       );
-      assert.deepStrictEqual(toHex(rebuilt.deliveryHash), toHex(entry.deliveryHash));
+      assert.deepStrictEqual(
+        toHex(rebuilt.deliveryHash),
+        toHex(entry.deliveryHash),
+      );
     } finally {
       cleanup();
     }

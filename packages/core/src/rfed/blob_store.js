@@ -131,9 +131,11 @@ export class BlobStore {
   manifest() {
     return Array.from(
       this._meta.values(),
-      (m) => /** @type {[Uint8Array, Uint8Array]} */ (
-        [new Uint8Array(m.destinationHash), new Uint8Array(m.messageId)]
-      ),
+      (m) =>
+        /** @type {[Uint8Array, Uint8Array]} */ ([
+          new Uint8Array(m.destinationHash),
+          new Uint8Array(m.messageId),
+        ]),
     );
   }
 
@@ -164,7 +166,8 @@ export class BlobStore {
     /** @type {Uint8Array[]} */
     const out = [];
     for (const m of this._meta.values()) {
-      if (toHex(m.destinationHash) === want) out.push(new Uint8Array(m.messageId));
+      if (toHex(m.destinationHash) === want)
+        out.push(new Uint8Array(m.messageId));
     }
     return out;
   }
@@ -224,7 +227,9 @@ export class BlobStore {
    */
   _evictToFit(neededBytes) {
     if (this.usedBytes + neededBytes <= this.storageLimitBytes) return;
-    const ordered = Array.from(this._meta.values()).sort((a, b) => a.received - b.received);
+    const ordered = Array.from(this._meta.values()).sort(
+      (a, b) => a.received - b.received,
+    );
     for (const m of ordered) {
       if (this.usedBytes + neededBytes <= this.storageLimitBytes) break;
       this.delete(m.messageId);

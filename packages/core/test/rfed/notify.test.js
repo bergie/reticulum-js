@@ -8,24 +8,27 @@
  */
 import assert from "node:assert";
 import { describe, test } from "node:test";
-import { MicroMsgPack } from "../../src/utils/msgpack.js";
-import { fromHex, toHex } from "../../src/utils/encoding.js";
 import {
-  NotifyRegistry,
   encodeWakePayload,
-  parseNotifyCommand,
-  validateRelayHash,
   NOTIFY_CLEAR,
   NOTIFY_REGISTER,
   NOTIFY_UNREGISTER,
+  NotifyRegistry,
+  parseNotifyCommand,
+  validateRelayHash,
 } from "../../src/rfed/notify.js";
+import { fromHex, toHex } from "../../src/utils/encoding.js";
+import { MicroMsgPack } from "../../src/utils/msgpack.js";
 
 const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
 const HEX32 = () => toHex(rnd(16));
 
 describe("rfed notify — relay hash validation", () => {
   test("accepts a 32-char lowercase hex hash", () => {
-    assert.strictEqual(validateRelayHash("aabbccdd11223344aabbccdd11223344"), null);
+    assert.strictEqual(
+      validateRelayHash("aabbccdd11223344aabbccdd11223344"),
+      null,
+    );
   });
   test("rejects wrong length", () => {
     assert.ok(validateRelayHash("aabb"));
@@ -107,7 +110,10 @@ describe("rfed notify — command parsing", () => {
   test("op mismatch with the path's default kind throws", () => {
     const relay = HEX32();
     const value = MicroMsgPack.encode(["register", relay, null]);
-    assert.throws(() => parseNotifyCommand(value, NOTIFY_UNREGISTER), /op mismatch/);
+    assert.throws(
+      () => parseNotifyCommand(value, NOTIFY_UNREGISTER),
+      /op mismatch/,
+    );
   });
 });
 

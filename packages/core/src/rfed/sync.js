@@ -93,7 +93,9 @@ export function decodeBlobStream(stream) {
     cursor += 16;
     const len =
       (data[cursor] * 0x1000000 +
-        ((data[cursor + 1] << 16) | (data[cursor + 2] << 8) | data[cursor + 3])) >>>
+        ((data[cursor + 1] << 16) |
+          (data[cursor + 2] << 8) |
+          data[cursor + 3])) >>>
       0;
     cursor += 4;
     if (cursor + len > data.length) break;
@@ -132,9 +134,7 @@ export function fullManifest(blobStore) {
  */
 export function gapFromPeer(peerPairs, blobStore, subscribedChannelHashes) {
   /** @type {Set<string>} */
-  const subscribed = new Set(
-    subscribedChannelHashes.map((h) => toHex(h)),
-  );
+  const subscribed = new Set(subscribedChannelHashes.map((h) => toHex(h)));
   /** @type {Uint8Array[]} */
   const wanted = [];
   const seen = new Set();

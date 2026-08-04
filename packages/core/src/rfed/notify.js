@@ -21,8 +21,8 @@
  * `NotifyRegistry` is per-node and never synced (privacy + exactly-once wake).
  */
 
-import { MicroMsgPack } from "../utils/msgpack.js";
 import { fromHex } from "../utils/encoding.js";
+import { MicroMsgPack } from "../utils/msgpack.js";
 
 /** Valid notify command operations (SPEC §9.1). */
 export const NOTIFY_REGISTER = "register";
@@ -98,8 +98,7 @@ export function parseNotifyCommand(valueBytes, defaultKind) {
     throw new Error("notify DATA payload missing op");
   }
   if (Array.isArray(decoded) && decoded.length >= 2) {
-    const relay =
-      typeof decoded[0] === "string" ? decoded[0] : "";
+    const relay = typeof decoded[0] === "string" ? decoded[0] : "";
     const ch =
       decoded[1] instanceof Uint8Array && decoded[1].length === 16
         ? decoded[1]
@@ -134,7 +133,8 @@ export function encodeWakePayload({ receiver, sender, channel }) {
   /** @type {Record<string, Uint8Array>} */
   const map = { receiver };
   if (sender instanceof Uint8Array && sender.length > 0) map.sender = sender;
-  if (channel instanceof Uint8Array && channel.length > 0) map.channel = channel;
+  if (channel instanceof Uint8Array && channel.length > 0)
+    map.channel = channel;
   return MicroMsgPack.encode(map);
 }
 
