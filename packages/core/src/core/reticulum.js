@@ -32,6 +32,12 @@ export class Reticulum {
    */
   static DEFAULT_PER_HOP_TIMEOUT = 6;
   /**
+   * The default interface gravity applied when an interface doesn't specify one
+   * (`RNS.Interfaces.Interface.Interface.DEFAULT_GRAVITY`). Higher gravity =
+   * preferred for paths when the same announce is heard on multiple interfaces.
+   */
+  static DEFAULT_GRAVITY = 0;
+  /**
    * Minimum IFAC size in bytes (`RNS.Reticulum.IFAC_MIN_SIZE`). Re-exported
    * from {@link import("./ifac.js").IFAC_MIN_SIZE} for upstream API parity.
    */
@@ -47,6 +53,10 @@ export class Reticulum {
    * @param {import("../storage/storage.js").StorageAdapter} [config.storageAdapter] - Interface for persisting identities and caches.
    * @param {Object} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
    * @param {boolean} [config.useImplicitProof] - §6.5.2 PROOF form for opportunistic DATA: `true` (default, upstream) emits the 64-byte implicit body; `false` emits the 96-byte explicit body.
+   * @param {number} [config.defaultGravity] - Default interface gravity applied
+   *   to any interface that doesn't specify one (Python `default_gravity`).
+   *   Higher gravity = preferred for paths. Defaults to
+   *   {@link Reticulum.DEFAULT_GRAVITY} (0).
    * @param {boolean} [config.enableDiscovery] - When true, start an
    *   {@link InterfaceDiscovery} listener on the transport `"announce"` event
    *   so a leaf can discover connectable transport-node interfaces on the
@@ -74,6 +84,10 @@ export class Reticulum {
     // 64-byte implicit PROOF form. Set `useImplicitProof: false` to emit the
     // 96-byte explicit form (packet_hash || signature).
     this.useImplicitProof = config.useImplicitProof ?? true;
+
+    // §Interface gravity: the default weight applied to any interface that
+    // doesn't specify its own (Python `default_gravity` / `DEFAULT_GRAVITY`).
+    this.defaultGravity = config.defaultGravity ?? Reticulum.DEFAULT_GRAVITY;
 
     // The internal router that handles Interface failover, KISS framing, and packet delivery
     this.transport = new TransportCore();
@@ -127,6 +141,11 @@ export class Reticulum {
    * @param {boolean} isDefault - If true, unroutable packets fallback to this interface
    */
   addInterface(rnsInterface, isDefault = false) {
+    // Apply the default gravity to interfaces that didn't specify one (Python
+    // `Reticulum._add_interface` applies `_default_gravity()` at setup).
+    if (rnsInterface.gravity == null) {
+      rnsInterface.gravity = this.defaultGravity;
+    }
     this.transport.addInterface(rnsInterface, isDefault);
     log("Reticulum", `[+] Interface attached: ${rnsInterface.name}`);
   }

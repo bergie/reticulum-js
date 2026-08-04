@@ -370,4 +370,152 @@ describe("RoutingTable — path-health state", () => {
     assert.strictEqual(table.hasRoute(hash), false);
     assert.strictEqual(table.expireRoute(hash), false); // already gone
   });
+
+  test("setHops rewrites a known path's hop count (link rebalance)", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 3,
+      viaInterface: iface,
+      randomBlob: blobAt(1000),
+    });
+
+    assert.strictEqual(table.setHops(hash, 5), true);
+    assert.strictEqual(table.getRoute(hash).hops, 5);
+    // Next hop / interface are left untouched.
+    assert.strictEqual(table.setHops(dest(), 1), false); // unknown destination
+  });
+});
+
+describe("RoutingTable — interface gravity", () => {
+  /** @param {number} g @param {string} name */
+  const gface = (g, name) =>
+    /** @type {any} */ (Object.assign(new EventTarget(), { name, gravity: g }));
+
+  test("a same-emission announce on a higher-gravity interface replaces the path", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    const blob = blobAt(1000);
+    const radio = gface(1, "radio");
+    const wired = gface(5, "wired");
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: radio,
+      randomBlob: blob,
+    });
+
+    const wiredNext = crypto.getRandomValues(new Uint8Array(16));
+    const ok = table.addOrUpdateRoute(hash, {
+      nextHop: wiredNext,
+      hops: 2,
+      viaInterface: wired,
+      randomBlob: blob, // same emission (replay) on a higher-gravity interface
+    });
+
+    assert.strictEqual(ok, true);
+    assert.strictEqual(table.getRoute(hash).interface, wired);
+    assert.ok(bytesEqual(table.getRoute(hash).nextHop, wiredNext));
+  });
+
+  test("equal or lower gravity does not replace a same-emission path", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    const blob = blobAt(1000);
+    const high = gface(5, "high");
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: high,
+      randomBlob: blob,
+    });
+    const origNext = table.getRoute(hash).nextHop;
+
+    // Equal gravity → no replace.
+    assert.strictEqual(
+      table.addOrUpdateRoute(hash, {
+        nextHop: crypto.getRandomValues(new Uint8Array(16)),
+        hops: 2,
+        viaInterface: gface(5, "eq"),
+        randomBlob: blob,
+      }),
+      false,
+    );
+    // Lower gravity → no replace.
+    assert.strictEqual(
+      table.addOrUpdateRoute(hash, {
+        nextHop: crypto.getRandomValues(new Uint8Array(16)),
+        hops: 2,
+        viaInterface: gface(1, "low"),
+        randomBlob: blob,
+      }),
+      false,
+    );
+    assert.ok(bytesEqual(table.getRoute(hash).nextHop, origNext));
+  });
+
+  test("null gravity (the default) never triggers a gravity replacement", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    const blob = blobAt(1000);
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: gface(null, "a"),
+      randomBlob: blob,
+    });
+    assert.strictEqual(
+      table.addOrUpdateRoute(hash, {
+        nextHop: crypto.getRandomValues(new Uint8Array(16)),
+        hops: 2,
+        viaInterface: gface(5, "b"), // even a higher number can't win: other side is null
+        randomBlob: blob,
+      }),
+      false,
+    );
+  });
+
+  test("a newer emission always wins, regardless of gravity", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    const high = gface(9, "high");
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: high,
+      randomBlob: blobAt(1000),
+    });
+    // A fresher announce on a *lower*-gravity interface still replaces.
+    const lowNext = crypto.getRandomValues(new Uint8Array(16));
+    const ok = table.addOrUpdateRoute(hash, {
+      nextHop: lowNext,
+      hops: 2,
+      viaInterface: gface(1, "low"),
+      randomBlob: blobAt(5000),
+    });
+    assert.strictEqual(ok, true);
+    assert.ok(bytesEqual(table.getRoute(hash).nextHop, lowNext));
+  });
+
+  test("a gravity replacement preserves the existing liveness state", () => {
+    const table = new RoutingTable();
+    const hash = dest();
+    const blob = blobAt(1000);
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: gface(1, "radio"),
+      randomBlob: blob,
+    });
+    table.markState(hash, PathState.RESPONSIVE);
+
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: gface(5, "wired"),
+      randomBlob: blob,
+    });
+    assert.strictEqual(table.getState(hash), PathState.RESPONSIVE);
+  });
 });

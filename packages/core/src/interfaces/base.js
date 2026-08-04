@@ -27,6 +27,10 @@ import { LogLevel, log } from "../utils/log.js";
  * @property {string} name - Human-readable interface name.
  * @property {boolean} online - Whether the interface is currently connected.
  * @property {number} bitrate - Nominal physical bitrate in bits/s.
+ * @property {number|null} gravity - Per-interface path preference weight
+ *   (`Interface.gravity`); higher = preferred when the same announce is heard
+ *   on multiple interfaces. `null` until `Reticulum.addInterface` applies the
+ *   default.
  * @property {number} rxb - Total bytes received (post-framing RNS packet
  *   bytes), mirroring the Python reference `self.rxb`. Apps derive a transfer
  *   rate by sampling this over time.
@@ -169,6 +173,15 @@ export class Interface extends EventTarget {
             "value (Python config key: passphrase / pass_phrase; " +
             "ifac_netkey).",
         },
+        gravity: {
+          type: "integer",
+          default: 0,
+          description:
+            "Per-interface path preference weight (`Interface.gravity`). " +
+            "When the same announce is heard on multiple interfaces, the " +
+            "path table prefers the higher-gravity one. Higher = preferred " +
+            "(Python config key: gravity).",
+        },
       },
       required: [],
     };
@@ -241,6 +254,17 @@ export class Interface extends EventTarget {
    * @type {number}
    */
   created = Date.now();
+
+  /**
+   * Per-interface path preference weight (`Interface.gravity` in the Python
+   * reference, `DEFAULT_GRAVITY = 0`). When the same announce reaches this
+   * node over multiple interfaces, the path table prefers the entry learned
+   * via the higher-gravity interface (e.g. a wired backbone over a slow radio
+   * link). `null` means "no preference" — {@link import("../core/reticulum.js").Reticulum}
+   * substitutes its `defaultGravity` at `addInterface` time.
+   * @type {number|null}
+   */
+  gravity = null;
 
   // ------------------------------------------------------------------
   // IFAC (Interface Authentication Code) — § Transport.transmit/inbound
@@ -532,6 +556,7 @@ export class Interface extends EventTarget {
       name: this.name,
       online: this.online,
       bitrate: this.bitrate,
+      gravity: this.gravity,
       rxb: this.rxb,
       txb: this.txb,
       created: this.created,

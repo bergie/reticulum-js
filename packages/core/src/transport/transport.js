@@ -891,6 +891,19 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Rewrites the hop count of a known path, used by link path-rebalancing at
+   * the terminus (`Transport.py` ~l.2276-2310:
+   * `path_entry[IDX_PT_HOPS] = packet.hops`). Leaves the next hop, interface
+   * and liveness state untouched.
+   * @param {Uint8Array} destinationHash
+   * @param {number} hops
+   * @returns {boolean}
+   */
+  setPathHops(destinationHash, hops) {
+    return this.routingTable.setHops(destinationHash, hops);
+  }
+
+  /**
    * Returns true when an inbound non-announce packet is a duplicate we've
    * already seen (Transport.packet_filter / packet_hashlist, two-set dedup
    * ring). Bypasses contexts that legitimately recur or are dedup'd elsewhere

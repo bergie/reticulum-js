@@ -138,6 +138,12 @@ export class Link extends EventTarget {
    * timeout parity matters.
    */
   static TRAFFIC_TIMEOUT_FACTOR = 6;
+  /**
+   * Whether the link terminus corrects its path-table hop estimate when a
+   * link handshake's packets traverse a different hop count than expected
+   * (`RNS.Transport.ALLOW_LINK_PATH_REBALANCE`). Default on, matching upstream.
+   */
+  static ALLOW_LINK_PATH_REBALANCE = true;
 
   /**
    * Response-side grace term for the default REQUEST timeout
@@ -274,6 +280,16 @@ export class Link extends EventTarget {
     this._peerEd25519Key = null;
     /** Outbound CTX_NONE DATA packet hashes (hex → bytes) awaiting a link PROOF (§6.5). */
     this._pendingLinkProofs = new Map();
+    /**
+     * Hop count the link was initiated expecting (`Link.expected_hops`). Set
+     * from `hopsTo(destination)` on the initiator and from the LINKREQUEST hop
+     * count on the responder. `null` until then. The terminus rebalance
+     * corrects both this and the path table if the real hop count differs.
+     * @type {number|null}
+     */
+    this.expectedHops = null;
+    /** Epoch ms of the last path-rebalance, or `null` if none (`Link.rebalanced`). */
+    this.rebalanced = null;
   }
 
   /**
@@ -511,6 +527,13 @@ export class Link extends EventTarget {
     });
     transport.addLink(linkId, link);
     link.requestTimeMs = Date.now();
+    // §Link.expected_hops: the initiator expects the path length currently in
+    // the routing table (null if no path is known yet, or the transport doesn't
+    // expose hop queries — e.g. a test mock).
+    link.expectedHops =
+      destination.destinationHash && typeof transport.hopsTo === "function"
+        ? transport.hopsTo(destination.destinationHash)
+        : null;
     link.status = LinkStatus.HANDSHAKE;
     await link._sendRaw(packet);
     return link;
@@ -569,6 +592,9 @@ export class Link extends EventTarget {
     });
     await link._deriveKeys(initiatorX25519Pub);
     link.requestTimeMs = Date.now();
+    // §Link.expected_hops: the responder records the hop count the LINKREQUEST
+    // arrived with (`Link.py:525`).
+    link.expectedHops = requestPacket.hops;
     link.status = LinkStatus.HANDSHAKE;
     transport.addLink(linkId, link);
 
@@ -867,6 +893,25 @@ export class Link extends EventTarget {
     );
     if (!valid) {
       throw new Error("LRPROOF signature verification failed.");
+    }
+
+    // §Link path-rebalancing at the terminus (Transport.py ~l.2276-2310): if
+    // the LRPROOF traversed a different hop count than the link expected, the
+    // real path has diverged from the routing-table estimate. Correct the
+    // estimate so future timeout/route math (`hopsTo`, `establishmentTimeout`)
+    // reflects reality. The signature is already verified above, so (unlike
+    // upstream's Transport-side check) no re-validation is needed here.
+    if (
+      Link.ALLOW_LINK_PATH_REBALANCE &&
+      this._status !== LinkStatus.ACTIVE &&
+      packet.hops !== this.expectedHops
+    ) {
+      this.rebalanced = Date.now();
+      this.expectedHops = packet.hops;
+      const destHash = /** @type {Uint8Array | undefined} */ (
+        this.destination?.destinationHash
+      );
+      if (destHash) this.transport?.setPathHops?.(destHash, packet.hops);
     }
 
     this.peerX25519Pub = responderX25519Pub;

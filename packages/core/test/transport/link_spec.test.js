@@ -8,7 +8,11 @@
  */
 import { strict as assert } from "node:assert";
 import test from "node:test";
-import { Destination, Direction } from "../../src/core/destination.js";
+import {
+  createAnnounceRandomHash,
+  Destination,
+  Direction,
+} from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import {
   ContextType,
@@ -23,7 +27,8 @@ import {
   LinkStatus,
   linkIdFromLrPacket,
 } from "../../src/transport/link.js";
-import { toHex } from "../../src/utils/encoding.js";
+import { RoutingTable } from "../../src/transport/router.js";
+import { bytesEqual, toHex } from "../../src/utils/encoding.js";
 import { MicroMsgPack } from "../../src/utils/msgpack.js";
 
 /**
@@ -256,6 +261,113 @@ test("full handshake: initiate → accept → LRPROOF → LRRTT → both ACTIVE"
     Array.from(await responderLink.token.decrypt(ct)),
     Array.from(secret),
     "both sides must derive identical session keys",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// §Transport path-rebalancing at the link terminus (work doc #30)
+// ---------------------------------------------------------------------------
+
+test("initiate consults transport.hopsTo; the responder records the LINKREQUEST hops", async () => {
+  const responderIdentity = await Identity.generate();
+  const transportI = new MockTransport();
+  const transportR = new MockTransport();
+  transportI.peer = transportR;
+  transportR.peer = transportI;
+  // Initiator transport advertises a 4-hop path so expectedHops is seeded.
+  /** @type {Uint8Array[]} */
+  const hopsToCalls = [];
+  transportI.hopsTo = (hash) => {
+    hopsToCalls.push(hash);
+    return 4;
+  };
+
+  const responderDest = await Destination.create(
+    "responder",
+    Direction.IN,
+    DestType.SINGLE,
+    responderIdentity,
+    /** @type {any} */ ({ transport: transportR }),
+  );
+  transportR.addDestination(responderDest.destinationHash, responderDest);
+  const initiatorDest = await Destination.create(
+    "responder",
+    Direction.OUT,
+    DestType.SINGLE,
+    responderIdentity,
+    /** @type {any} */ ({ transport: transportI }),
+  );
+
+  const initiator = await Link.initiate(initiatorDest, transportI);
+  await awaitActive(initiator, () => [...transportR.links.values()][0]);
+  const responder = [...transportR.links.values()][0];
+
+  // §Link.expected_hops seeding: the initiator must query hopsTo for the
+  // responder's path. (The mock then synchronously completes the handshake, so
+  // expectedHops is later rebalanced — see the next test.)
+  assert.strictEqual(hopsToCalls.length, 1);
+  assert.ok(
+    bytesEqual(hopsToCalls[0], responderDest.destinationHash),
+    "hopsTo must be queried for the responder hash",
+  );
+  // Responder records the hop count the LINKREQUEST arrived with (0 in this mock).
+  assert.strictEqual(responder.expectedHops, 0);
+});
+
+test("an LRPROOF with a different hop count triggers a terminus rebalance", async () => {
+  const responderIdentity = await Identity.generate();
+  const transportI = new MockTransport();
+  const transportR = new MockTransport();
+  transportI.peer = transportR;
+  transportR.peer = transportI;
+  // Seed a stale 4-hop estimate and a real routing table + setPathHops hook.
+  transportI.hopsTo = () => 4;
+  transportI.routingTable = new RoutingTable();
+  /** @type {{hash: Uint8Array, hops: number}[]} */
+  const setPathHopsCalls = [];
+  transportI.setPathHops = (hash, hops) => {
+    setPathHopsCalls.push({ hash, hops });
+    return transportI.routingTable.setHops(hash, hops);
+  };
+
+  const responderDest = await Destination.create(
+    "responder",
+    Direction.IN,
+    DestType.SINGLE,
+    responderIdentity,
+    /** @type {any} */ ({ transport: transportR }),
+  );
+  transportR.addDestination(responderDest.destinationHash, responderDest);
+  const initiatorDest = await Destination.create(
+    "responder",
+    Direction.OUT,
+    DestType.SINGLE,
+    responderIdentity,
+    /** @type {any} */ ({ transport: transportI }),
+  );
+  // A path-table entry the rebalance should correct.
+  transportI.routingTable.addOrUpdateRoute(responderDest.destinationHash, {
+    nextHop: crypto.getRandomValues(new Uint8Array(16)),
+    hops: 4,
+    viaInterface: null,
+    randomBlob: createAnnounceRandomHash(
+      crypto.getRandomValues(new Uint8Array(16)),
+      1000,
+    ),
+  });
+
+  const initiator = await Link.initiate(initiatorDest, transportI);
+  await awaitActive(initiator, () => [...transportR.links.values()][0]);
+
+  assert.ok(initiator.rebalanced, "rebalanced timestamp must be set");
+  // The LRPROOF arrived with hops 0 (mock), so the estimate is corrected to 0.
+  assert.strictEqual(initiator.expectedHops, 0);
+  assert.strictEqual(setPathHopsCalls.length, 1);
+  assert.strictEqual(setPathHopsCalls[0].hops, 0);
+  assert.strictEqual(
+    transportI.routingTable.getRoute(responderDest.destinationHash).hops,
+    0,
+    "path table hop count must be rebalanced to the discovered value",
   );
 });
 

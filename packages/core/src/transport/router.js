@@ -129,17 +129,35 @@ export class RoutingTable {
     );
 
     let shouldAdd = false;
-    /** Set when acceptance is via the unresponsive-replay gate (state preserved). */
-    let viaUnresponsiveGate = false;
+    /** Set when acceptance keeps the existing liveness state (unresponsive-gate / gravity switch). */
+    let preserveState = false;
     if (!existing) {
       shouldAdd = true;
     } else {
       const timebase = timebaseFromBlobs(existing.randomBlobs);
       if (entry.hops <= existing.hops) {
-        // Shorter-or-equal path: refresh only on a fresher emission. A replayed
-        // blob can never be fresher (same emission ⇒ emitted === timebase), so
-        // this also enforces anti-replay for this branch.
-        shouldAdd = emitted > timebase;
+        if (emitted > timebase) {
+          // Shorter-or-equal path with a fresher emission. A replayed blob can
+          // never be fresher (same emission ⇒ emitted === timebase), so this
+          // also enforces anti-replay for this branch.
+          shouldAdd = true;
+        } else if (emitted === timebase) {
+          // §gravity tie-break (Transport.py ~l.1836-1844): the *same* announce
+          // heard on a higher-gravity interface replaces the path so traffic
+          // egresses via the preferred interface. With default gravity
+          // (null/0) everywhere this is a no-op. Python doesn't call
+          // mark_path_unknown_state here, so the liveness state is preserved.
+          const currentGravity = existing.interface?.gravity ?? null;
+          const announceGravity = entry.viaInterface?.gravity ?? null;
+          if (
+            currentGravity !== null &&
+            announceGravity !== null &&
+            announceGravity > currentGravity
+          ) {
+            shouldAdd = true;
+            preserveState = true;
+          }
+        }
       } else {
         // Longer path: override only an expired or more-recently-emitted path.
         const now = Date.now();
@@ -153,11 +171,11 @@ export class RoutingTable {
         ) {
           // §7 path_is_unresponsive gate: the same announce heard again, but
           // the stored path was marked unresponsive — accept it (likely via a
-          // different next hop / interface) so we try an alternative instead of
-          // trusting a known-dead path. Python does not call
+          // a different next hop / interface) so we try an alternative instead
+          // of trusting a known-dead path. Python does not call
           // mark_path_unknown_state here, so the state is preserved.
           shouldAdd = true;
-          viaUnresponsiveGate = true;
+          preserveState = true;
         }
       }
     }
@@ -165,18 +183,18 @@ export class RoutingTable {
     if (!shouldAdd) return false;
 
     const randomBlobs = existing ? existing.randomBlobs.slice() : [];
-    // Don't re-record a replayed blob (the unresponsive-gate case); it's
-    // already there.
+    // Don't re-record a replayed blob (the unresponsive-gate / gravity-same-
+    // announce cases); it's already there.
     if (randomBlob && !isReplay) {
       randomBlobs.push(randomBlob.slice());
       while (randomBlobs.length > MAX_RANDOM_BLOBS) randomBlobs.shift();
     }
 
     // A path replaced by a fresh announce is "unknown" until proven again
-    // (Transport.mark_path_unknown_state). The unresponsive-gate exception
-    // keeps the existing state, matching Python.
+    // (Transport.mark_path_unknown_state). The unresponsive-gate and
+    // gravity-switch exceptions keep the existing state, matching Python.
     const state =
-      existing && viaUnresponsiveGate ? existing.state : PathState.UNKNOWN;
+      existing && preserveState ? existing.state : PathState.UNKNOWN;
 
     this.routes.set(destKey, {
       interface: entry.viaInterface,
@@ -231,6 +249,22 @@ export class RoutingTable {
    */
   expireRoute(destinationHash) {
     return this.routes.delete(toHex(destinationHash));
+  }
+
+  /**
+   * Rewrites the hop count of a known path (`Transport.py` link path-rebalance
+   * at the terminus: `path_entry[IDX_PT_HOPS] = packet.hops`). Leaves the
+   * next hop / interface / state untouched — only corrects the distance
+   * estimate after a link handshake reveals the real path length.
+   * @param {Uint8Array} destinationHash
+   * @param {number} hops
+   * @returns {boolean} `true` if a route was updated.
+   */
+  setHops(destinationHash, hops) {
+    const route = this.routes.get(toHex(destinationHash));
+    if (!route) return false;
+    route.hops = hops;
+    return true;
   }
 
   /**

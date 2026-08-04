@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 ### Added
+- **Interface gravity & link path-rebalancing** (work doc #30):
+  - **Interface gravity** (`Interface.gravity`, Python `Interface.gravity` /
+    `RNS.Transport` gravity tie-break): a per-interface path-preference weight.
+    When the same announce emission is heard on multiple interfaces, a
+    higher-gravity interface now replaces a same-emission path (`addOrUpdateRoute`,
+    Transport.py ~l.1836-1844) — without disturbing newer emissions or the
+    liveness state. The `Interface` base gained a `gravity` field (default
+    `null`), `gravity` in the config schema and `getStats()`, and `Reticulum`
+    gained `static DEFAULT_GRAVITY` (0) plus a `default_gravity` config option
+    applied to interfaces that don't specify one.
+  - **Link path-rebalancing at the terminus** (`Link.expected_hops` /
+    `rebalanced`, `RNS.Transport.ALLOW_LINK_PATH_REBALANCE`): when a link
+    handshake's packets traverse a different hop count than the routing table
+    predicted, the terminus now corrects both its own estimate and the path
+    table's hop count (Transport.py ~l.2276-2310). `Link` gained
+    `expectedHops`/`rebalanced` fields, `static ALLOW_LINK_PATH_REBALANCE`
+    (default on), and `RoutingTable`/`TransportCore` gained `setHops`/
+    `setPathHops`. New code paths are guarded so transports without these APIs
+    (e.g. test mocks) are unaffected.
 - **Path-health state & bitrate-adaptive timeouts** (work doc #29): path
   liveness tracking plus proof/link timeouts that scale with the next-hop
   interface bitrate, mirroring `RNS.Transport` (`first_hop_timeout`,
