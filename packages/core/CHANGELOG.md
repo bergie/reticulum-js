@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- **JSR publish of `@reticulum/node` blocked by unresolved deep imports**:
+  the JSR `exports` map was missing the subpaths that `@reticulum/node`
+  deep-imports for LXMF and rfed persistence (`src/lxmf/index.js`,
+  `src/lxmf/message_store.js`, `src/rfed/index.js`). JSR enforces `exports`
+  strictly (unlike npm, where a bare `main`/`types` allows any deep import),
+  so `deno publish` failed building the `@reticulum/node` module graph with
+  `Module not found "…/@reticulum/core/src/lxmf/message_store.js"`. Added
+  those three subpaths to the JSR `exports` map.
 
 ## [0.6.0] - 2026-08-05
 ### Added
