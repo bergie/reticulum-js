@@ -266,7 +266,7 @@ export function runRelease({
   // 2. checks
   if (!dryRun && !skipChecks) {
     console.log("Checks:");
-    for (const c of ["npm run types", "npm test"]) {
+    for (const c of ["npm run types", "npm run lint", "npm test"]) {
       console.log(`  $ ${c}`);
       run(c, { cwd: root, stdio: "inherit" });
     }

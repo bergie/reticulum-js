@@ -1358,7 +1358,7 @@ export class LXMRouter extends EventTarget {
     }
     return new Promise((resolve) => {
       let settled = false;
-      const finish = (result) => {
+      const finish = (result: boolean) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
