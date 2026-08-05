@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-08-05
 ### Added
 - **IFAC (Interface Authentication Code) wiring** (work doc #28): the
   node-side interfaces gain `networkName`/`passphrase`/`ifacSize` options and

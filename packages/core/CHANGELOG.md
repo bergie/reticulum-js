@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-08-05
 ### Added
 - **Interface gravity & link path-rebalancing** (work doc #30):
   - **Interface gravity** (`Interface.gravity`, Python `Interface.gravity` /

@@ -120,6 +120,329 @@ POSTs, identity key files on disk). No behaviour change for well-formed traffic.
   the same debounced "communicated-with" signal as the transport layer's
   routable-send path.
 
+## [0.6.0] - 2026-08-05
+### Added
+- **core**: **Interface gravity & link path-rebalancing** (work doc #30):
+  - **Interface gravity** (`Interface.gravity`, Python `Interface.gravity` /
+    `RNS.Transport` gravity tie-break): a per-interface path-preference weight.
+    When the same announce emission is heard on multiple interfaces, a
+    higher-gravity interface now replaces a same-emission path (`addOrUpdateRoute`,
+    Transport.py ~l.1836-1844) — without disturbing newer emissions or the
+    liveness state. The `Interface` base gained a `gravity` field (default
+    `null`), `gravity` in the config schema and `getStats()`, and `Reticulum`
+    gained `static DEFAULT_GRAVITY` (0) plus a `default_gravity` config option
+    applied to interfaces that don't specify one.
+  - **Link path-rebalancing at the terminus** (`Link.expected_hops` /
+    `rebalanced`, `RNS.Transport.ALLOW_LINK_PATH_REBALANCE`): when a link
+    handshake's packets traverse a different hop count than the routing table
+    predicted, the terminus now corrects both its own estimate and the path
+    table's hop count (Transport.py ~l.2276-2310). `Link` gained
+    `expectedHops`/`rebalanced` fields, `static ALLOW_LINK_PATH_REBALANCE`
+    (default on), and `RoutingTable`/`TransportCore` gained `setHops`/
+    `setPathHops`. New code paths are guarded so transports without these APIs
+    (e.g. test mocks) are unaffected.
+- **core**: **Path-health state & bitrate-adaptive timeouts** (work doc #29): path
+  liveness tracking plus proof/link timeouts that scale with the next-hop
+  interface bitrate, mirroring `RNS.Transport` (`first_hop_timeout`,
+  `extra_link_proof_timeout`, `mark_path_*`, `path_is_unresponsive`,
+  `expire_path`). Leaf-relevant only — relay-side transitions arrive with the
+  transport-node effort (#23).
+  - `RoutingTable` gained a per-route `state` (`PathState.UNKNOWN` /
+    `UNRESPONSIVE` / `RESPONSIVE`, matching `Transport.STATE_*`),
+    `markState`/`getState`/`pathIsUnresponsive`/`expireRoute`, and the
+    `path_is_unresponsive` replay gate in `addOrUpdateRoute` (Transport.py
+    ~l.1887): a repeated announce is accepted on a dead path so an
+    alternative next hop can be tried. A path replaced by a fresh announce
+    resets to `UNKNOWN` (`mark_path_unknown_state`).
+  - `TransportCore` gained `firstHopTimeout(destHash)` =
+    `MTU*8/bitrate + DEFAULT_PER_HOP_TIMEOUT`, `establishmentTimeout(destHash)`
+    = `firstHopTimeout + PER_HOP*max(1,hops)`, `extraLinkProofTimeout(iface)`,
+    and `markPathResponsive`/`markPathUnresponsive`/`markPathUnknown`/
+    `pathIsUnresponsive`/`expirePath` wrappers. `Reticulum.MTU` (500),
+    `Reticulum.DEFAULT_PER_HOP_TIMEOUT` (6) and
+    `Reticulum.getFirstHopTimeout(destHash)` added for upstream API parity.
+  - `PacketReceipt` gained a proof-wait `startTimeout(ms)`/`clearTimeout()`;
+    `sendPacket` now arms it with `firstHopTimeout` and wires the `failed`
+    callback to `markPathUnresponsive`, while a validated PROOF flips the path
+    `RESPONSIVE`.
+  - `Link`: a pending link that closes without ever activating now expires the
+    path and re-requests it (Transport.py ~l.538-541 leaf branch); `whenActive()`
+    defaults to the bitrate-adaptive `establishmentTimeout` instead of a fixed
+    15 s. Both are guarded so lightweight/mock transports without the
+    path-health API are unaffected.
+- **core**: **IFAC (Interface Authentication Code) support** (work doc #28):
+  per-interface packet authentication/sealing, cross-checked byte-for-byte
+  against the Python reference (`RNS 1.4.2`). Both endpoints sharing a
+  `network_name` / `passphrase` get every packet signed, IFAC-flagged and
+  XOR-masked; mismatched keys silently drop.
+  - New `core/ifac.js`: `IFAC_MIN_SIZE`/`IFAC_SALT` constants,
+    `deriveIfac(netname, netkey)` (reproduces `RNS.Reticulum` interface setup:
+    double `full_hash` → HKDF over `IFAC_SALT` → `Identity` + signature), and
+    `seal`/`open`/`hasIfacFlag` operating on raw wire bytes
+    (`RNS.Transport.transmit`/`inbound`).
+  - `Interface` (base) gained the `ifacNetname`/`ifacNetkey`/`ifacSize`/
+    `ifacIdentity`/`ifacKey`/`ifacSignature` fields, an `ifacEnabled` getter,
+    lazy memoised `_ensureIfacMaterial()`, and `_sealRaw(raw)`/`_openRaw(raw)`
+    helpers that enforce the flag-presence rules (an IFAC interface drops a
+    flag-clear packet; a plain interface drops a flag-set packet). The config
+    schema declares `networkName`/`passphrase`.
+  - IFAC is wired into the byte pipeline of every interface (Option A: seal at
+    the serialize chokepoint, open at the deserialize chokepoint): the KISS/HDLC
+    framers take optional async `sealRaw`/`openRaw` hooks, and the direct
+    interfaces (WebSocket, RNode, WebRTC, HTTP, UDP, AutoInterface peer) call
+    the helpers inline. Spawned sub-interfaces (TCP server, AutoInterface,
+    HTTP server, WebSocket server) propagate `networkName`/`passphrase`/
+    `ifacSize` to their children and re-derive — mirroring `AutoInterface.py`.
+  - The previous incorrect framer `ifacSize` slicing (`slice(2 + ifacSize)`, no
+    masking/verification, in the wrong layer) is removed.
+  - `Identity.fromPrivateKey(bytes)`: builds a full identity from the 64-byte
+    private-key form, deriving public keys via JWK export — the JS analog of
+    Python `Identity.from_bytes`/`load_private_key`. `crypto/keys.js` gained
+    `derivePublicKeyFromPrivate`.
+  - `Reticulum.IFAC_MIN_SIZE`/`IFAC_SALT` re-exported for upstream API parity.
+  - Tests cross-check the derived key/signature and a sealed packet
+    byte-for-byte against RNS 1.4.2, plus integration tests through the real
+    KISS/HDLC framer streams and the `Interface` helpers (round-trip, flag
+    enforcement, mismatch drop, default `ifacSize`).
+- **core**: **LXMF propagation-node runner support** (work doc #27): persistence,
+  configurable limits/TTLs, and autopeering so a propagation node can run as a
+  standalone daemon (alongside rfed).
+  - `MessageStore` gained `storageLimitBytes` (weighted eviction, mirroring
+    Python `get_weight` cull) + optional `messageTtlSecs`; new `prune()` +
+    `totalBytes`; and `exportRecords()`/`importRecords()` persistence seams.
+  - `PropagationNode` accepts `storageLimitBytes`/`messageTtlSecs`/`store`
+    options and gained `tickMaintenance()`.
+  - `LXMRouter.enableAutopeer(maxPeeringCost)`: auto-`peer()` with discovered
+    `lxmf.propagation` nodes whose advertised peering cost is within the
+    threshold (Python `lxmd` autopeer).
+- **core**: **rfed configurable TTLs**: `RFedNode` now takes `blobTtlSecs` (default 30d)
+  and `deferredTtlSecs` (default 7d) instead of hardcoding them (work doc #27).
+- **core**: **rfed (Reticulum Federation) Phase 6** — backup failover (work doc #25,
+  SPEC §11). Chain-of-custody subscriber backup: a primary periodically pushes
+  its `(subscriber, channel)` pairs to a designated backup; the backup holds
+  them suppressed while the primary is reachable and takes over delivery when
+  it goes silent. Wire-compatible with the Rust `rfed` reference.
+  - `SubscriptionTable` gained `subscribeBackup()`, `backupEntriesForTick()`,
+    `pruneStaleBackups()`; `exportRecords()`/`importRecords()` now serialize
+    `ownerNodeHash` (backup entries carry no subscriber identity — they're
+    pull-served).
+  - `RFedNode` gained a `/rfed/backup/push` handler (signed
+    `[pairs, pubkey, sig]`; derives the owner's `rfed.node` hash; honors
+    `trustedBackupPeers`), a `tickBackupDelivery()` driver (resolve backup →
+    drain + push → prune stale → failover → chain re-push), and fanout
+    suppression of backup subs while the owner is reachable. New config:
+    `primaryNode`, `secondaryNodes`, `ownerOfflineSecs` (90),
+    `trustedBackupPeers`. Auto-selection from federation peers (Rust priority 5)
+    is omitted — only configured primary/secondary targets are used.
+- **core**: `WebSocketClientInterface` gained an `ssl` option (mirrors the Python
+  reference `ssl` config key) that builds a `wss://` dial URL from `host`/`port`.
+  The standard `WebSocket` API then negotiates TLS from the scheme. Needed for
+  browser apps running in a secure context (HTTPS), which cannot open `ws://`.
+  An explicit `url` scheme always takes precedence.
+- **core**: **rfed (Reticulum Federation) Phase 2** — the federation node
+  (work doc #25). `RFedNode` (`rfed/node.js`) brings up the modern split
+  destinations (`rfed.node`, `rfed.channel.{subscribe,unsubscribe,publish,
+  pull}`) on a Reticulum instance and implements the core ingest/serve loop,
+  wire-compatible with the Rust `rfed::destinations` handlers:
+  - `/rfed/send` (the publish destination's DATA callback) validates the PoW
+    stamp (when `stampCost` is set), strips it, stores the inner blob in a
+    `BlobStore`, and fans it out live to present subscribers (deferring the
+    rest).
+  - `/rfed/subscribe` / `/rfed/unsubscribe` verify the signed
+    `[channel_hash, pubkey, sig]` payload and record/drop the subscription;
+    subscribe replies `[true, stamp_cost|nil]` (`0`/`nil` = stamping disabled).
+  - `/rfed/pull` drains one page (`pullPageSize`, default 25) of the caller's
+    deferred queue for a channel and returns `[[[channel_hash, blob], …],
+    more_pending]`.
+  - Subscriber presence is tracked from `rfed.delivery` announces; deferred
+    blobs are flushed when a subscriber's `rfed.delivery` announces (SPEC §7
+    trigger 1) and drained on `/rfed/pull` (trigger 2).
+  Three in-memory stores back it: `BlobStore` (`rfed/blob_store.js`, Rust API
+  + 30-day TTL / capacity eviction), `SubscriptionTable` (`rfed/subscription.js`,
+  keeps the subscriber `Identity` inline + precomputed `rfed.delivery` hash for
+  fanout), and `DeferredQueue` (`rfed/deferred_queue.js`, paged
+  `drainChannelBatch`). All are web-platform pure JS; a filesystem-backed
+  adapter + production runner will live in `@reticulum/node`. Exposed at the
+  package entry point. Covered by a loopback-mesh suite (live fanout, two-client
+  relay, deferred→pull, deferred→announce-drain, stamp enforcement, unsubscribe,
+  blob-store ingest).
+- **core**: **rfed (Reticulum Federation) Phase 3** — fanout + deferred delivery
+  completion (work doc #25):
+  - `RFedNode.tickMaintenance()` prunes expired blobs (30-day TTL, SPEC §5)
+    and deferred-queue entries (7-day TTL, SPEC §7); a runner calls it hourly.
+  - `BlobStore.pruneOlderThan(maxAgeSec)` is the public prune hook (the store
+    also self-prunes opportunistically on ingest).
+  - `RFedNode` accepts a `config.policyFor(subscriberHash)` callback (mirrors
+    Rust `NodeConfig::policy_for`); the per-subscriber deferred-queue cap is
+    read from it, so a `@reticulum/node` runner can drive VIP tiers from real
+    config. Defaults to the flat configured `deferredQueueLimit`.
+  (Backup-subscription suppression — “skip backups whose owner is online” —
+  stays deferred to the Phase 6 backup-failover work.)
+- **core**: **rfed (Reticulum Federation) Phase 4** — inter-node peer sync
+  (`rfed/sync.js`, work doc #25). `rfed.node` now serves the SPEC §4 sync
+  paths and `RFedNode.syncWithPeer(peerHash)` drives a full sync session over
+  a Reticulum link, wire-compatible with Rust `rfed::sync`:
+  - `/rfed/offer` returns the node's full blob-store manifest
+    (`[[channelHash, messageId], …]`); the caller's offered IDs are accepted
+    but unused.
+  - `/rfed/get` encodes the requested blobs into the §3 stream
+    (`channel_hash(16)‖message_id(16)‖len(4 BE)‖blob`, repeated), honouring the
+    optional per-session `config.transferLimitBytes` cap.
+  - `syncWithPeer` does OFFER → `gapFromPeer` (channels we subscribe to, don't
+    hold) → MESSAGE_GET → ingest each blob under its upstream message id, then
+    fan out to local subscribers. Idempotent: re-syncing pulls nothing new.
+  Sync ingest stores stamp-stripped blobs verbatim (the origin node validated
+  and stripped on first ingest); no stamp re-check, matching Rust. Pure codec
+  + manifest/gap helpers are exported for reuse.
+- **core**: **rfed (Reticulum Federation) Phase 5** — notify wake-ups (`rfed/notify.js`,
+  work doc #25). When a blob is deferred for an offline subscriber, the node
+  sends a lightweight §9.3 wake packet to each notify relay the subscriber has
+  registered, so a relay (APNs/FCM/UnifiedPush bridge) can poke the device:
+  - `/rfed/notify/register`, `/rfed/notify/unregister`, `/rfed/notify/clear`
+    are served on the legacy `rfed.notify` destination, with register/
+    unregister also on the split `rfed.notify.register`/
+    `rfed.notify.unregister`. Commands are signed
+    `[bin(command), bin(64) pubkey, bin(64) sig]` (the shared
+    `verify_signed_payload` contract); the command is the modern
+    `[op, relay_hex|nil, bin(16) channel_hash|nil]` or the legacy
+    `[relay_hex, bin(16) ch|nil]`.
+  - `RFedClient` gains `registerNotify`/`unregisterNotify`/`clearNotify`.
+  - Wake dispatch (`_dispatchNotify`) sends a msgpack Map `{receiver, sender?,
+    channel?}` (destination hashes only — no message content) to the relay's
+    `rfed.notify` destination; failures are logged and swallowed (the blob is
+    still pulled later). `NotifyRegistry` is per-node and never synced.
+  - `_verifySignedChannel` was refactored into a shared `_verifySignedPayload`.
+- **core**: **rfed store serialization seam**: `BlobStore`, `SubscriptionTable`,
+  `DeferredQueue`, and `NotifyRegistry` gained `exportRecords()` /
+  `importRecords()` so a runner (e.g. `@reticulum/node`'s `loadRFedStores` /
+  `saveRFedStores`) can persist them across restarts. `RFedNode` accepts an
+  injected `stores` option to adopt pre-loaded stores.
+- **node**: **IFAC (Interface Authentication Code) wiring** (work doc #28): the
+  node-side interfaces gain `networkName`/`passphrase`/`ifacSize` options and
+  seal/verify packets at the serialize/deserialize chokepoints via the shared
+  `Interface._sealRaw`/`_openRaw` helpers. Spawned sub-interfaces (TCP server,
+  AutoInterface peers, HTTP server peers) propagate the IFAC config to their
+  children. See `@reticulum/core` for the IFAC primitives.
+- **node**: **UDP interface** (`src/interfaces/udp.js`, `UDPInterface`, work doc #26): the
+  IPv4 broadcast-bus transport porting the Python reference
+  `RNS/Interfaces/UDPInterface.py`. A single interface binds a UDP socket to
+  receive (`listenIp`/`listenPort`) and sends raw datagrams — one RNS packet
+  each, no KISS/HDLC framing — to a forward destination (`forwardIp`/
+  `forwardPort`), typically a subnet broadcast address. `port` is shorthand for
+  both ports; `device` (e.g. `eth0`) resolves the IPv4 broadcast address for
+  both halves. Receive-only and forward-only modes are valid (a receive-only
+  instance has a `null` `writable`, so the transport simply won't transmit out
+  of it). Registered in the interface registry as `udp`; re-exported from the
+  package index.
+  - `src/utils/netinfo.js` gains `getAddressForInterface`/
+    `getBroadcastForInterface` (mirroring the Python `get_address_for_if`/
+    `get_broadcast_for_if`): Node's `os.networkInterfaces()` does not report
+    the broadcast address, so it is computed as `(addr & netmask) | ~netmask`
+    via the exported `computeIPv4Broadcast`.
+- **node**: **Dual-mode rfed/LXMF CLI runner** (work doc #27): `rfed.js` now runs an
+  rfed node and/or an LXMF propagation node (`--lxmf-propagation`, `--no-rfed`)
+  sharing one Reticulum instance + identity + interface. Per-role limit/TTL
+  flags (`--storage-limit-mb`, `--blob-ttl-days`, `--deferred-ttl-days`,
+  `--lxmf-message-ttl-days`) + LXMF options (`--lxmf-stamp-cost`,
+  `--lxmf-peering-cost`, `--propagation-peer`, `--autopeer`,
+  `--autopeer-max-cost`).
+- **node**: **LXMF message-store filesystem persistence**: `loadLXMFStore(dir)` /
+  `saveLXMFStore(dir, store)` (`storage/lxmf.js`) persist the propagation-node
+  message store as `propagation_messages.rmp` (msgpack), mirroring the rfed
+  FS adapter.
+- **node**: **rfed CLI: backup failover scheduling** (work doc #25, Phase 6). The
+  runner now schedules `tickBackupDelivery()` every 30s (push own subs to the
+  backup, prune stale, fail over for offline owners, chain re-push) and exposes
+  `--primary-node`, `--secondary-node` (repeatable), `--owner-offline-secs`,
+  `--trusted-backup-peer` (repeatable), and `--backup-interval`.
+- **node**: **rfed filesystem persistence + CLI runner** (work doc #25).
+  - `loadRFedStores(dir)` / `saveRFedStores(dir, stores)` (`storage/rfed.js`)
+    persist the four rfed in-memory stores to disk: blobs as
+    `blobs/<ch_hex>/<id_hex>.bin` (mtime preserves `received` for TTL) and
+    the subscription/deferred/notify tables as `subscriptions.rmp`,
+    `deferred_delivery.rmp`, `notify_registrations.rmp` (msgpack via
+    `@reticulum/core`'s `MsgPack`). Missing files/dirs yield fresh stores.
+  - `rfed` CLI (`src/cli/rfed.js`, exposed as the `rfed` bin): boots a
+    `Reticulum` instance + mesh interface (`--interface shared|auto|tcp`),
+    loads/creates the node identity, hydrates stores from disk, runs an
+    `RFedNode`, and schedules hourly maintenance+persistence plus optional
+    static-peer sync (`--sync-peer`, repeatable). Default stamp cost 16
+    (flex 3), matching the Rust `TierPolicy::default`. SIGINT/SIGTERM flush
+    stores and exit.
+- **websocket-server-node**: Optional TLS termination (`ssl: true` with `certFile`/`keyFile`), mirroring
+  the Python reference `WebSocketServerInterface` `ssl`/`certfile`/`keyfile`
+  config keys. When enabled the server wraps a Node.js `https.Server` (with the
+  PEM certificate chain and private key) and hands it to `ws`, so clients
+  connect over `wss://`. Needed for browser apps running in a secure context
+  (HTTPS), which cannot open `ws://`. Constructor validation matches the Python
+  reference: SSL requires both `certFile` and `keyFile`, and providing either
+  without `ssl` is rejected. Verified interoperable in both directions with the
+  Python reference over `wss://`.
+### Changed
+- **core**: **rfed + LXMF are no longer re-exported from the package root** (work
+  doc #25). They're sizable, server-leaning modules, and ESM eagerly
+  evaluates the whole static import graph — so re-exporting them bloated
+  `import { Reticulum } from "@reticulum/core"` for browsers (the same reason
+  the Node-only interfaces aren't re-exported). Each module now has a barrel
+  index — import it by subpath:
+  `import { RFedNode } from "@reticulum/core/src/rfed/index.js"`,
+  `import { LXMessage, LXMRouter } from "@reticulum/core/src/lxmf/index.js"`.
+  (For the leanest graph, import a single symbol from its module file, e.g.
+  `.../rfed/node.js` — the barrel pulls in the whole module.)
+  Removed from the root: `LXMessage`, `LXMRouter`, `LXStamper`,
+  `LXMFConstants`, and all rfed symbols (`RFedNode`, `RFedClient`, `BlobStore`,
+  `SubscriptionTable`, `DeferredQueue`, `NotifyRegistry`, the sync/stamp/
+  channel/blob helpers, `RFedConstants`). `MsgPack`, `Destination`, `Identity`,
+  `Reticulum`, the encoding helpers, etc. remain on the root.
+- **core**: **rfed stamp workblock is now a single, documented switch point**
+  (`rfed/stamp.js`, work doc #25). The workblock computation is isolated in one
+  `computeWorkblock` function gated by `USE_RUST_STUB_WORKBLOCK`. The current
+  (`true`) branch mirrors the deployed `reticulum-rust` `LXStamper` stub
+  (iterated SHA-256) so rfed interoperates with live nodes today; the `false`
+  branch calls the SPEC-correct, Python-LXMF-compatible memory-hard
+  `lxmf/stamper.js#stampWorkblock(id, 16)` (already imported). Once
+  https://github.com/jrl290/Reticulum-rust/pull/2 lands upstream, flipping the
+  flag is the entire change. A regression test asserts the SPEC-correct
+  workblock is wired, callable at rfed's 16 rounds, and distinct from the stub
+  so the alternate path cannot silently bit-rot.
+### Fixed
+- **core**: **Path-table cull now uses last-used time, not a frozen ingestion expiry**
+  (work doc #29 follow-up). `RoutingTable.getRoute` previously culled a route
+  when `Date.now() >= route.expires`, where `expires` was set once at announce
+  ingestion (`now + PATHFINDER_E`) and never refreshed — so a path in active
+  use was dropped a week after its announce was first heard, breaking
+  mid-handshake link establishment (a false "Expired route" log, then a
+  default-interface broadcast fallback and a collapsed bitrate-adaptive
+  timeout). This mirrors the Python reference, which culls on
+  `IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT` where `IDX_PT_TIMESTAMP` is
+  refreshed to `time.time()` on every outbound send (Transport.py ~l.1162,
+  1182, 1694). The frozen `expires` (Python `IDX_PT_EXPIRES`) is retained for
+  its real purpose: the longer-hop replacement decision in `addOrUpdateRoute`.
+  `addOrUpdateRoute` now accepts an optional `entry.timestamp` (default `now`),
+  which the persistor restores on hydration so cull-on-last-used survives
+  restarts (the refreshed `timestamp` is re-persisted on each debounced flush).
+- **core**: **Persisted paths re-associate their live interface after a restart**.
+  Routes hydrated from storage previously kept `interface: null` until a fresh
+  announce arrived, which forced egress onto the default interface and left
+  bitrate-adaptive timeouts (`firstHopTimeout`) blind to the real medium — a
+  problem on multi-interface nodes (e.g. TCP + RNode). The learning
+  interface's `name` is now persisted (`PersistableRoute.interfaceName`) and
+  `RoutingTable.getRoute` lazily resolves it back to the live `Interface` via a
+  resolver `TransportCore` wires up in its constructor. `encodeRoute`/
+  `decodeRoute` round-trip the new field; older persisted entries (without it)
+  load as before and simply fall back to the default interface.
+- **core**: **DIRECT delivery now discovers a path before initiating the link**
+  (Python `LXMRouter` parity). `LXMRouter._establishDirectLink` previously
+  called `Link.initiate` unconditionally: with no known path the LINKREQUEST was
+  broadcast (HEADER_1), which a multi-hop peer never receives, so the handshake
+  always timed out and delivery fell back to opportunistic (which, for the same
+  reason, also can't reach a multi-hop peer). It now mirrors Python's
+  `has_path ? establish : request_path + PATH_REQUEST_WAIT`: when no path is
+  known it issues a path request and waits up to `PATH_REQUEST_WAIT_MS` (7 s)
+  for the path-response announce before initiating — recovering a stale/expired
+  path right after a restart. Added `LXMRouter._requestAndAwaitPath`; guarded
+  so mock/test transports without the path-discovery API are unaffected.
+
 ## [0.5.3] - 2026-08-02
 ### Added
 - **core**: **rfed (Reticulum Federation) Phase 1** — the channel client (work doc #25):
