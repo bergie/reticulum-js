@@ -7,7 +7,8 @@
  *   every local step and then hands off the (interactive, mesh) publish:
  *
  *     1. pre-flight  — clean tree, tag v<version> not taken, packages lockstep
- *     2. checks      — npm run types / npm test
+ *     2. checks      — npm run types / npm run lint / npm test,
+ *                      plus a JSR publish dry-run when deno is installed
  *                      (skip with --skip-checks)
  *     3. version     — bump every packages/<pkg>/package.json (and jsr.json,
  *                      when present) to <version> and rewrite the internal
@@ -270,6 +271,23 @@ export function runRelease({
       console.log(`  $ ${c}`);
       run(c, { cwd: root, stdio: "inherit" });
     }
+    // JSR publish dry-run — catches missing `exports` subpaths and unresolved
+    // module-graph errors (e.g. a deep import into @reticulum/core/src/...
+    // that core's jsr.json `exports` map doesn't list) *before* a tag is cut.
+    // The npm publish workflow only runs `jsr publish` in CI after the tag is
+    // pushed, so this surfaces such failures locally instead. Skipped silently
+    // when deno isn't installed (the helper itself needs deno).
+    const denoVer = tryRun("deno --version", { cwd: root });
+    if (denoVer) {
+      const dv = denoVer.match(/deno\s+([\d.]+)/)?.[1] ?? "?";
+      console.log(`  $ jsr publish --dry-run  (deno ${dv})`);
+      run(`bash "${join(root, "scripts", "jsr-dryrun.sh")}"`, {
+        cwd: root,
+        stdio: "inherit",
+      });
+    } else {
+      console.log("  jsr publish --dry-run: skipped (deno not installed)");
+    }
     console.log();
   }
 
@@ -429,7 +447,8 @@ function printHelp() {
 
   <version>           semver to release, e.g. 0.4.0
   --date YYYY-MM-DD   override release date (default: today)
-  --skip-checks       do not run types/tests before releasing
+  --skip-checks       do not run types/lint/tests or the JSR publish dry-run
+                      before releasing
   --no-publish        stop after packing; print the rngit command instead of
                       running it (default: publish interactively)
   --repo <rns-url>    override the rngit repo (default: git "origin" remote URL)
