@@ -50,6 +50,16 @@ import { generateStamp, WORKBLOCK_EXPAND_ROUNDS_PN } from "./stamper.js";
  */
 const DIRECT_LINK_TIMEOUT_MS = 10_000;
 
+/**
+ * How long (ms) to wait for a path-response announce after requesting a path
+ * before attempting a DIRECT link anyway (Python `LXMRouter.PATH_REQUEST_WAIT`
+ * = 7 s). A LINKREQUEST with no known path is broadcast and won't reach a
+ * multi-hop peer, so when no path is known we request one and wait for the
+ * announce before initiating — recovering a stale/expired path after a
+ * restart.
+ */
+const PATH_REQUEST_WAIT_MS = 7_000;
+
 const RESOURCE_TRANSFER_TIMEOUT_MS = 60_000;
 
 /**
@@ -1304,6 +1314,75 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
+   * Requests a path to `destinationHash` and resolves once one is known (a
+   * path-response announce was ingested), or after `timeoutMs` if no path
+   * appears. Mirrors Python `LXMRouter` DIRECT delivery
+   * (`request_path` + `PATH_REQUEST_WAIT`): a link initiated with no known path
+   * broadcasts its LINKREQUEST, which a multi-hop peer never receives.
+   *
+   * No-op (resolves `true` immediately) when a path is already known, or when
+   * the transport lacks the path-discovery API (mock/test transports).
+   *
+   * @param {Uint8Array} destinationHash
+   * @param {number} timeoutMs
+   * @returns {Promise<boolean>} `true` if a path is known on return.
+   * @private
+   */
+  async _requestAndAwaitPath(destinationHash, timeoutMs) {
+    const transport = /** @type {any} */ (this.rns?.transport);
+    if (!transport) return false;
+    if (
+      typeof transport.hasPath === "function" &&
+      transport.hasPath(destinationHash)
+    ) {
+      return true;
+    }
+    if (typeof transport.requestPath !== "function") return false;
+    const destHex = toHex(destinationHash);
+    log(
+      "LXMF",
+      `No path to ${destHex}; requesting before DIRECT link`,
+      LogLevel.DEBUG,
+    );
+    try {
+      await transport.requestPath(destinationHash);
+    } catch {
+      // Best effort — the wait below still gives a late response a chance.
+    }
+    // A fast path response may already have been ingested.
+    if (
+      typeof transport.hasPath === "function" &&
+      transport.hasPath(destinationHash)
+    ) {
+      return true;
+    }
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        transport.removeEventListener("announce", onAnnounce);
+        resolve(result);
+      };
+      /** @param {any} ev */
+      const onAnnounce = (ev) => {
+        const dh = ev?.detail?.destinationHash;
+        if (
+          dh &&
+          toHex(dh) === destHex &&
+          typeof transport.hasPath === "function" &&
+          transport.hasPath(destinationHash)
+        ) {
+          finish(true);
+        }
+      };
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      transport.addEventListener("announce", onAnnounce);
+    });
+  }
+
+  /**
    * Establishes (or reuses a cached) DIRECT delivery link to an `lxmf.delivery`
    * destination (Python `LXMRouter.direct_links`).
    *
@@ -1333,6 +1412,11 @@ export class LXMRouter extends EventTarget {
       );
       return null;
     }
+    // §Python LXMRouter DIRECT delivery: a LINKREQUEST with no known path is
+    // broadcast and won't reach a multi-hop peer (it just times out). If we
+    // have no path, request one and wait for the announce before initiating —
+    // this is what recovers a stale/expired path after a restart.
+    await this._requestAndAwaitPath(destinationHash, PATH_REQUEST_WAIT_MS);
     try {
       const peerDestination = await Destination.OUT(
         "lxmf.delivery",

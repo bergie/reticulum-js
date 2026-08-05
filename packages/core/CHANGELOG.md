@@ -226,6 +226,44 @@
   workblock is wired, callable at rfed's 16 rounds, and distinct from the stub
   so the alternate path cannot silently bit-rot.
 
+### Fixed
+- **Path-table cull now uses last-used time, not a frozen ingestion expiry**
+  (work doc #29 follow-up). `RoutingTable.getRoute` previously culled a route
+  when `Date.now() >= route.expires`, where `expires` was set once at announce
+  ingestion (`now + PATHFINDER_E`) and never refreshed — so a path in active
+  use was dropped a week after its announce was first heard, breaking
+  mid-handshake link establishment (a false "Expired route" log, then a
+  default-interface broadcast fallback and a collapsed bitrate-adaptive
+  timeout). This mirrors the Python reference, which culls on
+  `IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT` where `IDX_PT_TIMESTAMP` is
+  refreshed to `time.time()` on every outbound send (Transport.py ~l.1162,
+  1182, 1694). The frozen `expires` (Python `IDX_PT_EXPIRES`) is retained for
+  its real purpose: the longer-hop replacement decision in `addOrUpdateRoute`.
+  `addOrUpdateRoute` now accepts an optional `entry.timestamp` (default `now`),
+  which the persistor restores on hydration so cull-on-last-used survives
+  restarts (the refreshed `timestamp` is re-persisted on each debounced flush).
+- **Persisted paths re-associate their live interface after a restart**.
+  Routes hydrated from storage previously kept `interface: null` until a fresh
+  announce arrived, which forced egress onto the default interface and left
+  bitrate-adaptive timeouts (`firstHopTimeout`) blind to the real medium — a
+  problem on multi-interface nodes (e.g. TCP + RNode). The learning
+  interface's `name` is now persisted (`PersistableRoute.interfaceName`) and
+  `RoutingTable.getRoute` lazily resolves it back to the live `Interface` via a
+  resolver `TransportCore` wires up in its constructor. `encodeRoute`/
+  `decodeRoute` round-trip the new field; older persisted entries (without it)
+  load as before and simply fall back to the default interface.
+- **DIRECT delivery now discovers a path before initiating the link**
+  (Python `LXMRouter` parity). `LXMRouter._establishDirectLink` previously
+  called `Link.initiate` unconditionally: with no known path the LINKREQUEST was
+  broadcast (HEADER_1), which a multi-hop peer never receives, so the handshake
+  always timed out and delivery fell back to opportunistic (which, for the same
+  reason, also can't reach a multi-hop peer). It now mirrors Python's
+  `has_path ? establish : request_path + PATH_REQUEST_WAIT`: when no path is
+  known it issues a path request and waits up to `PATH_REQUEST_WAIT_MS` (7 s)
+  for the path-response announce before initiating — recovering a stale/expired
+  path right after a restart. Added `LXMRouter._requestAndAwaitPath`; guarded
+  so mock/test transports without the path-discovery API are unaffected.
+
 ## [0.5.3] - 2026-08-02
 ### Added
 - **rfed (Reticulum Federation) Phase 1** — the channel client (work doc #25):

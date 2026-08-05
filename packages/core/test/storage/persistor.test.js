@@ -214,6 +214,11 @@ describe("Persistor — communicate-with gating", () => {
       null,
       "interface is re-associated later",
     );
+    assert.strictEqual(
+      reloaded.interfaceName,
+      "tcp0",
+      "interface name is persisted for lazy re-association",
+    );
     assert.strictEqual(reloaded.hops, 2);
     assert.strictEqual(reloaded.timestamp, 1700000000000);
     assert.ok(bytesEqual(reloaded.nextHop, route.nextHop));

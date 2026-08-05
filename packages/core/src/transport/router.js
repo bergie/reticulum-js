@@ -2,10 +2,17 @@ import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 
 /**
- * Default path expiration: one week (Transport.PATHFINDER_E). A full-transport
- * path learned from a regular announce is kept for a week unless refreshed by a
- * newer announce. Interface-mode-specific expiries (Access Point / Roaming) are
- * a transport-instance concern and not yet modelled here.
+ * One week in ms — the path-liveness horizon (Transport.PATHFINDER_E ==
+ * Transport.DESTINATION_TIMEOUT). It serves two distinct purposes, mirroring
+ * the Python reference:
+ *   - **Cull**: a route is dropped when it has been *unused* for this long
+ *     (`IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT`); the timestamp is refreshed on
+ *     every outbound send, so a path in active use never times out.
+ *   - **Ingestion `expires`**: set once when an announce is learned
+ *     (`now + PATHFINDER_E`, the `IDX_PT_EXPIRES` slot) and used *only* for the
+ *     longer-hop replacement decision — never for culling.
+ * Interface-mode-specific expiries (Access Point / Roaming) are a
+ * transport-instance concern and not yet modelled here.
  */
 const PATH_EXPIRY_MS = 60 * 60 * 24 * 7 * 1000;
 
@@ -31,14 +38,25 @@ export const PathState = {
  * @property {import("../interfaces/base.js").Interface|null} interface The
  *   interface the destination was announced through — i.e. the outbound
  *   interface to use to reach the next hop. `null` for announces injected
- *   without a receiving interface (e.g. local-client synthesis).
+ *   without a receiving interface (e.g. local-client synthesis), and for routes
+ *   hydrated from storage until {@link RoutingTable#getRoute} lazily
+ *   re-associates it via {@link Route#interfaceName}.
+ * @property {string|null} interfaceName Persisted name of the learning
+ *   interface, used to lazily re-associate the live {@link interface} reference
+ *   after a restart (the object itself can't be serialised). `null` when the
+ *   route was learned without an interface.
  * @property {Uint8Array} nextHop The 16-byte address of the next transport hop.
  *   This is the announcing transport node's `transport_id` (read from a HEADER_2
  *   announce) for a multi-hop path, or the destination hash itself when the
  *   announce arrived directly (HEADER_1, 1 hop). Placed into HEADER_2 on send.
  * @property {number} hops Distance to the destination.
- * @property {number} timestamp ms epoch of the last route touch (send/receive).
- * @property {number} expires ms epoch after which the route is lazily culled.
+ * @property {number} timestamp ms epoch of the last route *use* (outbound
+ *   send). The cull drops a route once `timestamp + PATH_EXPIRY_MS` is in the
+ *   past (Python `IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT`); refreshed on every
+ *   send so an active path never times out.
+ * @property {number} expires ms epoch set once at announce ingestion
+ *   (`now + PATH_EXPIRY_MS`, Python `IDX_PT_EXPIRES`). Used *only* for the
+ *   longer-hop replacement decision — **not** for culling.
  * @property {Uint8Array[]} randomBlobs Recorded announce `random_hash`es, used
  *   for replay defense and path-table replacement ordering (§4.5 step 6.3).
  * @property {number} state Path liveness ({@link PathState}); defaults to
@@ -90,6 +108,15 @@ export class RoutingTable {
   constructor() {
     /** @type {Map<string, Route>} */
     this.routes = new Map();
+    /**
+     * Resolves a persisted interface name back to a live Interface, so routes
+     * hydrated from storage (whose `interface` is `null`) can re-associate the
+     * correct outbound medium on first access. Set by {@link import("../transport.js").TransportCore};
+     * `null` for a standalone/test table (routes then fall back to the default
+     * interface at send time).
+     * @type {((name: string) => import("../interfaces/base.js").Interface|null)|null}
+     */
+    this.interfaceResolver = null;
   }
 
   /**
@@ -110,6 +137,11 @@ export class RoutingTable {
    * @param {import("../interfaces/base.js").Interface|null} entry.viaInterface
    * @param {Uint8Array} entry.randomBlob 10-byte announce `random_hash`.
    * @param {number} [entry.expires] ms epoch; defaults to now + PATH_EXPIRY_MS.
+   *   Stored as the ingestion `expires` (Python `IDX_PT_EXPIRES`); used only for
+   *   the longer-hop replacement decision, never for culling.
+   * @param {number} [entry.timestamp] ms epoch of last use; defaults to now.
+   *   The cull basis (Python `IDX_PT_TIMESTAMP`). Overridden by the persistor
+   *   on hydration to restore the real last-used time.
    * @returns {boolean} `true` if the route was added or replaced.
    */
   addOrUpdateRoute(destinationHash, entry) {
@@ -198,9 +230,10 @@ export class RoutingTable {
 
     this.routes.set(destKey, {
       interface: entry.viaInterface,
+      interfaceName: entry.viaInterface?.name ?? null,
       nextHop: entry.nextHop,
       hops: entry.hops,
-      timestamp: Date.now(),
+      timestamp: entry.timestamp ?? Date.now(),
       expires,
       randomBlobs,
       state,
@@ -268,8 +301,20 @@ export class RoutingTable {
   }
 
   /**
-   * Looks up the best-known route for a destination hash, lazily expiring stale
-   * entries (Transport.py tables-cull job, but evaluated on access for a leaf).
+   * Looks up the best-known route for a destination hash.
+   *
+   * Two lazy behaviours, both evaluated on access (a leaf has no periodic
+   * tables-cull job, unlike Python's `Transport.jobs`):
+   *   - **Cull on last-used**: drops the route once it has been *unused* for
+   *     {@link PATH_EXPIRY_MS} (`route.timestamp + PATH_EXPIRY_MS`, mirroring
+   *     `IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT`). The frozen ingestion
+   *     `expires` is intentionally **not** used here — it is for the
+   *     longer-hop replacement decision only, and a path in active use must not
+   *     be culled just because its announce is old.
+   *   - **Interface re-association**: a route hydrated from storage has
+   *     `interface: null`; resolve the live reference by name (via
+   *     {@link RoutingTable#interfaceResolver}) so egress and bitrate-adaptive
+   *     timeouts use the correct medium.
    *
    * @param {Uint8Array} destinationHash
    * @returns {Route|undefined}
@@ -277,10 +322,22 @@ export class RoutingTable {
   getRoute(destinationHash) {
     const destKey = toHex(destinationHash);
     const route = this.routes.get(destKey);
-    if (route && Date.now() >= route.expires) {
+    if (!route) return undefined;
+    if (Date.now() >= route.timestamp + PATH_EXPIRY_MS) {
       this.routes.delete(destKey);
       log("Router", `Expired route to ${destKey}`, LogLevel.DEBUG);
       return undefined;
+    }
+    if (!route.interface && route.interfaceName && this.interfaceResolver) {
+      const iface = this.interfaceResolver(route.interfaceName);
+      if (iface) {
+        route.interface = iface;
+        log(
+          "Router",
+          `Re-associated path to ${destKey} via interface ${route.interfaceName}`,
+          LogLevel.DEBUG,
+        );
+      }
     }
     return route;
   }

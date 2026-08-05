@@ -174,7 +174,10 @@ describe("RoutingTable — replay defense & expiry", () => {
     assert.strictEqual(table.getRoute(hash)?.hops, 2);
   });
 
-  test("an expired route is culled lazily on access", () => {
+  test("a route unused for the timeout is culled lazily on access", () => {
+    // Python culls on IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT (last-used), not
+    // the frozen ingestion `expires`. A route whose last-used timestamp is
+    // older than the timeout is removed on first lookup.
     const table = new RoutingTable();
     const hash = dest();
     table.addOrUpdateRoute(hash, {
@@ -182,11 +185,32 @@ describe("RoutingTable — replay defense & expiry", () => {
       hops: 2,
       viaInterface: iface,
       randomBlob: blobAt(1000),
-      expires: Date.now() - 1000, // already expired
+      timestamp: 0, // last used at the epoch — long past the 7-day timeout
     });
 
     assert.strictEqual(table.hasRoute(hash), false);
     assert.strictEqual(table.getRoute(hash), undefined);
+  });
+
+  test("a recently-used route survives a stale ingestion expires (regression)", () => {
+    // Regression for the false "Expired route" cull: the cull must use
+    // last-used `timestamp`, not the frozen ingestion `expires`. A path in
+    // active use must not be culled just because its announce was ingested long
+    // ago (mirrors Python IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT).
+    const table = new RoutingTable();
+    const hash = dest();
+    table.addOrUpdateRoute(hash, {
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      viaInterface: iface,
+      randomBlob: blobAt(1000),
+      expires: Date.now() - 1000, // stale ingestion expiry (replacement-only)
+      timestamp: Date.now(), // used right now
+    });
+
+    const route = table.getRoute(hash);
+    assert.ok(route, "recently-used route must not be culled");
+    assert.strictEqual(route.hops, 2);
   });
 
   test("an expired shorter path is overridden by a longer one", () => {
@@ -242,6 +266,35 @@ describe("RoutingTable — interface failover", () => {
     // Sanity: keys are hex strings, not raw arrays.
     assert.strictEqual(typeof [...table.routes.keys()][0], "string");
     assert.ok(toHex(b).length);
+  });
+
+  test("a hydrated route re-associates its interface by name lazily", () => {
+    // After a restart, persisted routes load with `interface: null` and only
+    // the interface name. getRoute must resolve the live reference via the
+    // transport's interfaceResolver so egress + bitrate-adaptive timeouts use
+    // the correct medium.
+    const table = new RoutingTable();
+    const hash = dest();
+    const tcp = /** @type {any} */ (
+      Object.assign(new EventTarget(), { name: "tcp0", bitrate: 1000000 })
+    );
+    table.interfaceResolver = (name) => (name === "tcp0" ? tcp : null);
+    // Simulate a route hydrated from storage.
+    table.routes.set(toHex(hash), {
+      interface: null,
+      interfaceName: "tcp0",
+      nextHop: crypto.getRandomValues(new Uint8Array(16)),
+      hops: 2,
+      timestamp: Date.now(),
+      expires: Date.now() + 100000,
+      randomBlobs: [blobAt(1000)],
+      state: 0,
+    });
+
+    const route = table.getRoute(hash);
+    assert.ok(route);
+    assert.strictEqual(route.interface, tcp, "interface re-associated by name");
+    assert.strictEqual(route.interface.bitrate, 1000000);
   });
 });
 

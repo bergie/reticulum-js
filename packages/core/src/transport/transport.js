@@ -57,6 +57,17 @@ export class TransportCore extends EventTarget {
     this.localDestinations = new Map();
     this.activeLinks = new Map();
     this.routingTable = new RoutingTable();
+    // §16: routes hydrated from storage carry `interface: null` (the live
+    // object can't be serialised). Resolve the reference by name on first
+    // `getRoute` access so egress and bitrate-adaptive timeouts use the correct
+    // medium (e.g. TCP vs RNode). Interfaces register after `load()`, so the
+    // resolver reads the live `interfaces` set lazily at lookup time.
+    this.routingTable.interfaceResolver = (name) => {
+      for (const iface of this.interfaces) {
+        if (iface.name === name) return iface;
+      }
+      return null;
+    };
     this.defaultInterface = null;
 
     /**

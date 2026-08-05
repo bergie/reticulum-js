@@ -91,7 +91,9 @@ function decodeRatchet(bytes) {
 
 /**
  * The serializable fields of a routing-table entry. The live `interface`
- * reference is not serializable and is dropped on encode.
+ * reference is not serializable and is dropped on encode; its `name` is kept
+ * as `interfaceName` so {@link RoutingTable#getRoute} can re-associate the
+ * correct medium after a restart.
  *
  * @typedef {Object} PersistableRoute
  * @property {Uint8Array} nextHop
@@ -99,6 +101,11 @@ function decodeRatchet(bytes) {
  * @property {number} timestamp
  * @property {number} expires
  * @property {Uint8Array[]} [randomBlobs]
+ * @property {string|null} [interfaceName] Name of the learning interface.
+ * @property {{ name?: string } | null} [interface] Live interface reference; not
+ *   serialised — `encodeRoute` reads only its `name` as a fallback for
+ *   {@link interfaceName} (routes added via `addOrUpdateRoute` set
+ *   `interfaceName` directly).
  */
 
 /**
@@ -112,14 +119,16 @@ function encodeRoute(route) {
     route.timestamp,
     route.expires,
     (route.randomBlobs ?? []).map(toU8),
+    route.interfaceName ?? route.interface?.name ?? null,
   ]);
 }
 
 /**
  * @param {Uint8Array} bytes
  * @returns {PersistableRoute & { interface: null }} route with `interface: null`
- *   — the live Interface reference is re-associated when a fresh announce
- *   refreshes the destination's path.
+ *   and `interfaceName` populated — the live Interface reference is re-associated
+ *   by {@link RoutingTable#getRoute} on first access via the transport's
+ *   interface resolver.
  * @throws when the bytes do not decode to a tuple.
  */
 function decodeRoute(bytes) {
@@ -128,6 +137,7 @@ function decodeRoute(bytes) {
     throw new Error("path entry is not a tuple");
   return {
     interface: null,
+    interfaceName: typeof e[5] === "string" ? e[5] : null,
     nextHop: toU8(e[0]),
     hops: e[1],
     timestamp: e[2],
