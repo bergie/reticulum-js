@@ -54,6 +54,8 @@ function weightOf(entry) {
 }
 
 /**
+ * Options for {@link MessageStore}.
+ *
  * @typedef {Object} MessageStoreOptions
  * @property {number|null} [storageLimitBytes] Byte cap; when set, the
  *   highest-weight entries are evicted after an add to stay under it (Python
@@ -63,6 +65,12 @@ function weightOf(entry) {
  *   Python reference relies on the byte cap alone).
  */
 
+/**
+ * In-memory store for propagated LXMF messages on a propagation node, keyed by
+ * `transient_id = SHA-256(lxmf_data)`. Serves the client `/get` exchange
+ * (list/fetch/purge-acknowledged) and enforces a byte cap plus an optional age
+ * TTL (mirrors `LXMRouter.propagation_entries` / `clean_messages`).
+ */
 export class MessageStore {
   /**
    * @param {MessageStoreOptions} [options]

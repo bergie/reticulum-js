@@ -33,7 +33,12 @@ import {
   ResourceFlag,
 } from "./resource_advertisement.js";
 
-/** @enum {number} */
+/**
+ * Status of a {@link Resource} transfer, mirroring `RNS.ResourceStatus`
+ * (NONE → QUEUED → ADVERTISED → TRANSFERRING → COMPLETE, plus the failure
+ * states FAILED/CORRUPT/REJECTED).
+ * @enum {number}
+ */
 export const ResourceStatus = {
   NONE: 0,
   QUEUED: 1,

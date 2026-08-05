@@ -27,8 +27,8 @@ import { packPropagationContainer } from "./propagation.js";
 import { generateStamp, WORKBLOCK_EXPAND_ROUNDS_PEERING } from "./stamper.js";
 
 /**
- * @enum {number}
  * Sync state machine (mirrors `LXMPeer.IDLE … RESOURCE_TRANSFERRING`).
+ * @enum {number}
  */
 export const PeerState = Object.freeze({
   IDLE: 0x00,

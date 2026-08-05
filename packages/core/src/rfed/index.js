@@ -27,6 +27,7 @@ export {
 export { BlobStore } from "./blob_store.js";
 export { channelPath, deliveryHashFor, deriveChannel } from "./channel.js";
 export { RFedClient } from "./client.js";
+/** rfed protocol constants (magic, version, opcodes, …). */
 export * as RFedConstants from "./constants.js";
 export { DeferredQueue } from "./deferred_queue.js";
 export { RFedNode } from "./node.js";

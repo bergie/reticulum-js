@@ -1,6 +1,25 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **JSR symbol-doc coverage gate** (`scripts/jsr-doc-coverage.mjs`): a
+  `deno doc`-based enumerator of each package's public API that reports which
+  exported symbols lack a doc *description* and, with `--min 80`, fails below
+  the threshold. Calibrated to match JSR's "has docs for most symbols" metric
+  exactly. Wired into the release checks (deno-gated); packages with fewer than
+  five public symbols are reported but not gated (their % is structurally
+  volatile).
+
+### Changed
+- **Symbol-documentation coverage lifted past the JSR 80% threshold.** A JSDoc
+  block with only tags (`@enum`/`@typedef`+`@property`/`@returns`) and no
+  leading description does **not** count as documented for JSR. Added leading
+  descriptions to: `ResourceStatus`, `PeerState`, `getLogLevel`, the
+  `MessageStore` class and `MessageStoreOptions`, five `base.js` event/stats
+  typedefs, and the `LXMFConstants`/`LXStamper`/`RFedConstants` namespace
+  re-exports. The local proxy reports core at 92% (the residual gaps are tool
+  artifacts, not real undocumented code: `deno doc` can't read
+  `webrtc/signaling.d.ts`, and barrels expose no symbols).
 
 ## [0.6.1] - 2026-08-05
 ### Added

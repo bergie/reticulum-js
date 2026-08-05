@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **Documented the `WebSocketServerInterfaceOptions` typedef**: added a leading
+  description (it previously had only `@property` tags, which JSR does not count
+  as documented). Local JSR-doc proxy now reports 100% symbol coverage.
 
 ## [0.6.1] - 2026-08-05
 

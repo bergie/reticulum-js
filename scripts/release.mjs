@@ -8,7 +8,8 @@
  *
  *     1. pre-flight  — clean tree, tag v<version> not taken, packages lockstep
  *     2. checks      — npm run types / npm run lint / npm test,
- *                      plus a JSR publish dry-run when deno is installed
+ *                      plus a JSR publish dry-run and a symbol-doc coverage
+ *                      gate (≥80%) when deno is installed
  *                      (skip with --skip-checks)
  *     3. version     — bump every packages/<pkg>/package.json (and jsr.json,
  *                      when present) to <version> and rewrite the internal
@@ -282,6 +283,15 @@ export function runRelease({
       const dv = denoVer.match(/deno\s+([\d.]+)/)?.[1] ?? "?";
       console.log(`  $ jsr publish --dry-run  (deno ${dv})`);
       run(`bash "${join(root, "scripts", "jsr-dryrun.sh")}"`, {
+        cwd: root,
+        stdio: "inherit",
+      });
+      // Symbol-doc coverage gate (≥80% on packages with ≥5 public symbols).
+      // Same deno-doc engine JSR scores with; catches doc regressions before a
+      // tag is cut. Tiny packages (one or two symbols) are reported but not
+      // gated — their % is structurally volatile.
+      console.log(`  $ jsr-doc-coverage --min 80`);
+      run(`node "${join(root, "scripts", "jsr-doc-coverage.mjs")}" --min 80`, {
         cwd: root,
         stdio: "inherit",
       });

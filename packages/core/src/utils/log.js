@@ -107,7 +107,8 @@ export function setLogLevel(level) {
 }
 
 /**
- * @returns {number} the currently active {@link LogLevel} threshold.
+ * Returns the currently active {@link LogLevel} threshold.
+ * @returns {number}
  */
 export function getLogLevel() {
   return logLevel;

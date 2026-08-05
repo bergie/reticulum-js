@@ -21,6 +21,12 @@
 
 import { RTCPeerConnection } from "werift";
 
+/**
+ * Node.js `RTCPeerConnection` implementation, re-exported from
+ * [werift](https://github.com/shinyoshiaki/werift). The browser-safe core never
+ * imports this directly — pass it (or {@link createPeerConnection}) to the
+ * core's WebRTC signaling as a dependency injection.
+ */
 export { RTCPeerConnection };
 
 /**

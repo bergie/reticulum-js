@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **Documented the re-exported `RTCPeerConnection`**: added a doc comment on the
+  `export { RTCPeerConnection }` statement describing the package's intent. The
+  symbol's declaration lives in `werift`, so `deno doc`/JSR read werift's own
+  doc for the type (this local comment documents intent rather than moving the
+  package's 50% symbol-doc figure, which is structural to the single external
+  re-export).
 
 ## [0.6.1] - 2026-08-05
 

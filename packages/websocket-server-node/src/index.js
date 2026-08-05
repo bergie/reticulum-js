@@ -25,6 +25,8 @@ import { WebSocketClientInterface } from "@reticulum/core/src/interfaces/websock
 import { WebSocketServer } from "ws";
 
 /**
+ * Constructor options for {@link WebSocketServerInterface}.
+ *
  * @typedef {Object} WebSocketServerInterfaceOptions
  * @property {string} [listenIp] - Address to bind the server to. Default `0.0.0.0`.
  * @property {number} [listenPort] - Port to bind the server to.

@@ -25,6 +25,7 @@ export {
   parseAnnounceAppData,
   parsePropagationNodeAppData,
 } from "./announce_data.js";
+/** LXMF protocol constants (`fields`, `states`, `OPORTUNISTIC_*`, …). */
 export * as LXMFConstants from "./constants.js";
 export { Message as LXMessage } from "./message.js";
 export { MessageStore } from "./message_store.js";
@@ -35,4 +36,5 @@ export {
 } from "./propagation.js";
 export { PropagationNode } from "./propagation_node.js";
 export { LXMRouter } from "./router.js";
+/** LXMF stamping (LXST) protocol constants and helpers. */
 export * as LXStamper from "./stamper.js";

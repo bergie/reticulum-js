@@ -15,14 +15,22 @@ import {
 import { LogLevel, log } from "../utils/log.js";
 
 /**
+ * An interface `error` event: a {@link CustomEvent} carrying an `Error`.
+ *
  * @typedef {CustomEvent<Error>} ErrorEvent
  */
 
 /**
+ * An interface `packet` event: a {@link CustomEvent} carrying a received
+ * {@link Packet}.
+ *
  * @typedef {CustomEvent<{packet: import("../core/packet.js").Packet}>} PacketEvent
  */
 
 /**
+ * Snapshot of an interface's identity and byte counters (returned by
+ * {@link Interface#getStats}), mirroring the Python reference stats fields.
+ *
  * @typedef {Object} InterfaceStats
  * @property {string} name - Human-readable interface name.
  * @property {boolean} online - Whether the interface is currently connected.
@@ -40,6 +48,8 @@ import { LogLevel, log } from "../utils/log.js";
  */
 
 /**
+ * `detail` payload of an interface `reconnecting` event.
+ *
  * @typedef {Object} ReconnectingEventDetail
  * @property {number} attempt - The upcoming attempt number (1-based).
  * @property {number} waitSeconds - Seconds waited before this attempt.
@@ -48,6 +58,9 @@ import { LogLevel, log } from "../utils/log.js";
  */
 
 /**
+ * An interface `reconnecting` event: a {@link CustomEvent} whose `detail` is a
+ * {@link ReconnectingEventDetail}.
+ *
  * @typedef {CustomEvent<ReconnectingEventDetail>} ReconnectingEvent
  */
 
