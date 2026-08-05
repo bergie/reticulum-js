@@ -17,6 +17,8 @@
  * in every LXMF module.
  */
 
+/* @ts-self-types="../../types/src/lxmf/index.d.ts" */
+
 export {
   buildAnnounceAppData,
   buildPropagationNodeAppData,

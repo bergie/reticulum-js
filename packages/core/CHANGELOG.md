@@ -1,6 +1,17 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **JSR entrypoint guard** (`scripts/check-jsr-entrypoints.mjs`, wired into the
+  root `test` script as `check:jsr`): fails the build when any `jsr.json`
+  entrypoint lacks a leading module doc or a `/* @ts-self-types="…" */` pointer
+  to its generated `.d.ts`. This is the offline, root-cause check for the slow-
+  type regressions below — a forgotten pointer turns the entrypoint into an
+  `unsupported-javascript-entrypoint` slow type that caps the package's JSR
+  score at ~70%. Runs in every `npm test` (local, CI, release checks); when the
+  generated `types/` is present it also verifies the referenced `.d.ts` was
+  actually emitted.
+
 ### Fixed
 - **JSR publish of `@reticulum/node` blocked by unresolved deep imports**:
   the JSR `exports` map was missing the subpaths that `@reticulum/node`
@@ -10,6 +21,16 @@
   so `deno publish` failed building the `@reticulum/node` module graph with
   `Module not found "…/@reticulum/core/src/lxmf/message_store.js"`. Added
   those three subpaths to the JSR `exports` map.
+- **`@reticulum/core` JSR score regression — slow types & a missing module
+  doc**: the three entrypoints added above (`src/lxmf/index.js`,
+  `src/lxmf/message_store.js`, `src/rfed/index.js`) and
+  `src/webrtc/signaling.js` lacked the `/* @ts-self-types="…" */` pointer to
+  their generated `.d.ts`, so JSR flagged all four as
+  `unsupported-javascript-entrypoint` slow types — and a package with slow
+  types cannot score above ~70% (the score dropped to 64%). Added the pointers
+  to all four, and moved `signaling.js`'s `/** @file … */` block above its
+  imports so JSR counts it as the module doc. `jsr publish --dry-run` now
+  reports zero warnings.
 
 ## [0.6.0] - 2026-08-05
 ### Added

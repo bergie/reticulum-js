@@ -16,6 +16,8 @@
  * every rfed module.
  */
 
+/* @ts-self-types="../../types/src/rfed/index.d.ts" */
+
 export {
   parseFanoutPayload,
   parseSendPayload,

@@ -1,11 +1,3 @@
-import { Destination } from "../core/destination.js";
-import { Identity } from "../core/identity.js";
-import { DestType } from "../core/packet.js";
-import { Resource } from "../core/resource.js";
-import { WebRTCInterface } from "../interfaces/webrtc.js";
-import { toHex } from "../utils/encoding.js";
-import { LogLevel, log } from "../utils/log.js";
-
 /**
  * @file signaling.js
  * @description WebRTC transport-upgrade signaling orchestrator (work doc #19).
@@ -39,6 +31,16 @@ import { LogLevel, log } from "../utils/log.js";
  * implements is the canonical one and is documented in
  * `documents/WebRTC Transport.md` so other languages can interoperate.
  */
+
+/* @ts-self-types="../../types/src/webrtc/signaling.d.ts" */
+
+import { Destination } from "../core/destination.js";
+import { Identity } from "../core/identity.js";
+import { DestType } from "../core/packet.js";
+import { Resource } from "../core/resource.js";
+import { WebRTCInterface } from "../interfaces/webrtc.js";
+import { toHex } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
 
 /**
  * Default destination name for the WebRTC signaling family. Both peers must

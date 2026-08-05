@@ -10,6 +10,8 @@
  * addressed to it) mirror the Python `message_entry[0] == remote_hash` filter.
  */
 
+/* @ts-self-types="../../types/src/lxmf/message_store.d.ts" */
+
 import { toHex } from "../utils/encoding.js";
 
 /**
