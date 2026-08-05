@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.1] - 2026-08-05
 ### Added
 - **JSR entrypoint guard** (`scripts/check-jsr-entrypoints.mjs`, wired into the
   root `test` script as `check:jsr`): fails the build when any `jsr.json`

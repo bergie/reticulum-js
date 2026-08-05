@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-05
+
 ## [0.6.0] - 2026-08-05
 ### Added
 - Optional TLS termination (`ssl: true` with `certFile`/`keyFile`), mirroring
