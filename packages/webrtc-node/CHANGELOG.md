@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.2] - 2026-08-11
 ### Changed
 - **Documented the re-exported `RTCPeerConnection`**: added a doc comment on the
   `export { RTCPeerConnection }` statement describing the package's intent. The

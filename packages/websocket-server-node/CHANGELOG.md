@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.2] - 2026-08-11
 ### Changed
 - **Documented the `WebSocketServerInterfaceOptions` typedef**: added a leading
   description (it previously had only `@property` tags, which JSR does not count

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.2] - 2026-08-11
 ### Added
 - **`Transport.onAnnounce(app, aspect, callback)`** — convenience wrapper for
   aspect-filtered announce handling. Only emits callbacks for announces matching

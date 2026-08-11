@@ -1,5 +1,52 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.6.2] - 2026-08-11
+### Added
+- **core**: **`Transport.onAnnounce(app, aspect, callback)`** — convenience wrapper for
+  aspect-filtered announce handling. Only emits callbacks for announces matching
+  the given `app.aspect`. Returns an unsubscribe function. Similar to Python
+  Reticulum's `Transport.register_announce_handler` with an `aspect_filter`,
+  while keeping Reticulum.js's EventTarget-based architecture.
+  - Example: `const unsubscribe = rns.transport.onAnnounce("rfed", "node",
+    (detail) => { console.log("RFed peer:", toHex(detail.destinationHash)); });`
+- **core**: **rfed automatic sync infrastructure** — announce handling infrastructure in
+  place (`RFedNode._onAnnounce()` filters by `rfed.node` nameHash and tracks
+  peers via `FedSync.peerHeard()`). Full auto-sync tests pending test
+  `LoopbackTransport` fix to emit announce events in the correct format
+  (nameHash/appData extraction from announce payload).
+- **core**: **JSR symbol-doc coverage gate** (`scripts/jsr-doc-coverage.mjs`): a
+  `deno doc`-based enumerator of each package's public API that reports which
+  exported symbols lack a doc *description* and, with `--min 80`, fails below
+  the threshold. Calibrated to match JSR's "has docs for most symbols" metric
+  exactly. Wired into the release checks (deno-gated); packages with fewer than
+  five public symbols are reported but not gated (their % is structurally
+  volatile).
+### Changed
+- **core**: **Symbol-documentation coverage lifted past the JSR 80% threshold.** A JSDoc
+  block with only tags (`@enum`/`@typedef`+`@property`/`@returns`) and no
+  leading description does **not** count as documented for JSR. Added leading
+  descriptions to: `ResourceStatus`, `PeerState`, `getLogLevel`, the
+  `MessageStore` class and `MessageStoreOptions`, five `base.js` event/stats
+  typedefs, and the `LXMFConstants`/`LXStamper`/`RFedConstants` namespace
+  re-exports. The local proxy reports core at 92% (the residual gaps are tool
+  artifacts, not real undocumented code: `deno doc` can't read
+  `webrtc/signaling.d.ts`, and barrels expose no symbols).
+- **core**: **RFedNode fedSync initialization** — `RFedNode` now initializes `FedSync` in
+  the constructor with optional static peers and tracks peer state for automatic
+  sync via `syncPeers()`. Matches Rust reference pattern for periodic peer
+  discovery and sync scheduling.
+- **webrtc-node**: **Documented the re-exported `RTCPeerConnection`**: added a doc comment on the
+  `export { RTCPeerConnection }` statement describing the package's intent. The
+  symbol's declaration lives in `werift`, so `deno doc`/JSR read werift's own
+  doc for the type (this local comment documents intent rather than moving the
+  package's 50% symbol-doc figure, which is structural to the single external
+  re-export).
+- **websocket-server-node**: **Documented the `WebSocketServerInterfaceOptions` typedef**: added a leading
+  description (it previously had only `@property` tags, which JSR does not count
+  as documented). Local JSR-doc proxy now reports 100% symbol coverage.
+
 ## [0.6.1] - 2026-08-05
 ### Added
 - **core**: **JSR entrypoint guard** (`scripts/check-jsr-entrypoints.mjs`, wired into the
