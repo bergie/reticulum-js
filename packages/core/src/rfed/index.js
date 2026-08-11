@@ -30,6 +30,7 @@ export { RFedClient } from "./client.js";
 /** rfed protocol constants (magic, version, opcodes, …). */
 export * as RFedConstants from "./constants.js";
 export { DeferredQueue } from "./deferred_queue.js";
+export { FedSync } from "./fed_sync.js";
 export { RFedNode } from "./node.js";
 export {
   encodeWakePayload,

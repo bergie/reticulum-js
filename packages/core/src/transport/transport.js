@@ -23,6 +23,7 @@ import {
 import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
+import { aspectNameHash } from "./discovery.js";
 import { PathState, RoutingTable } from "./router.js";
 
 /**
@@ -912,6 +913,43 @@ export class TransportCore extends EventTarget {
    */
   setPathHops(destinationHash, hops) {
     return this.routingTable.setHops(destinationHash, hops);
+  }
+
+  /**
+   * Register an aspect-filtered announce handler.
+   *
+   * Convenience wrapper around the standard EventTarget API that filters
+   * announces by destination aspect. Only emits callbacks for announces
+   * matching the given `app.aspect`.
+   *
+   * Similar to Python Reticulum's `Transport.register_announce_handler`
+   * with an `aspect_filter`.
+   *
+   * @param {string} app - App name (e.g., "rfed")
+   * @param {string} aspect - Aspect string (e.g., "node")
+   * @param {Function} callback - Called with announce event detail
+   * @returns {Function} Unsubscribe function
+   *
+   * @example
+   * ```js
+   * const unsubscribe = rns.transport.onAnnounce("rfed", "node", (detail) => {
+   *   console.log("RFed peer announce:", toHex(detail.destinationHash));
+   * });
+   * // Later: unsubscribe();
+   * ```
+   */
+  onAnnounce(app, aspect, callback) {
+    const nameHashPromise = aspectNameHash(`${app}.${aspect}`);
+
+    const handler = async (event) => {
+      const expected = await nameHashPromise;
+      if (event.detail?.nameHash && bytesEqual(event.detail.nameHash, expected)) {
+        callback(event.detail);
+      }
+    };
+
+    this.addEventListener("announce", handler);
+    return () => this.removeEventListener("announce", handler);
   }
 
   /**

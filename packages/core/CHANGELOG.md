@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 ### Added
+- **`Transport.onAnnounce(app, aspect, callback)`** — convenience wrapper for
+  aspect-filtered announce handling. Only emits callbacks for announces matching
+  the given `app.aspect`. Returns an unsubscribe function. Similar to Python
+  Reticulum's `Transport.register_announce_handler` with an `aspect_filter`,
+  while keeping Reticulum.js's EventTarget-based architecture.
+  - Example: `const unsubscribe = rns.transport.onAnnounce("rfed", "node",
+    (detail) => { console.log("RFed peer:", toHex(detail.destinationHash)); });`
+- **rfed automatic sync infrastructure** — announce handling infrastructure in
+  place (`RFedNode._onAnnounce()` filters by `rfed.node` nameHash and tracks
+  peers via `FedSync.peerHeard()`). Full auto-sync tests pending test
+  `LoopbackTransport` fix to emit announce events in the correct format
+  (nameHash/appData extraction from announce payload).
 - **JSR symbol-doc coverage gate** (`scripts/jsr-doc-coverage.mjs`): a
   `deno doc`-based enumerator of each package's public API that reports which
   exported symbols lack a doc *description* and, with `--min 80`, fails below
@@ -20,6 +32,10 @@
   re-exports. The local proxy reports core at 92% (the residual gaps are tool
   artifacts, not real undocumented code: `deno doc` can't read
   `webrtc/signaling.d.ts`, and barrels expose no symbols).
+- **RFedNode fedSync initialization** — `RFedNode` now initializes `FedSync` in
+  the constructor with optional static peers and tracks peer state for automatic
+  sync via `syncPeers()`. Matches Rust reference pattern for periodic peer
+  discovery and sync scheduling.
 
 ## [0.6.1] - 2026-08-05
 ### Added

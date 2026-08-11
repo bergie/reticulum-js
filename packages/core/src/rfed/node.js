@@ -24,13 +24,19 @@
 import { Allow, Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
-import { concatBytes, toHex } from "../utils/encoding.js";
+import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
-import { parseSendPayload } from "./blob.js";
+import {
+  parseFanoutPayload,
+  parseSendPayload,
+  unwrapChannelMessage,
+  wrapChannelMessage,
+} from "./blob.js";
 import { BlobStore } from "./blob_store.js";
 import { HASH_LENGTH, STAMP_SIZE } from "./constants.js";
 import { DeferredQueue } from "./deferred_queue.js";
+import { FedSync } from "./fed_sync.js";
 import {
   encodeWakePayload,
   fromHex,
@@ -224,12 +230,24 @@ export class RFedNode {
     this.notifyRegistry = stores.notify ?? new NotifyRegistry();
 
     /**
+     * Federation sync engine (SPEC §4). Tracks peers and schedules sync attempts.
+     * @type {FedSync}
+     */
+    this.fedSync = new FedSync({
+      staticPeers: config.staticPeers ?? [],
+      localNodeHash: null, // Will be set after start() when nodeHash is known
+    });
+
+    /**
      * Subscriber presence: hex(rfed.delivery hash) → Unix seconds of last
      * announce. Populated from the transport `"announce"` event.
      * @type {Map<string, number>}
      * @private
      */
     this._presence = new Map();
+
+    /** @type {Uint8Array|null} Precomputed name hash for "rfed.node" aspect. */
+    this._rfedNodeNameHash = null;
 
     /** @type {import("../core/destination.js").Destination|null} */
     this._nodeDest = null;
@@ -248,7 +266,7 @@ export class RFedNode {
     /** @type {import("../core/destination.js").Destination|null} */
     this._notifyUnregisterDest = null;
 
-    /** Bound announce listener (so stop() can detach it). */
+    // @type {Function|null} Bound announce listener (so stop() can detach it). */
     this._announceListener = null;
 
     /** @type {boolean} */
@@ -267,6 +285,14 @@ export class RFedNode {
    */
   async start() {
     if (this._started) return;
+
+    // Precompute name hash for "rfed.node" aspect announce filtering
+    this._rfedNodeNameHash = (
+      await crypto.subtle.digest(
+        "SHA-256",
+        new TextEncoder().encode("rfed.node"),
+      )
+    ).slice(0, 10);
 
     this._nodeDest = await this._bringUpDest(NODE_NAME);
     // `rfed.node` serves peer sync (SPEC §4): OFFER (manifest) + MESSAGE_GET
@@ -395,6 +421,44 @@ export class RFedNode {
       this._announceListener = null;
     }
     this._started = false;
+  }
+
+  /**
+   * Returns peers due for sync (internal helper).
+   * Called by syncPeers().
+   *
+   * @returns {Uint8Array[]} Array of peer destination hashes due for sync
+   * @private
+   */
+  _getPeersDueForSync() {
+    return this.fedSync.tick();
+  }
+
+  /**
+   * Syncs with all federation peers that are due for sync.
+   * Matches LXMF router's syncPeers() API pattern.
+   *
+   * Called periodically by the runner (e.g., every 10-60 seconds).
+   *
+   * @returns {Promise<number>} Total number of blobs ingested from all peers
+   */
+  async syncPeers() {
+    const duePeers = this._getPeersDueForSync();
+    let totalIngested = 0;
+    for (const peerHash of duePeers) {
+      try {
+        const ingested = await this.syncWithPeer(peerHash);
+        totalIngested += ingested;
+      } catch (error) {
+        log(
+          "RFedNode",
+          `Sync with peer ${toHex(peerHash)} failed: ${error}`,
+          LogLevel.WARNING,
+        );
+        // syncErr was already called internally
+      }
+    }
+    return totalIngested;
   }
 
   /**
@@ -1001,6 +1065,21 @@ export class RFedNode {
    * @returns {Promise<number>}
    */
   async syncWithPeer(peerNodeHash) {
+    this.fedSync.syncStarted(peerNodeHash);
+    try {
+      const ingested = await this._syncWithPeerInternal(peerNodeHash);
+      this.fedSync.syncOk(peerNodeHash);
+      return ingested;
+    } catch (error) {
+      this.fedSync.syncErr(peerNodeHash);
+      throw error;
+    }
+  }
+
+  /**
+   * Internal sync implementation without peer tracking side-effects.
+   */
+  async _syncWithPeerInternal(peerNodeHash) {
     const peerIdentity = await Destination.recall(peerNodeHash);
     const dest = await Destination.OUT(
       NODE_NAME,
@@ -1206,8 +1285,34 @@ export class RFedNode {
    */
   async _onAnnounce(event) {
     const dh = event?.detail?.destinationHash;
+    const nameHash = event?.detail?.nameHash;
     if (!dh || dh.length !== HASH_LENGTH) return;
     this._presence.set(toHex(dh), Date.now() / 1000);
+
+    // Track federation peers from rfed.node announces via nameHash filtering
+    // Skip our own announce
+    if (
+      toHex(dh) !== toHex(this._nodeDest?.destinationHash) &&
+      this._rfedNodeNameHash &&
+      nameHash &&
+      bytesEqual(nameHash, this._rfedNodeNameHash)
+    ) {
+      // This is an rfed.node announce - track the peer
+      let peeringCost = null;
+      // Try to decode rfed.node app_data to get stamp_cost
+      const appData = event?.detail?.appData;
+      if (appData && appData.length > 0) {
+        try {
+          const decoded = MicroMsgPack.decode(appData);
+          if (decoded && typeof decoded === "object") {
+            peeringCost = decoded.stamp_cost ?? null;
+          }
+        } catch (e) {
+          // Ignore invalid app_data
+        }
+      }
+      this.fedSync.peerHeard(dh, peeringCost);
+    }
 
     const sub = this.subscriptions.entryForDeliveryHash(dh);
     if (sub) await this._drainDeferredFor(sub);
