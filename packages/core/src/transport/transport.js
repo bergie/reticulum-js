@@ -943,7 +943,10 @@ export class TransportCore extends EventTarget {
 
     const handler = async (event) => {
       const expected = await nameHashPromise;
-      if (event.detail?.nameHash && bytesEqual(event.detail.nameHash, expected)) {
+      if (
+        event.detail?.nameHash &&
+        bytesEqual(event.detail.nameHash, expected)
+      ) {
         callback(event.detail);
       }
     };
