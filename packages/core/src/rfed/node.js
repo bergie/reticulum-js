@@ -143,6 +143,8 @@ const PENDING_BACKUP_CAP = 1024;
  * @property {Uint8Array[]} [config.trustedBackupPeers] If non-empty, only
  *   `/rfed/backup/push` requests whose owner `rfed.node` hash is in this list
  *   are accepted.
+ * @property {Uint8Array[]} [config.staticPeers] Static federation peers that are always
+ *   tracked regardless of announce presence (for `FedSync`).
  * @property {{ blobStore?: BlobStore, subscriptions?: SubscriptionTable, deferred?: DeferredQueue, notify?: NotifyRegistry }} [stores]
  *   Pre-built stores to adopt instead of fresh in-memory ones. A runner passes
  *   stores loaded from disk (via `@reticulum/node`'s `loadRFedStores`) so state
@@ -287,12 +289,14 @@ export class RFedNode {
     if (this._started) return;
 
     // Precompute name hash for "rfed.node" aspect announce filtering
-    this._rfedNodeNameHash = (
-      await crypto.subtle.digest(
-        "SHA-256",
-        new TextEncoder().encode("rfed.node"),
-      )
-    ).slice(0, 10);
+    this._rfedNodeNameHash = new Uint8Array(
+      (
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode("rfed.node"),
+        )
+      ).slice(0, 10),
+    );
 
     this._nodeDest = await this._bringUpDest(NODE_NAME);
     // `rfed.node` serves peer sync (SPEC §4): OFFER (manifest) + MESSAGE_GET
@@ -1078,6 +1082,7 @@ export class RFedNode {
 
   /**
    * Internal sync implementation without peer tracking side-effects.
+   * @param {Uint8Array} peerNodeHash
    */
   async _syncWithPeerInternal(peerNodeHash) {
     const peerIdentity = await Destination.recall(peerNodeHash);
@@ -1292,7 +1297,10 @@ export class RFedNode {
     // Track federation peers from rfed.node announces via nameHash filtering
     // Skip our own announce
     if (
-      toHex(dh) !== toHex(this._nodeDest?.destinationHash) &&
+      toHex(dh) !==
+        (this._nodeDest?.destinationHash
+          ? toHex(this._nodeDest.destinationHash)
+          : "") &&
       this._rfedNodeNameHash &&
       nameHash &&
       bytesEqual(nameHash, this._rfedNodeNameHash)

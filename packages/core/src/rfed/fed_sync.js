@@ -35,10 +35,11 @@ const SYNC_BACKOFF_MAX = 3600;
  */
 export class FedSync {
   /**
-   * @param {Object} [options]
-   * @property {number} [options.pruneAgeSecs] Age after which unseen peers are pruned (default 7200 = 2*SYNC_BACKOFF_MAX)
-   * @property {Uint8Array[]} [options.staticPeers] Static peer hashes (never pruned)
-   * @property {Uint8Array|null} [options.localNodeHash] This node's own rfed.node hash (for self-announce filtering)
+   * @param {{
+   *   pruneAgeSecs?: number,
+   *   staticPeers?: Uint8Array[],
+   *   localNodeHash?: Uint8Array | null
+   * }} [options]
    */
   constructor({
     pruneAgeSecs = 7200,
@@ -48,7 +49,9 @@ export class FedSync {
     /** @type {Map<string, FedPeer>} */
     this.peers = new Map();
     this.pruneAgeSecs = pruneAgeSecs;
-    this.staticPeers = staticPeers.map((h) => toHex(h));
+    this.staticPeers = staticPeers.map((h) =>
+      toHex(/** @type {Uint8Array} */ (h)),
+    );
     this.localNodeHash = localNodeHash ? toHex(localNodeHash) : null;
   }
 

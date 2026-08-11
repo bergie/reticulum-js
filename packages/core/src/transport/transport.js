@@ -941,13 +941,14 @@ export class TransportCore extends EventTarget {
   onAnnounce(app, aspect, callback) {
     const nameHashPromise = aspectNameHash(`${app}.${aspect}`);
 
-    const handler = async (event) => {
+    const handler = async (/** @type {Event} */ event) => {
       const expected = await nameHashPromise;
-      if (
-        event.detail?.nameHash &&
-        bytesEqual(event.detail.nameHash, expected)
-      ) {
-        callback(event.detail);
+      const detail =
+        /** @type {{nameHash?: Uint8Array, destinationHash: Uint8Array, appData?: Uint8Array}} */ (
+          "detail" in event ? event.detail : undefined
+        );
+      if (detail?.nameHash && bytesEqual(detail.nameHash, expected)) {
+        callback(detail);
       }
     };
 
