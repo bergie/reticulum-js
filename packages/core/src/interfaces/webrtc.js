@@ -1,5 +1,5 @@
 /**
- * @file webrtc.js
+ * @module @reticulum/core/src/interfaces/webrtc.js
  * @description Reticulum interface transport over a WebRTC `RTCDataChannel`.
  *
  * WebRTC gives two peers a direct, NAT-traversing, DTLS-encrypted data channel

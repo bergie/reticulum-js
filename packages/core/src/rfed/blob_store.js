@@ -29,6 +29,7 @@ const EVICT_CHECK_INTERVAL_SECS = 3600;
 const DEFAULT_STORAGE_LIMIT_BYTES = 2 * 1024 * 1024 * 1024;
 
 /**
+ * Metadata for a stored blob.
  * @typedef {Object} BlobMeta
  * @property {Uint8Array} messageId - 16-byte random id (the store key).
  * @property {Uint8Array} destinationHash - 16-byte channel hash.

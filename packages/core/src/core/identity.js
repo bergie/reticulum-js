@@ -1,5 +1,5 @@
 /**
- * @file identity.js
+ * @module @reticulum/core/src/core/identity.js
  * @description Identity creation, signing, and verification
  */
 

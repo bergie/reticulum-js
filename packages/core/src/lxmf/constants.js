@@ -1,5 +1,5 @@
 /**
- * @file constants.js
+ * @module @reticulum/core/src/lxmf/constants.js
  * @description LXMF field constants, audio modes, renderers, and related
  *   specifiers. Mirrors `LXMF/LXMF.py` (verified against LXMF 1.0.1).
  */
@@ -47,10 +47,15 @@ export const PROPAGATION_LIMIT = 256;
 export const SYNC_LIMIT = 10240;
 /** Per-delivery-transfer limit (KB) for direct/link downloads. */
 export const DELIVERY_LIMIT = 1000;
+/** Minimum propagation cost (KB) for accepting a message onto a node. */
 export const PROPAGATION_COST_MIN = 13;
+/** Standard propagation cost (KB) for a message transfer. */
 export const PROPAGATION_COST = 16;
+/** Flexible propagation cost (KB) — adjusted by back-pressure. */
 export const PROPAGATION_COST_FLEX = 3;
+/** Per-peer peering cost (KB) for sync transfers. */
 export const PEERING_COST = 18;
+/** Maximum peering cost (KB) — a peer exceeding this is dropped. */
 export const MAX_PEERING_COST = 26;
 
 /** Sync strategy: sync only when explicitly requested (LXMPeer.STRATEGY_LAZY). */
@@ -61,14 +66,21 @@ export const SYNC_STRATEGY_PERSISTENT = 0x02;
 export const DEFAULT_SYNC_STRATEGY = SYNC_STRATEGY_PERSISTENT;
 
 // --- Peer error codes returned from propagation request handlers (LXMPeer.py) ---
+/** Peer error: the requesting identity was not supplied. */
 export const PEER_ERROR_NO_IDENTITY = 0xf0;
+/** Peer error: the requesting identity has no access to the node. */
 export const PEER_ERROR_NO_ACCESS = 0xf1;
+/** Peer error: the supplied identity key is invalid. */
 export const PEER_ERROR_INVALID_KEY = 0xf3;
+/** Peer error: the submitted message data is invalid. */
 export const PEER_ERROR_INVALID_DATA = 0xf4;
+/** Peer error: the supplied stamp is invalid or insufficient. */
 export const PEER_ERROR_INVALID_STAMP = 0xf5;
+/** Peer error: the requester is being rate-limited / throttled. */
 export const PEER_ERROR_THROTTLED = 0xf6;
 
 // --- Propagation transfer states (LXMRouter.py PR_*) ---
+/** Lifecycle states of a propagation transfer (`LXMRouter.py` `PR_*`). */
 export const TransferState = Object.freeze({
   IDLE: 0x00,
   PATH_REQUESTED: 0x01,
@@ -142,25 +154,44 @@ export const FIELD_DEBUG = 0xff;
 
 // --- Audio modes for FIELD_AUDIO (§5.9.3) ---
 // Codec2 Audio Modes
+/** Codec2 450PWB audio mode. */
 export const AM_CODEC2_450PWB = 0x01;
+/** Codec2 450 audio mode. */
 export const AM_CODEC2_450 = 0x02;
+/** Codec2 700C audio mode. */
 export const AM_CODEC2_700C = 0x03;
+/** Codec2 1200 audio mode. */
 export const AM_CODEC2_1200 = 0x04;
+/** Codec2 1300 audio mode. */
 export const AM_CODEC2_1300 = 0x05;
+/** Codec2 1400 audio mode. */
 export const AM_CODEC2_1400 = 0x06;
+/** Codec2 1600 audio mode. */
 export const AM_CODEC2_1600 = 0x07;
+/** Codec2 2400 audio mode. */
 export const AM_CODEC2_2400 = 0x08;
+/** Codec2 3200 audio mode. */
 export const AM_CODEC2_3200 = 0x09;
 // Opus Audio Modes
+/** Opus OGG audio mode. */
 export const AM_OPUS_OGG = 0x10;
+/** Opus low-bandwidth audio mode. */
 export const AM_OPUS_LBW = 0x11;
+/** Opus medium-bandwidth audio mode. */
 export const AM_OPUS_MBW = 0x12;
+/** Opus push-to-talk audio mode. */
 export const AM_OPUS_PTT = 0x13;
+/** Opus real-time half-duplex audio mode. */
 export const AM_OPUS_RT_HDX = 0x14;
+/** Opus real-time full-duplex audio mode. */
 export const AM_OPUS_RT_FDX = 0x15;
+/** Opus standard audio mode. */
 export const AM_OPUS_STANDARD = 0x16;
+/** Opus high-quality audio mode. */
 export const AM_OPUS_HQ = 0x17;
+/** Opus broadcast audio mode. */
 export const AM_OPUS_BROADCAST = 0x18;
+/** Opus lossless audio mode. */
 export const AM_OPUS_LOSSLESS = 0x19;
 /** Custom audio mode — client must inspect the data to determine codec. */
 export const AM_CUSTOM = 0xff;

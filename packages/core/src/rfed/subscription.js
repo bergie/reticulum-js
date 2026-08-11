@@ -26,6 +26,7 @@ const APP_NAME = "rfed";
 const DELIVERY_ASPECT = "delivery";
 
 /**
+ * An active channel subscription entry.
  * @typedef {Object} SubscriptionEntry
  * @property {Uint8Array} subscriberHash - 16-byte subscriber identity hash.
  * @property {Uint8Array} channelHash - 16-byte channel identity hash.

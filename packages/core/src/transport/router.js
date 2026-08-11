@@ -34,6 +34,7 @@ export const PathState = {
 };
 
 /**
+ * A routing table entry mapping a destination to its next hop.
  * @typedef {Object} Route
  * @property {import("../interfaces/base.js").Interface|null} interface The
  *   interface the destination was announced through — i.e. the outbound

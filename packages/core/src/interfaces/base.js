@@ -1,5 +1,5 @@
 /**
- * @file base.js
+ * @module @reticulum/core/src/interfaces/base.js
  * @description Interface abstract base class
  */
 

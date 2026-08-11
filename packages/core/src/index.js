@@ -1,5 +1,6 @@
 /**
- * Reticulum Network System - JavaScript Implementation
+ * @module @reticulum/core
+ * @description Reticulum Network System - JavaScript Implementation
  * Zero-dependency, EUPL-1.2 compliant protocol stack.
  */
 

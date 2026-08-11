@@ -1,5 +1,5 @@
 /**
- * @file websocket.js
+ * @module @reticulum/core/src/interfaces/websocket.js
  * @description Reticulum interface transport over WebSocket (RFC 6455)
  *
  * A WebSocket is message-oriented, so the default (`raw`) framing sends each

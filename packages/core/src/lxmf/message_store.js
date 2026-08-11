@@ -1,5 +1,5 @@
 /**
- * @file message_store.js
+ * @module @reticulum/core/src/lxmf/message_store.js
  * @description In-memory store for propagated LXMF messages on a propagation
  *   node (`LXMRouter.propagation_entries` in the Python reference).
  *

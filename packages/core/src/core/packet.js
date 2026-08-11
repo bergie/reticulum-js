@@ -1,5 +1,5 @@
 /**
- * @file packet.js
+ * @module @reticulum/core/src/core/packet.js
  * @description Binary serialization/deserialization for Reticulum packets
  */
 

@@ -1,5 +1,6 @@
 /**
- * Minimal, zero-dependency encoding utilities for the Reticulum Network System.
+ * @module @reticulum/core/src/utils/encoding.js
+ * @description Minimal, zero-dependency encoding utilities for the Reticulum Network System.
  * Strictly utilizes standard ES6 TypedArrays and Strings.
  */
 

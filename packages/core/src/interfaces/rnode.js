@@ -1,5 +1,5 @@
 /**
- * @file rnode.js
+ * @module @reticulum/core/src/interfaces/rnode.js
  * @description Transport-agnostic RNode interface base class.
  *
  * An RNode is a LoRa radio (typically over serial/USB/Bluetooth) that speaks

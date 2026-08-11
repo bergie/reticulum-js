@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 ### Fixed
+- **JSR documentation score: module docs & symbol coverage.** The `@reticulum/core`
+  package now scores 100% on both JSR doc checks ("Has module docs in all
+  entrypoints" and "Has docs for most symbols"). Three root causes were addressed:
+  - `@file` tags were replaced with `@module` tags so deno_doc recognizes
+    them as module-level documentation for every entrypoint.
+  - Typedefs (`@typedef`) and enums (`@enum`) without description text produced
+    undocumented typeAlias/namespace symbols; descriptions were added to all
+    affected typedefs and enums.
+  - A new `scripts/fix-dts.mjs` post-generation step (run automatically via
+    the `types` npm script) fixes two tsc 6.x `.d.ts` generation quirks:
+    (1) `@module` JSDoc is not preserved when imports appear between the JSDoc
+    and the first declaration, and (2) `@enum`/`@namespace` JSDoc is attached
+    to the `type` declaration but not the `namespace` declaration (tsc splits
+    `@enum` into `type` + `namespace`). The script copies JSDoc to both.
 - **rfed `FedSync` now honours `fromStaticOnly`** (mirrors Rust
   `from_static_only`). Previously the JS engine tracked *only* static peers
   whenever any were configured, diverging from the Rust default (`false` →

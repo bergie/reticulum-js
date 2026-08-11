@@ -7,6 +7,7 @@ import { decryptAES, encryptAES } from "./ciphers.js";
 import { hmac } from "./hmac.js";
 
 /**
+ * Token encryption cipher modes.
  * @enum {string}
  */
 export const MODE = {

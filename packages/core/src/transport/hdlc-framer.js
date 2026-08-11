@@ -1,5 +1,5 @@
 /**
- * @file hdlc-framer.js
+ * @module @reticulum/core/src/transport/hdlc-framer.js
  * @description HDLC-based stream framing for RNS packets.
  *
  * Used by stream-oriented interfaces (TCP, local Unix socket). Mirrors the

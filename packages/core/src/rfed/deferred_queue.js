@@ -21,6 +21,7 @@
 import { fromHex, toHex } from "../utils/encoding.js";
 
 /**
+ * A blob awaiting async deferred processing.
  * @typedef {Object} PendingBlob
  * @property {Uint8Array} channelHash - 16-byte channel hash (for re-addressing).
  * @property {Uint8Array} blob - Raw inner blob (stamp already stripped).

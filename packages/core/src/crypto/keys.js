@@ -4,6 +4,7 @@
  */
 
 /**
+ * An asymmetric key pair (private + public CryptoKey).
  * @typedef KeyPair
  * @property {CryptoKey} privateKey
  * @property {CryptoKey} publicKey

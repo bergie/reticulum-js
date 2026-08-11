@@ -1,4 +1,11 @@
 /**
+ * @module @reticulum/core/src/utils/log.js
+ * @description Logging utilities for the Reticulum Network System: log levels,
+ * threshold control, and the `log()` emitter. Log levels and names are
+ * aligned with the Python RNS reference (`RNS.LOG_*` in `RNS/__init__.py`).
+ */
+
+/**
  * Log levels, aligned with the Python RNS reference
  * (`RNS.LOG_*` in `RNS/__init__.py`).
  *

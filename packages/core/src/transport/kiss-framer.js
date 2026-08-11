@@ -1,5 +1,5 @@
 /**
- * @file kiss-framer.js
+ * @module @reticulum/core/src/transport/kiss-framer.js
  * @description KISS (Keep It Simple, Stupid) stream framing for RNS packets.
  *
  * Used by serial-style interfaces (RNode, AX.25/TTY modems) and, optionally,

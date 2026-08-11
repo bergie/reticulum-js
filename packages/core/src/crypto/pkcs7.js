@@ -1,9 +1,10 @@
 /**
- * @file pkcs7.js
+ * @module @reticulum/core/src/crypto/pkcs7.js
  * @description PKCS7 padding and unpadding
  */
 
 /**
+ * PKCS7 padding helpers.
  * @namespace pkcs7
  */
 export const pkcs7 = {

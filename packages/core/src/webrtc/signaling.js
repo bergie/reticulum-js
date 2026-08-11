@@ -1,5 +1,5 @@
 /**
- * @file signaling.js
+ * @module @reticulum/core/src/webrtc/signaling.js
  * @description WebRTC transport-upgrade signaling orchestrator (work doc #19).
  *
  * Bridges Reticulum's low-bandwidth discovery protocol with a high-bandwidth

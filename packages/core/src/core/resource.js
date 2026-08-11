@@ -57,6 +57,7 @@ const HASHMAP_IS_NOT_EXHAUSTED = 0x00;
 const HASHMAP_IS_EXHAUSTED = 0xff;
 
 /**
+ * Minimal bzip2 compressor/decompressor duck-type for Resource compression.
  * @typedef {object} Bzip2
  * @property {(data: Uint8Array) => Uint8Array} compress
  * @property {(data: Uint8Array, outputLen: number) => Uint8Array} decompress

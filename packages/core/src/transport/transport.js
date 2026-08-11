@@ -1,5 +1,5 @@
 /**
- * @file transport.js
+ * @module @reticulum/core/src/transport/transport.js
  * @description Central packet router for a Reticulum node.
  *
  * Routes packets emitted by Interfaces, maintains path and announce tables,

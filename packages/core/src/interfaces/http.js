@@ -1,5 +1,5 @@
 /**
- * @file http.js
+ * @module @reticulum/core/src/interfaces/http.js
  * @description HTTP POST exchange interface (client + Node.js server)
  *
  * A non-canonical transport: the Python reference RNS has no HTTP interface.

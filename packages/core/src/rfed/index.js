@@ -1,5 +1,6 @@
 /**
- * rfed (Reticulum Federation) — public barrel.
+ * @module @reticulum/core/src/rfed/index.js
+ * @description rfed (Reticulum Federation) — public barrel.
  *
  * Wire-compatible with the Rust `rfed` reference (protocol version 1).
  *
