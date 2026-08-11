@@ -1,6 +1,25 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- **rfed `FedSync` now honours `fromStaticOnly`** (mirrors Rust
+  `from_static_only`). Previously the JS engine tracked *only* static peers
+  whenever any were configured, diverging from the Rust default (`false` →
+  track all discovered `rfed.node` peers). A new `fromStaticOnly` option makes
+  the behaviour explicit; the default (`false`) now tracks every announced
+  peer while still seeding static peers for immediate sync.
+- **`RFedNode.start()` now seeds static peers and sets the local node hash**
+  on its `FedSync` engine (Rust `set_local_node_hash` + `seed_static_peers`).
+  The `localNodeHash` was previously left `null` after construction (a latent
+  bug; harmless only because `_onAnnounce` filters self-announces earlier),
+  so a self-announce could in principle be tracked as a peer.
+### Added
+- **rfed auto-sync is now testable end-to-end.** New `test/rfed/fed_sync.test.js`
+  covers peer tracking, backoff (`syncOk`/`syncErr`), static-peer seeding, and
+  pruning; a new `RFedNode` integration test drives `syncPeers()` over the
+  loopback mesh (seeded static peer → `FedSync.tick()` → `syncWithPeer` →
+  ingest → local fanout) — closing the "Full auto-sync tests pending" gap
+  noted in 0.6.2.
 
 ## [0.6.2] - 2026-08-11
 ### Added

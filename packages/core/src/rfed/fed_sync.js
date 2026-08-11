@@ -38,13 +38,15 @@ export class FedSync {
    * @param {{
    *   pruneAgeSecs?: number,
    *   staticPeers?: Uint8Array[],
-   *   localNodeHash?: Uint8Array | null
+   *   localNodeHash?: Uint8Array | null,
+   *   fromStaticOnly?: boolean
    * }} [options]
    */
   constructor({
     pruneAgeSecs = 7200,
     staticPeers = [],
     localNodeHash = null,
+    fromStaticOnly = false,
   } = {}) {
     /** @type {Map<string, FedPeer>} */
     this.peers = new Map();
@@ -53,6 +55,13 @@ export class FedSync {
       toHex(/** @type {Uint8Array} */ (h)),
     );
     this.localNodeHash = localNodeHash ? toHex(localNodeHash) : null;
+    /**
+     * When true, only configured `staticPeers` are tracked; otherwise every
+     * seen `rfed.node` announce is tracked (Rust `from_static_only`, default
+     * false).
+     * @type {boolean}
+     */
+    this.fromStaticOnly = fromStaticOnly;
   }
 
   /**
@@ -67,8 +76,8 @@ export class FedSync {
     // Ignore self-announces
     if (this.localNodeHash === hex) return;
 
-    // Only track static peers if configured
-    if (this.staticPeers.length > 0 && !this.staticPeers.includes(hex)) return;
+    // In static-only mode, ignore peers not in the configured static list
+    if (this.fromStaticOnly && !this.staticPeers.includes(hex)) return;
 
     const nowSec = Date.now() / 1000;
     let peer = this.peers.get(hex);

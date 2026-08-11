@@ -1,6 +1,18 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **`rfed` CLI now uses the `FedSync` auto-sync engine** instead of a manual
+  `--sync-peer` loop. The runner periodically calls `RFedNode.syncPeers()`,
+  which drains all peers due for sync (discovered `rfed.node` announces **and**
+  seeded static peers) with exponential backoff — matching the Rust `tick_sync`
+  main-loop behaviour. New flags:
+  - `--sync-tick-interval <sec>` — `FedSync` tick period (default 30s).
+  - `--from-static-only` — only track configured `--sync-peer` hashes and
+    ignore discovered peers (Rust `--from-static-only`; default off).
+  - `--sync-peer <hex>` is now seeded as an immediately-due static peer
+    (fires on startup) rather than polled on a fixed cadence.
+  - `--sync-interval` now applies only to the LXMF propagation peer sync.
 
 ## [0.6.2] - 2026-08-11
 

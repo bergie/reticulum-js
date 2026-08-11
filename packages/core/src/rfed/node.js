@@ -145,6 +145,9 @@ const PENDING_BACKUP_CAP = 1024;
  *   are accepted.
  * @property {Uint8Array[]} [config.staticPeers] Static federation peers that are always
  *   tracked regardless of announce presence (for `FedSync`).
+ * @property {boolean} [config.fromStaticOnly] When true, only `staticPeers`
+ *   are tracked by `FedSync`; otherwise every seen `rfed.node` announce is
+ *   tracked (Rust `from_static_only`, default false).
  * @property {{ blobStore?: BlobStore, subscriptions?: SubscriptionTable, deferred?: DeferredQueue, notify?: NotifyRegistry }} [stores]
  *   Pre-built stores to adopt instead of fresh in-memory ones. A runner passes
  *   stores loaded from disk (via `@reticulum/node`'s `loadRFedStores`) so state
@@ -237,7 +240,8 @@ export class RFedNode {
      */
     this.fedSync = new FedSync({
       staticPeers: config.staticPeers ?? [],
-      localNodeHash: null, // Will be set after start() when nodeHash is known
+      fromStaticOnly: config.fromStaticOnly ?? false,
+      localNodeHash: null, // Set in start() once nodeHash is known
     });
 
     /**
@@ -411,6 +415,15 @@ export class RFedNode {
     this.rns.transport.addEventListener("announce", this._announceListener);
 
     this._started = true;
+
+    // Federation sync: ignore our own `rfed.node` announce and seed configured
+    // static peers as immediately-due sync targets (Rust `set_local_node_hash`
+    // + `seed_static_peers`).
+    if (this.nodeHash) {
+      this.fedSync.localNodeHash = toHex(this.nodeHash);
+    }
+    this.fedSync.seedStaticPeers();
+
     await this.announce();
   }
 

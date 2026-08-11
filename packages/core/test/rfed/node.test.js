@@ -691,6 +691,112 @@ describe("RFedNode — peer sync (Phase 4)", () => {
     const second = await nodeB.syncWithPeer(aNodeHash);
     assert.strictEqual(second, 0);
   });
+
+  test("syncPeers() drives the FedSync auto-sync: seeded static peer → ingest → fanout", async () => {
+    const wire = new Wire();
+    const aRns = await makeRns();
+    const bRns = await makeRns();
+    const pubRns = await makeRns();
+    const subRns = await makeRns();
+    wire.attach(aRns.transport);
+    wire.attach(bRns.transport);
+    wire.attach(pubRns.transport);
+    wire.attach(subRns.transport);
+
+    const nodeA = new RFedNode({ identity: aRns.identity, rns: aRns.rns });
+    await nodeA.start();
+
+    // Recall every node identity from each of its dest hashes (needed for
+    // OUT dest construction + peer link establishment).
+    for (const rns of [aRns, bRns]) {
+      for (const name of [
+        "rfed.node",
+        "rfed.channel.subscribe",
+        "rfed.channel.unsubscribe",
+        "rfed.channel.publish",
+        "rfed.channel.pull",
+      ]) {
+        const d = await Destination.OUT(name, DestType.SINGLE, rns.identity);
+        await Destination.remember(
+          rnd(16),
+          d.destinationHash,
+          rns.identity.publicKey,
+          null,
+        );
+      }
+    }
+    const aNodeHash = (
+      await Destination.OUT("rfed.node", DestType.SINGLE, aRns.identity)
+    ).destinationHash;
+    const aSubHash = (
+      await Destination.OUT(
+        "rfed.channel.subscribe",
+        DestType.SINGLE,
+        aRns.identity,
+      )
+    ).destinationHash;
+
+    // B is configured to always sync with A (a seeded static peer). start()
+    // seeds it as immediately-due and sets the local node hash so self is
+    // ignored.
+    const nodeB = new RFedNode({
+      identity: bRns.identity,
+      rns: bRns.rns,
+      config: { staticPeers: [aNodeHash] },
+    });
+    await nodeB.start();
+    assert.strictEqual(nodeB.fedSync.peerCount, 1);
+    // The seeded peer is alive + due right now.
+    assert.deepStrictEqual(nodeB.fedSync.tick(), [aNodeHash]);
+
+    const publisher = new RFedClient({
+      identity: pubRns.identity,
+      rns: pubRns.rns,
+    });
+    const subscriber = new RFedClient({
+      identity: subRns.identity,
+      rns: subRns.rns,
+    });
+    const subDeliveryHash = await rfedDeliveryHash(subRns.identity);
+
+    // Subscriber on B subscribes + listens (online on B).
+    await subscriber.subscribe(
+      (
+        await Destination.OUT(
+          "rfed.channel.subscribe",
+          DestType.SINGLE,
+          bRns.identity,
+        )
+      ).destinationHash,
+      "public.autosync",
+    );
+    const received = [];
+    await subscriber.listen((d) => received.push(d));
+    await waitFor(() => nodeB.isOnline(subDeliveryHash));
+
+    // Publisher publishes to A. A has no local subscribers → just stores it.
+    await publisher.publish(
+      aSubHash,
+      "public.autosync",
+      new Message({ content: "auto-synced across two nodes" }),
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    assert.strictEqual(received.length, 0);
+    assert.strictEqual(nodeA.blobStore.allMessageIds().length, 1);
+
+    // One FedSync tick drives the whole session: A is due → syncWithPeer →
+    // OFFER → gap → GET → ingest → fan out to the local subscriber.
+    const ingested = await nodeB.syncPeers();
+    assert.strictEqual(ingested, 1);
+
+    const decoded = await waitFor(() => received[0]);
+    assert.strictEqual(decoded.message.content, "auto-synced across two nodes");
+    assert.strictEqual(decoded.signatureValid, true);
+    assert.strictEqual(nodeB.blobStore.allMessageIds().length, 1);
+
+    // A successful sync resets backoff; the peer is no longer immediately due.
+    assert.deepStrictEqual(nodeB.fedSync.tick(), []);
+  });
 });
 
 describe("RFedNode — notify wake-ups (Phase 5)", () => {

@@ -26,8 +26,12 @@
  *   --stamp-cost <bits>        required PoW leading-zero bits (0 = disabled). Default 16
  *   --stamp-flex <bits>        downward cost tolerance. Default 3
  *   --interface <shared|auto|tcp>   mesh interface. Default "shared"
- *   --sync-peer <hex>          rfed.node hash to sync with periodically (repeatable)
- *   --sync-interval <sec>      peer-sync period. Default 300
+ *   --sync-peer <hex>          rfed.node hash to always sync with (repeatable;
+ *                              seeded immediately + tracked by FedSync)
+ *   --sync-tick-interval <sec> rfed FedSync auto-sync tick period. Default 30
+ *   --from-static-only         only track --sync-peer hashes (ignore discovered
+ *                              rfed.node peers); default tracks all announces
+ *   --sync-interval <sec>      LXMF propagation peer-sync period. Default 300
  *   --maintenance-interval <sec>    maintenance + persist period. Default 3600
  *   --primary-node <hex>       designated backup target for this node's subs (SPEC §11)
  *   --secondary-node <hex>     fallback backup target (repeatable)
@@ -70,6 +74,8 @@ import { loadRFedStores, saveRFedStores } from "../storage/rfed.js";
 
 const MAINTENANCE_INTERVAL_DEFAULT = 3600;
 const SYNC_INTERVAL_DEFAULT = 300;
+/** rfed FedSync auto-sync tick cadence (Rust main loop ticks `tick_sync`). */
+const SYNC_TICK_INTERVAL_DEFAULT = 30;
 /** Backup push + failover tick cadence (SPEC §11; Rust `BACKUP_TICK_SECS`). */
 const BACKUP_INTERVAL_DEFAULT = 30;
 
@@ -91,6 +97,11 @@ async function main() {
         type: "string",
         default: String(SYNC_INTERVAL_DEFAULT),
       },
+      "sync-tick-interval": {
+        type: "string",
+        default: String(SYNC_TICK_INTERVAL_DEFAULT),
+      },
+      "from-static-only": { type: "boolean", default: false },
       "maintenance-interval": {
         type: "string",
         default: String(MAINTENANCE_INTERVAL_DEFAULT),
@@ -128,12 +139,18 @@ async function main() {
     MAINTENANCE_INTERVAL_DEFAULT;
   const syncInterval =
     Number.parseInt(values["sync-interval"], 10) || SYNC_INTERVAL_DEFAULT;
+  const syncTickInterval =
+    Number.parseInt(values["sync-tick-interval"], 10) ||
+    SYNC_TICK_INTERVAL_DEFAULT;
+  const fromStaticOnly = values["from-static-only"];
   const backupInterval =
     Number.parseInt(values["backup-interval"], 10) || BACKUP_INTERVAL_DEFAULT;
   const ownerOfflineSecs =
     Number.parseInt(values["owner-offline-secs"], 10) || 90;
   /** @type {string[]} */
   const syncPeers = values["sync-peer"];
+  /** @type {Uint8Array[]} */
+  const staticPeerHashes = syncPeers.map((h) => fromHex(h));
   const iface = values.interface;
   // Backup failover (SPEC §11). Hashes are 16 bytes (32 hex chars).
   const primaryNode = values["primary-node"]
@@ -223,11 +240,17 @@ async function main() {
         secondaryNodes,
         ownerOfflineSecs,
         trustedBackupPeers,
+        staticPeers: staticPeerHashes,
+        fromStaticOnly,
       },
     });
     await node.start();
     console.log(
-      `rfed.node up — ${toHex(node.nodeHash ?? new Uint8Array())} (stamp cost ${stampCost || "off"}, flex ${stampFlex})`,
+      `rfed.node up — ${toHex(node.nodeHash ?? new Uint8Array())} ` +
+        `(stamp cost ${stampCost || "off"}, flex ${stampFlex}, ` +
+        `${staticPeerHashes.length} static peer(s)` +
+        (fromStaticOnly ? ", static-only" : "") +
+        ")",
     );
     for (const peerHex of syncPeers) {
       rns.transport.requestPath(fromHex(peerHex));
@@ -314,19 +337,21 @@ async function main() {
 
   // ── Periodic: rfed peer sync ─────────────────────────────────────────
   let syncTimer = null;
-  if (node && syncPeers.length > 0) {
-    const syncOnce = async () => {
-      for (const peerHex of syncPeers) {
-        try {
-          const n = await node.syncWithPeer(fromHex(peerHex));
-          if (n > 0) console.log(`rfed sync: ${n} blob(s) from ${peerHex}`);
-        } catch (err) {
-          console.warn(`rfed sync with ${peerHex} failed: ${String(err)}`);
+  if (node) {
+    const syncTick = async () => {
+      try {
+        const ingested = await node.syncPeers();
+        if (ingested > 0) {
+          console.log(
+            `rfed sync: ${ingested} blob(s) from ${node.fedSync.peerCount} peer(s)`,
+          );
         }
+      } catch (err) {
+        console.warn(`rfed sync tick failed: ${String(err)}`);
       }
     };
-    syncTimer = setInterval(syncOnce, syncInterval * 1000);
-    setTimeout(syncOnce, 5000);
+    syncTimer = setInterval(syncTick, syncTickInterval * 1000);
+    setTimeout(syncTick, 5000);
   }
 
   // ── Periodic: LXMF propagation peer sync ─────────────────────────────
