@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.3] - 2026-08-11
 ### Fixed
 - **JSR documentation score: module docs & symbol coverage.** The `@reticulum/core`
   package now scores 100% on both JSR doc checks ("Has module docs in all
