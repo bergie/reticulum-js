@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.6.5] - 2026-08-12
 ### Added
 - **RFed raw (non-LXMF) channel payloads.** The RFed spec treats the
   `inner_blob` opaquely — the node never decrypts or inspects it — so any
