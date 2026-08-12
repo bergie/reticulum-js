@@ -23,7 +23,10 @@ import {
   PacketType,
 } from "../../src/core/packet.js";
 import { Message } from "../../src/lxmf/message.js";
-import { parseSendPayload } from "../../src/rfed/blob.js";
+import {
+  parseSendPayload,
+  unwrapRawChannelMessage,
+} from "../../src/rfed/blob.js";
 import { deliveryHashFor } from "../../src/rfed/channel.js";
 import { RFedClient } from "../../src/rfed/client.js";
 import { validateChannelStamp } from "../../src/rfed/stamp.js";
@@ -542,5 +545,103 @@ describe("rfed client — unsubscribe", () => {
       1,
       "no further fanout after unsubscribe",
     );
+  });
+});
+
+describe("rfed client — raw (non-LXMF) payloads", () => {
+  test("subscribeRaw + publishRaw round-trips an opaque payload", async () => {
+    const { nodeHash, client } = await fixture();
+
+    const sub = await client.subscribeRaw(nodeHash, "public.raw");
+    assert.strictEqual(sub.ok, true);
+
+    /** @type {any[]} */
+    const received = [];
+    await client.listen((decoded) => received.push(decoded));
+
+    const payload = crypto.getRandomValues(new Uint8Array(170));
+    await client.publishRaw(nodeHash, "public.raw", payload);
+
+    const decoded = await waitFor(() => received[0], 5000);
+    assert.strictEqual(decoded.kind, "raw");
+    assert.deepStrictEqual(decoded.payload, payload);
+    assert.strictEqual(decoded.channelName, "public.raw");
+    assert.deepStrictEqual(
+      decoded.senderIdentity.identityHash,
+      client.identity.identityHash,
+    );
+  });
+
+  test("raw publish honours the cached stamp cost", async () => {
+    const { nodeHash, client } = await fixture({ stampCost: 8 });
+
+    const sub = await client.subscribeRaw(nodeHash, "public.rawstamped");
+    assert.strictEqual(sub.ok, true);
+    assert.strictEqual(sub.stampCost, 8);
+
+    const received = [];
+    await client.listen((d) => received.push(d));
+
+    const payload = new TextEncoder().encode("stamped raw body");
+    await client.publishRaw(nodeHash, "public.rawstamped", payload);
+
+    const decoded = await waitFor(() => received[0], 8000);
+    assert.strictEqual(decoded.kind, "raw");
+    assert.deepStrictEqual(decoded.payload, payload);
+  });
+
+  test("LXMF and raw channels coexist on the same client", async () => {
+    const { nodeHash, client } = await fixture();
+
+    await client.subscribe(nodeHash, "public.lxmf-coexist");
+    await client.subscribeRaw(nodeHash, "public.raw-coexist");
+
+    /** @type {any[]} */
+    const received = [];
+    await client.listen((decoded) => received.push(decoded));
+
+    // Publish an LXMF message and a raw payload to their respective channels.
+    await client.publish(
+      nodeHash,
+      "public.lxmf-coexist",
+      new Message({ content: "lxmf side" }),
+    );
+    const rawPayload = new TextEncoder().encode("raw side");
+    await client.publishRaw(nodeHash, "public.raw-coexist", rawPayload);
+
+    await waitFor(() => received.length >= 2, 5000);
+    assert.strictEqual(received.length, 2);
+
+    const lxmfMsg = received.find((d) => d.kind === "lxmf");
+    const rawMsg = received.find((d) => d.kind === "raw");
+    assert.ok(lxmfMsg, "expected an LXMF decode");
+    assert.ok(rawMsg, "expected a raw decode");
+    assert.strictEqual(lxmfMsg.message.content, "lxmf side");
+    assert.strictEqual(lxmfMsg.signatureValid, true);
+    assert.deepStrictEqual(rawMsg.payload, rawPayload);
+  });
+
+  test("pulled raw blobs decode via unwrapRawChannelMessage", async () => {
+    const { nodeHash, client } = await fixture();
+
+    await client.subscribeRaw(nodeHash, "public.rawpull");
+    // Publish a raw payload without listening live (lands in the node store).
+    const payload = crypto.getRandomValues(new Uint8Array(64));
+    await client.publishRaw(nodeHash, "public.rawpull", payload);
+
+    const { items, morePending } = await client.pull(
+      nodeHash,
+      "public.rawpull",
+    );
+    assert.strictEqual(items.length, 1);
+    assert.strictEqual(morePending, false);
+
+    const { deriveChannel } = await import("../../src/rfed/channel.js");
+    const channel = await deriveChannel("public.rawpull");
+    const decoded = await unwrapRawChannelMessage({
+      innerBlob: items[0].blob,
+      channelIdentity: channel.identity,
+    });
+    assert.deepStrictEqual(decoded.payload, payload);
   });
 });

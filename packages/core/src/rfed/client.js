@@ -50,7 +50,9 @@ import { MicroMsgPack } from "../utils/msgpack.js";
 import {
   parseFanoutPayload,
   unwrapChannelMessage,
+  unwrapRawChannelMessage,
   wrapChannelMessage,
+  wrapRawChannelMessage,
 } from "./blob.js";
 import { deliveryHashFor, deriveChannel } from "./channel.js";
 
@@ -76,6 +78,29 @@ const DELIVERY_NAME = "rfed.delivery";
 const NOTIFY_REGISTER_NAME = "rfed.notify.register";
 const NOTIFY_UNREGISTER_NAME = "rfed.notify.unregister";
 const NOTIFY_LEGACY_NAME = "rfed.notify";
+
+/**
+ * A decoded fanout delivery. LXMF channels yield `kind: "lxmf"` with a
+ * verified {@link Message}; raw channels (subscribed via
+ * {@link RFedClient#subscribeRaw}) yield `kind: "raw"` with an arbitrary
+ * application `payload`. The `kind` field lets a single `onMessage` callback
+ * switch on content type.
+ *
+ * @typedef {Object} RFedDecodedMessage
+ * @property {"lxmf"|"raw"} kind - Content discriminator.
+ * @property {Uint8Array} channelHash - The channel's 16-byte identity hash.
+ * @property {string} channelName - The channel name (as subscribed).
+ * @property {Identity} senderIdentity - The sender's Identity (derived from
+ *   the RTID prelude public key).
+ * @property {Uint8Array} senderPub - The 64-byte sender public key bundle
+ *   (32 X25519 ‖ 32 Ed25519) embedded in the prelude.
+ * @property {Message} [message] - The decoded LXMF message (`kind: "lxmf"`).
+ * @property {Uint8Array} [sourceHash] - LXMF `source_hash`, the sender's
+ *   `lxmf.delivery` destination hash (`kind: "lxmf"`).
+ * @property {boolean} [signatureValid] - LXMF Ed25519 signature check
+ *   (`kind: "lxmf"`).
+ * @property {Uint8Array} [payload] - Raw application payload (`kind: "raw"`).
+ */
 
 /**
  * Builds the msgpack `[bin(16) channel_hash, bin(64) pubkey, bin(64) sig]`
@@ -144,6 +169,12 @@ export class RFedClient {
     this.channels = new Map();
     /** Cached advertised stamp costs: hex(channelHash) → cost (or null). */
     this.stampCosts = new Map();
+    /**
+     * Channel names subscribed as raw (non-LXMF). Incoming fanout for these is
+     * decoded via {@link unwrapRawChannelMessage} instead of the LXMF path.
+     * @type {Set<string>}
+     */
+    this.rawChannels = new Set();
 
     /** The inbound `rfed.delivery` destination, once {@link listen} is called. */
     this.deliveryDest = null;
@@ -261,9 +292,34 @@ export class RFedClient {
     const link = await dest.createLink();
     await link.identify(this.identity);
     const response = await link.request(UNSUBSCRIBE_PATH, payload);
+    // Clear any raw-channel marking so a later subscribe (lxmf or raw) starts
+    // from a clean decode routing state.
+    this.rawChannels.delete(channelName);
     return {
       ok: Array.isArray(response) ? response[0] === true : response === true,
     };
+  }
+
+  /**
+   * Subscribes to a channel that carries raw (non-LXMF) payloads and marks it
+   * locally so incoming fanout is decoded via {@link unwrapRawChannelMessage}
+   * instead of the LXMF path.
+   *
+   * The wire protocol is identical to {@link subscribe} — the node never
+   * inspects the `inner_blob` (SPEC §3: it is treated opaquely); only this
+   * client's local decode behaviour changes. Use this for channels whose
+   * senders publish with {@link publishRaw} (or any RFed-compatible raw
+   * wrapper) — e.g. self-describing, self-signed application payloads that
+   * do not need LXMF framing.
+   *
+   * @param {Uint8Array} nodeHash
+   * @param {string} channelName
+   * @returns {Promise<{ ok: boolean, stampCost: number|null }>}
+   */
+  async subscribeRaw(nodeHash, channelName) {
+    const result = await this.subscribe(nodeHash, channelName);
+    if (result.ok) this.rawChannels.add(channelName);
+    return result;
   }
 
   /**
@@ -290,7 +346,6 @@ export class RFedClient {
    */
   async publish(nodeHash, channelName, lxmMessage) {
     const channel = await this._channel(channelName);
-    const nodeIdentity = await this._nodeIdentity(nodeHash);
     const senderDeliveryHash = await deliveryHashFor(this.identity);
 
     const stampCost = this.stampCosts.get(toHex(channel.channelHash)) ?? null;
@@ -301,7 +356,51 @@ export class RFedClient {
       lxmMessage,
       stampCost,
     });
+    await this._sendPublish(nodeHash, rfedPayload);
+  }
 
+  /**
+   * Publishes a raw (non-LXMF) payload to a channel (fire-and-forget SEND).
+   *
+   * Wraps the payload with the RTID prelude (magic + sender public key) and
+   * EC-encrypts it to the channel identity — no LXMF serialisation. Use this
+   * for self-describing, self-authenticating payloads (e.g. a Dacar delta)
+   * that do not need LXMF framing and benefit from the saved MTU. Receivers
+   * must decode with {@link unwrapRawChannelMessage}, i.e. they subscribed
+   * via {@link subscribeRaw}.
+   *
+   * The cached stamp cost (from the last {@link subscribe}) is honoured. See
+   * {@link publish} for the MTU and fire-and-forget caveats.
+   *
+   * @param {Uint8Array} nodeHash
+   * @param {string} channelName
+   * @param {Uint8Array} payload - Raw application payload.
+   * @returns {Promise<void>}
+   */
+  async publishRaw(nodeHash, channelName, payload) {
+    const channel = await this._channel(channelName);
+    const stampCost = this.stampCosts.get(toHex(channel.channelHash)) ?? null;
+    const { rfedPayload } = await wrapRawChannelMessage({
+      channelIdentity: channel.identity,
+      senderIdentity: this.identity,
+      payload,
+      stampCost,
+    });
+    await this._sendPublish(nodeHash, rfedPayload);
+  }
+
+  /**
+   * Sends a prepared rfed SEND payload to the node's `rfed.channel.publish`
+   * destination as a fire-and-forget DATA packet. Shared by {@link publish}
+   * and {@link publishRaw}.
+   *
+   * @param {Uint8Array} nodeHash
+   * @param {Uint8Array} rfedPayload
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _sendPublish(nodeHash, rfedPayload) {
+    const nodeIdentity = await this._nodeIdentity(nodeHash);
     const dest = await Destination.OUT(
       CHANNEL_PUBLISH_NAME,
       DestType.SINGLE,
@@ -466,10 +565,12 @@ export class RFedClient {
    * destination and announces it so the node can route to it.
    *
    * Each incoming fanout payload `[ channel_hash ‖ inner_blob ]` is matched to
-   * a subscribed channel, EC-decrypted, and passed to `onMessage` along with
-   * the verified LXMF message.
+   * a subscribed channel and EC-decrypted. Channels subscribed via
+   * {@link subscribeRaw} yield a `"raw"` decode (arbitrary payload); all others
+   * yield an `"lxmf"` decode (a verified {@link Message}). The `kind` field on
+   * the decoded object discriminates the two.
    *
-   * @param {(decoded: { message: Message, senderIdentity: Identity, senderPub: Uint8Array, sourceHash: Uint8Array, signatureValid: boolean, channelHash: Uint8Array, channelName: string }) => void} onMessage
+   * @param {(decoded: RFedDecodedMessage) => void} onMessage
    * @returns {Promise<Uint8Array>} the `rfed.delivery` destination hash.
    */
   async listen(onMessage) {
@@ -497,6 +598,12 @@ export class RFedClient {
 
   /**
    * Splits and decodes a fanout delivery plaintext.
+   *
+   * Channels registered as raw (via {@link subscribeRaw}) are decoded with
+   * {@link unwrapRawChannelMessage}; all others use the LXMF path. The decoded
+   * object carries a `kind` discriminator (`"lxmf"` or `"raw"`) so the
+   * `onMessage` callback can switch on content type.
+   *
    * @param {Uint8Array} plaintext
    * @private
    */
@@ -505,11 +612,32 @@ export class RFedClient {
     const channel = this._channelByHash(channelHash);
     if (!channel) return; // not subscribed to this channel
 
+    if (this.rawChannels.has(channel.name)) {
+      const decoded = await unwrapRawChannelMessage({
+        innerBlob,
+        channelIdentity: channel.identity,
+      });
+      this.onMessage?.({
+        kind: "raw",
+        payload: decoded.payload,
+        senderPub: decoded.senderPub,
+        senderIdentity: decoded.senderIdentity,
+        channelHash,
+        channelName: channel.name,
+      });
+      return;
+    }
+
     const decoded = await unwrapChannelMessage({
       innerBlob,
       channelIdentity: channel.identity,
       channelDeliveryHash: channel.deliveryHash,
     });
-    this.onMessage?.({ ...decoded, channelHash, channelName: channel.name });
+    this.onMessage?.({
+      kind: "lxmf",
+      ...decoded,
+      channelHash,
+      channelName: channel.name,
+    });
   }
 }

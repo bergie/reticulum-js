@@ -1,6 +1,19 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **RFed raw (non-LXMF) channel payloads.** The RFed spec treats the
+  `inner_blob` opaquely — the node never decrypts or inspects it — so any
+  self-describing payload can be carried, not just LXMF. New
+  `wrapRawChannelMessage` / `unwrapRawChannelMessage` codecs (in
+  `src/rfed/blob.js`) build the same RTID prelude (magic + sender public key)
+  but skip LXMF serialisation entirely, saving ~111 bytes of framing per
+  message. This matters for MTU-constrained applications (e.g. Dacar deltas,
+  which are self-signed and self-addressed and otherwise overflow the 500-byte
+  RNS MTU when wrapped in LXMF). `RFedClient` gains `subscribeRaw` /
+  `publishRaw` for the raw path, and the `listen` callback now receives a
+  `kind: "lxmf" | "raw"` discriminator so a single client can mix LXMF and
+  raw channels. The node is unchanged (it routes `inner_blob` opaquely).
 
 ## [0.6.4] - 2026-08-12
 ### Fixed

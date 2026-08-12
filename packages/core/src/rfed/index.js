@@ -23,7 +23,9 @@ export {
   parseFanoutPayload,
   parseSendPayload,
   unwrapChannelMessage,
+  unwrapRawChannelMessage,
   wrapChannelMessage,
+  wrapRawChannelMessage,
 } from "./blob.js";
 export { BlobStore } from "./blob_store.js";
 export { channelPath, deliveryHashFor, deriveChannel } from "./channel.js";
