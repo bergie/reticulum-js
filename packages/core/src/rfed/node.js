@@ -19,6 +19,26 @@
  * subscriber whose `rfed.delivery` is currently present (announced within
  * `presenceTtlSec`); unreachable subscribers get the blob deferred and either
  * flushed when their `rfed.delivery` announces or retrieved via `/rfed/pull`.
+ *
+ * === Link support note ===
+ *
+ * The publish destination (`rfed.channel.publish`) does NOT accept link requests,
+ * even though this JavaScript implementation technically could. This is an intentional
+ * design decision for spec compatibility:
+ *
+ *   - The Rust `rfed` reference implementation (the canonical spec) does not support
+ *     links on the publish endpoint.
+ *   - Publish is fire-and-forget: clients send a single DATA packet and never wait
+ *     for a response. Links add no value to this pattern.
+ *   - Allowing links would create a fragmentation point where JS clients could send
+ *     payloads via Resource (large messages) that Rust nodes would silently drop.
+ *   - The MTU limit (~500 bytes after headers/encryption) is intentional: RFed is
+ *     designed for small real-time messages (channel updates, state sync). For large
+ *     transfers, use a direct link outside RFed (as LXMF does).
+ *
+ * If Rust adds link support in the future, this JavaScript implementation can easily
+ * add it for compatibility, but the direction must be: Rust spec → JS implementation,
+ * never the reverse.
  */
 
 import { Allow, Destination } from "../core/destination.js";
@@ -348,13 +368,13 @@ export class RFedNode {
     });
 
     // Publish destination — fire-and-forget DATA SEND (no link, no request).
-    this._publishDest = await Destination.IN(
+    const publishDest = await Destination.IN(
       PUBLISH_NAME,
       DestType.SINGLE,
       this.identity,
       this.rns,
     );
-    this._publishDest.addEventListener("data", (/** @type {any} */ event) => {
+    publishDest.addEventListener("data", (/** @type {any} */ event) => {
       this._handleSend(event.detail.plaintext).catch((err) => {
         log(
           "RFedNode",
@@ -363,7 +383,8 @@ export class RFedNode {
         );
       });
     });
-    this.rns.transport.bindLocalDestination(this._publishDest);
+    this.rns.transport.bindLocalDestination(publishDest);
+    this._publishDest = publishDest;
 
     // Notify registration destinations (SPEC §9). The legacy combined
     // `rfed.notify` serves register/unregister/clear; the split

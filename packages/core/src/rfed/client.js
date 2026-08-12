@@ -17,6 +17,28 @@
  * The client is transport-agnostic: it only needs a Reticulum instance whose
  * transport routes Single-destination packets and whose known-destinations
  * cache has the node's identity recalled (e.g. after hearing its announce).
+ *
+ * === Design rationale: no link support for publish ===
+ *
+ * The publish endpoint (`rfed.channel.publish`) does not use Resource transfers
+ * over links, even for payloads exceeding the MTU. This is intentional and matches
+ * the Rust reference implementation:
+ *
+ *   - **Spec compatibility**: Rust `rfed` is the canonical RFed implementation and
+ *     does not support links on publish. Allowing links would create interop issues
+ *     where JS clients work with JS nodes but fail with Rust nodes.
+ *
+ *   - **Fire-and-forget semantics**: Publish is designed for one-way delivery where
+ *     the client sends and forgets. Links add handshake complexity for no benefit.
+ *
+ *   - **Intentional MTU limit**: RFed is optimized for small messages (channel updates,
+ *     state sync, notifications) within a single packet (~500 bytes after overhead).
+ *     For larger transfers (LXMF messages, files, etc.), use a direct link outside the
+ *     RFed protocol.
+ *
+ *   - **Forward compatibility**: If Rust adds link support in the future, the JS
+ *     client can be updated to match. The direction must always be Rust spec → JS
+ *     implementation, never the reverse.
  */
 
 import { Destination } from "../core/destination.js";
@@ -251,6 +273,11 @@ export class RFedClient {
    * (from the last {@link subscribe}) and sends it as an encrypted DATA packet
    * to the node's `rfed.channel.publish` destination. If no stamp cost is
    * cached, the message is sent without a stamp.
+   *
+   * **MTU limit:** The publish endpoint is fire-and-forget and does not use
+   * links. Payloads must fit within the network MTU (typically ~500 bytes after
+   * header and encryption overhead). Oversized payloads will be dropped by the
+   * node. For larger transfers, use a direct link outside of RFed.
    *
    * SEND is fire-and-forget — there is no acceptance response. Call
    * {@link subscribe} again to refresh the stamp cost if publishes seem to be

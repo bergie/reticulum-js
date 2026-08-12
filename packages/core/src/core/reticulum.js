@@ -175,12 +175,12 @@ export class Reticulum {
       throw new Error(`Destination ${destination.name} is already registered.`);
     }
 
-    // 1. Store locally for inbound routing
-    this.localDestinations.set(hashHex, destination);
-
-    // 2. Bind the destination to the transport layer so the router knows
+    // 1. Bind the destination to the transport layer so the router knows
     // to deliver incoming packets here instead of dropping/forwarding them.
-    // this.transport.bindLocalDestination(destination);
+    this.transport.bindLocalDestination(destination);
+
+    // 2. Store locally for inbound routing
+    this.localDestinations.set(hashHex, destination);
 
     // 3. Inject the compression provider if the destination needs to handle Resources
     // and log the app data if an identity is present.
