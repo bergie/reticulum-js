@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-08-12
+
 ## [0.6.3] - 2026-08-11
 ### Changed
 - **`rfed` CLI now uses the `FedSync` auto-sync engine** instead of a manual

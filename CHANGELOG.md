@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-08-12
+### Fixed
+- **core**: **`Reticulum.registerDestination()` now correctly binds destinations to the transport layer.** A line calling `transport.bindLocalDestination(destination)` was accidentally commented out on July 3, 2026 (commit `e29408cab`), causing all registered destinations to not receive inbound packets. This included LINKREQUEST packets, preventing nodes from accepting link requests. The line is now uncommented, restoring proper inbound packet routing for all registered destinations.
+- **core**: **RFed publish destination documentation added.** The publish endpoint (`rfed.channel.publish`) intentionally does not accept link requests even though the JavaScript implementation technically could. This design decision maintains spec compatibility with the Rust `rfed` reference implementation, which does not support links on publish. Both the node and client now include comprehensive documentation explaining this rationale: RFed is designed for small fire-and-forget messages within the network MTU (~500 bytes); for larger transfers, use a direct link outside the RFed protocol.
+
 ## [0.6.3] - 2026-08-11
 ### Added
 - **core**: **rfed auto-sync is now testable end-to-end.** New `test/rfed/fed_sync.test.js`
