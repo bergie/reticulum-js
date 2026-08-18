@@ -1163,6 +1163,7 @@ export class AutoInterface extends Interface {
     peer.icNewTime = this.icNewTime;
     peer.icBurstPenalty = this.icBurstPenalty;
     peer.icHeldReleaseInterval = this.icHeldReleaseInterval;
+    peer.icMaxHeldAnnounces = this.icMaxHeldAnnounces;
     this._spawnPeer(peer);
   }
 

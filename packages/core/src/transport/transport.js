@@ -93,12 +93,30 @@ export class TransportCore extends EventTarget {
     // double-buffered, culled at hashlistMaxsize/2, mirroring Python). A leaf
     // keeps a small ring; announces are exempt (their random_blob replay
     // protection lives in the RoutingTable). In-memory only for now (#16
-    // stretch — persisting it has marginal value across a restart).
+    // stretch — persisting it has marginal value across a restart). Entries
+    // are full packet-hash hex strings; at the Python-scale max of one
+    // million that is a real (but bounded) memory footprint — the reference
+    // accepts the same trade with 32-byte hash entries.
     /** @type {Set<string>} */
     this.packetHashlist = new Set();
     /** @type {Set<string>} */
     this.packetHashlistPrev = new Set();
-    this.hashlistMaxsize = 50000;
+    this.hashlistMaxsize = 1_000_000;
+
+    // §Path requests: timestamp (seconds) of the last `path?` request this
+    // node sent per destination (Python `Transport.path_requests`). Doubles
+    // as (a) the waiting-request exemption for held announces (Python checks
+    // it before holding announces we asked to hear about) and (b) the
+    // PATH_REQUEST_MI minimum-interval gate for automated re-requests.
+    // Entries older than PATH_REQUEST_GATE_TIMEOUT are culled by the sweep.
+    /** @type {Map<string, number>} */
+    this.pathRequests = new Map();
+
+    // Lazily-started sweep (Python's interface jobs / table culling in
+    // Transport.jobs): drains held announces one per interval and culls stale
+    // path-request entries. Only runs while there is something to do.
+    /** @type {ReturnType<typeof setInterval>|null} */
+    this._sweepTimer = null;
   }
 
   /**
@@ -397,6 +415,24 @@ export class TransportCore extends EventTarget {
     // simply have no ingress control.
     receivingInterface?.receivedAnnounce?.();
 
+    // §Ingress control (Python Transport.inbound): while an announce burst is
+    // latched, announces for *unknown* destinations are held on the receiving
+    // interface for delayed release instead of processed now. Known
+    // destinations pass (their re-announce cadence is governed by the
+    // random_blob/path-table rules), as do destinations we have an
+    // outstanding `path?` request for — the announce we asked to hear about
+    // must never be delayed past its freshness window.
+    if (!this.routingTable.hasRoute(packet.destinationHash)) {
+      if (
+        !this.pathRequests.has(destHex) &&
+        receivingInterface?.shouldIngressLimit?.()
+      ) {
+        receivingInterface.holdAnnounce(packet);
+        this._ensureSweep();
+        return; // Re-enters the pipeline when the sweep releases it.
+      }
+    }
+
     const { identity, nameHash, randomHash, ratchet, appData } = result;
 
     // §4.5 step 4 — public-key collision rejection. First-announcer-wins: a
@@ -540,12 +576,30 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * Minimum interval in seconds between *automated* path re-requests for the
+   * same destination (Python `Transport.PATH_REQUEST_MI`). User-initiated
+   * {@link requestPath} calls are not gated — matching the reference, where
+   * the discipline lives in the jobs-loop rediscovery paths.
+   */
+  static PATH_REQUEST_MI = 20;
+  /**
+   * Seconds after which a `path?`-request timestamp is forgotten (Python
+   * `Transport.PATH_REQUEST_GATE_TIMEOUT`). Bounds the waiting-request
+   * exemption window for held announces.
+   */
+  static PATH_REQUEST_GATE_TIMEOUT = 120;
+
+  /**
    * Sends a `path?` request for a destination we have no route to (§7.1).
    *
    * Leaf form: `target_dest_hash(16) || random_tag(16)` (32 bytes). The tag
    * makes the request unique enough for relay dedup (§7.2.2); a fresh random
    * tag is drawn per request so re-requests for the same destination aren't
    * suppressed as duplicates.
+   *
+   * Not rate-limited per se (Python `request_path` isn't either); automated
+   * callers should use {@link requestPathAuto}, which enforces the
+   * `PATH_REQUEST_MI` minimum interval per destination.
    *
    * @param {Uint8Array} destinationHash - 16-byte destination to discover.
    */
@@ -571,7 +625,41 @@ export class TransportCore extends EventTarget {
       `Requesting path to ${toHex(destinationHash)}`,
       LogLevel.DEBUG,
     );
+    // §Egress tracking (Python marks outbound PRs `is_outbound_pr`; transmit
+    // then calls `interface.sent_path_request()`): each interface this PR
+    // leaves on records a sample for outgoing-PR frequency statistics.
+    for (const iface of this.interfaces) {
+      iface.sentPathRequest?.();
+    }
     this.broadcast(packet);
+    // §Transport.path_requests: remember when we last asked for this
+    // destination — feeds the held-announce waiting-request exemption and
+    // the PATH_REQUEST_MI gate in requestPathAuto.
+    this.pathRequests.set(toHex(destinationHash), Date.now() / 1000);
+    this._ensureSweep();
+  }
+
+  /**
+   * Automated path (re-)request with the reference's discipline (Python
+   * jobs-loop rediscovery): skipped entirely while a usable path is already
+   * known, and rate-limited to one request per {@link TransportCore.PATH_REQUEST_MI}
+   * seconds per destination. Use for machine-triggered re-discovery (link
+   * failures, delivery retries); user-initiated discovery uses
+   * {@link requestPath} directly.
+   *
+   * @param {Uint8Array} destinationHash - 16-byte destination to discover.
+   * @returns {Promise<boolean>} Whether a request was actually sent.
+   */
+  async requestPathAuto(destinationHash) {
+    if (!destinationHash || destinationHash.length !== 16) return false;
+    if (this.hasPath(destinationHash)) return false;
+    const destHex = toHex(destinationHash);
+    const last = this.pathRequests.get(destHex) ?? 0;
+    if (Date.now() / 1000 - last < TransportCore.PATH_REQUEST_MI) {
+      return false;
+    }
+    await this.requestPath(destinationHash);
+    return true;
   }
 
   /**
@@ -995,6 +1083,98 @@ export class TransportCore extends EventTarget {
    * current) once {@link packetHashlist} exceeds {@link hashlistMaxsize}/2.
    * @param {Packet} packet
    * @returns {Promise<boolean>} `true` = drop as duplicate.
+   * @private
+   */
+  /**
+   * One round of the maintenance sweep: releases **one** held announce per
+   * interface (the interface itself enforces the release interval and
+   * quiet-frequency gate) and re-injects it into the normal inbound pipeline
+   * — where, per Python re-entry through `Transport.inbound`, the hop count
+   * increments again and a re-latched burst simply re-holds it. Also culls
+   * `path?`-request timestamps older than
+   * {@link TransportCore.PATH_REQUEST_GATE_TIMEOUT}.
+   *
+   * Exposed as a method so embedders and tests can drive it deterministically;
+   * {@link _ensureSweep} schedules it on a 5 s interval (Python
+   * `interface_jobs_interval`).
+   * @private
+   */
+  async _sweepTick() {
+    for (const iface of this.interfaces) {
+      if (typeof iface.processHeldAnnounces !== "function") continue;
+      const packet = iface.processHeldAnnounces();
+      if (packet) {
+        log(
+          "Transport",
+          `Releasing held announce for ${toHex(packet.destinationHash)} on ${iface.name}`,
+          LogLevel.DEBUG,
+        );
+        try {
+          await this._routeIncomingPacket(packet, iface);
+        } catch (/** @type {any} */ e) {
+          log(
+            "Transport",
+            `Held announce re-injection failed: ${e}`,
+            LogLevel.ERROR,
+          );
+        }
+      }
+    }
+
+    // Cull stale path-request timestamps (Python jobs table culling).
+    const now = Date.now() / 1000;
+    for (const [destHex, t] of this.pathRequests) {
+      if (now > t + TransportCore.PATH_REQUEST_GATE_TIMEOUT) {
+        this.pathRequests.delete(destHex);
+      }
+    }
+
+    if (
+      this._sweepTimer &&
+      !this._hasHeldAnnounces() &&
+      this.pathRequests.size === 0
+    ) {
+      clearInterval(this._sweepTimer);
+      this._sweepTimer = null;
+    }
+  }
+
+  /** Whether any attached interface currently holds announces. @private */
+  _hasHeldAnnounces() {
+    for (const iface of this.interfaces) {
+      if ((iface.heldAnnounces?.size ?? 0) > 0) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Lazily starts the 5 s maintenance sweep ({@link _sweepTick}) while there
+   * is held-announce draining or path-request bookkeeping to do; the tick
+   * stops the timer again once idle. The timer is detached (`unref`) where
+   * the platform supports it — mirroring Python, whose transport jobs and
+   * release threads are daemons that never keep the process alive on their
+   * own.
+   * @private
+   */
+  _ensureSweep() {
+    if (this._sweepTimer) return;
+    const timer = setInterval(() => {
+      this._sweepTick();
+    }, 5000);
+    timer?.unref?.();
+    this._sweepTimer = timer;
+  }
+
+  /**
+   * §Transport.packet_filter: drop a non-announce packet whose hash we've
+   * already seen (two-set dedup ring, swapping current for previous once
+   * {@link packetHashlist} exceeds {@link hashlistMaxsize}/2). Announces are
+   * exempt — their replay protection is the RoutingTable random_blob check —
+   * as are contexts that legitimately recur or carry their own sequencing
+   * (resource / channel / keepalive flows).
+   *
+   * @param {import("../core/packet.js").Packet} packet
+   * @returns {Promise<boolean>}
    * @private
    */
   async _isDuplicate(packet) {

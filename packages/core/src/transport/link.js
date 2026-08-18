@@ -369,6 +369,9 @@ export class Link extends EventTarget {
         // links that were ACTIVE (a graceful teardown of a working link).
         // Guarded so test/lightweight transports without the path-health API
         // (and responder links whose destination is local) are unaffected.
+        // The re-request uses the automated gate (PATH_REQUEST_MI = 20 s per
+        // destination, Python jobs-loop rediscovery discipline) so an app
+        // retry loop over dead links cannot emit a PR per failure.
         const dh = this.destination?.destinationHash;
         if (
           oldStatus !== LinkStatus.ACTIVE &&
@@ -376,7 +379,9 @@ export class Link extends EventTarget {
           typeof this.transport?.expirePath === "function"
         ) {
           this.transport.expirePath(dh);
-          if (typeof this.transport.requestPath === "function") {
+          if (typeof this.transport.requestPathAuto === "function") {
+            this.transport.requestPathAuto(dh).catch(() => {});
+          } else if (typeof this.transport.requestPath === "function") {
             this.transport.requestPath(dh).catch(() => {});
           }
         }

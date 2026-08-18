@@ -424,3 +424,76 @@ test("path-response cache entries expire after PR_TAG_WINDOW", async () => {
   dest._prunePathResponses();
   assert.strictEqual(dest.pathResponses.size, 0, "stale entry pruned");
 });
+
+// ---------------------------------------------------------------------
+// Egress discipline (work doc #31 step 4 — Python path_requests table,
+// PATH_REQUEST_MI automated-request gate, outbound-PR tracking)
+// ---------------------------------------------------------------------
+
+test("requestPath records the timestamp and outbound-PR samples", async () => {
+  const transport = new TransportCore();
+  /** @type {Packet[]} */ const captured = [];
+  transport.broadcast = (/** @type {Packet} */ pkt) => captured.push(pkt);
+  const iface = new Interface();
+  iface.sentPathRequest = () => iface.opFreqDeque.push(Date.now() / 1000);
+  transport.interfaces.add(iface);
+
+  const target = crypto.getRandomValues(new Uint8Array(16));
+  await transport.requestPath(target);
+
+  assert.strictEqual(captured.length, 1);
+  assert.ok(
+    transport.pathRequests.has(toHex(target)),
+    "timestamp recorded (Python Transport.path_requests)",
+  );
+  assert.strictEqual(iface.opFreqDeque.length, 1, "outbound PR sampled");
+});
+
+test("requestPathAuto skips while a path is known", async () => {
+  const transport = new TransportCore();
+  /** @type {Packet[]} */ const captured = [];
+  transport.broadcast = (/** @type {Packet} */ pkt) => captured.push(pkt);
+
+  const target = crypto.getRandomValues(new Uint8Array(16));
+  transport.routingTable.addOrUpdateRoute(target, {
+    nextHop: target,
+    hops: 1,
+    viaInterface: null,
+  });
+
+  assert.strictEqual(await transport.requestPathAuto(target), false);
+  assert.strictEqual(captured.length, 0, "known path → no request");
+});
+
+test("requestPathAuto enforces the PATH_REQUEST_MI minimum interval", async () => {
+  const transport = new TransportCore();
+  /** @type {Packet[]} */ const captured = [];
+  transport.broadcast = (/** @type {Packet} */ pkt) => captured.push(pkt);
+
+  const target = crypto.getRandomValues(new Uint8Array(16));
+  // A request was sent 5 s ago (less than MI = 20 s).
+  transport.pathRequests.set(toHex(target), Date.now() / 1000 - 5);
+
+  assert.strictEqual(await transport.requestPathAuto(target), false);
+  assert.strictEqual(captured.length, 0, "within MI → suppressed");
+
+  // 25 s ago → allowed.
+  transport.pathRequests.set(toHex(target), Date.now() / 1000 - 25);
+  assert.strictEqual(await transport.requestPathAuto(target), true);
+  assert.strictEqual(captured.length, 1, "past MI → request emitted");
+});
+
+test("the sweep culls path-request timestamps past the gate timeout", async () => {
+  const transport = new TransportCore();
+  const target = crypto.getRandomValues(new Uint8Array(16));
+  transport.pathRequests.set(
+    toHex(target),
+    Date.now() / 1000 - (TransportCore.PATH_REQUEST_GATE_TIMEOUT + 10),
+  );
+  await transport._sweepTick();
+  assert.strictEqual(
+    transport.pathRequests.size,
+    0,
+    "stale timestamp culled (PATH_REQUEST_GATE_TIMEOUT)",
+  );
+});

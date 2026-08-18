@@ -12,6 +12,7 @@ import {
   open as openIfac,
   seal as sealIfac,
 } from "../core/ifac.js";
+import { toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 
 /**
@@ -153,6 +154,8 @@ function reconnectSchemaProperties() {
  *   release after an announce burst (ic_burst_penalty; default 15).
  * @property {number} [icHeldReleaseInterval] Seconds between held-announce
  *   releases (ic_held_release_interval; default 5).
+ * @property {number} [icMaxHeldAnnounces] Maximum held announces per
+ *   interface while a burst is latched (ic_max_held_announces; default 256).
  */
 
 /**
@@ -378,6 +381,19 @@ export class Interface extends EventTarget {
   /** Seconds before held announces may release after a burst (`IC_BURST_PENALTY`). */
   static IC_BURST_PENALTY = 15;
   /**
+   * Seconds between held-announce releases once draining
+   * (`IC_HELD_RELEASE_INTERVAL`).
+   * @type {number}
+   */
+  static IC_HELD_RELEASE_INTERVAL = 5;
+  /**
+   * Maximum held announces buffered per interface while an announce burst
+   * is latched (`MAX_HELD_ANNOUNCES`). A held table at this size silently
+   * drops further announces for destinations not already held.
+   * @type {number}
+   */
+  static MAX_HELD_ANNOUNCES = 256;
+  /**
    * Minimum deque samples before a frequency is reported
    * (`IC_DEQUE_MIN_SAMPLE` = 2 — i.e. > 2 samples).
    * @type {number}
@@ -406,6 +422,10 @@ export class Interface extends EventTarget {
   /** @type {number} */
   icBurstPenalty = Interface.IC_BURST_PENALTY;
   /** @type {number} */
+  icHeldReleaseInterval = Interface.IC_HELD_RELEASE_INTERVAL;
+  /** @type {number} */
+  icMaxHeldAnnounces = Interface.MAX_HELD_ANNOUNCES;
+  /** @type {number} */
   arFreqDecay = Interface.ANNOUNCE_FREQ_DECAY;
   /** @type {number} */
   prFreqDecay = Interface.PR_FREQ_DECAY;
@@ -429,6 +449,14 @@ export class Interface extends EventTarget {
   icPrBurstCooldown = 0;
   /** Earliest held-announce release time (seconds); set on burst activation. */
   icHeldRelease = 0;
+
+  /**
+   * Announces held while an ingress burst is latched, keyed by destination
+   * hash hex (Python `held_announces`). Drained by
+   * {@link processHeldAnnounces} on the transport sweep.
+   * @type {Map<string, import("../core/packet.js").Packet>}
+   */
+  heldAnnounces = new Map();
 
   /**
    * Applies node-global ingress-control overrides to this interface
@@ -460,6 +488,68 @@ export class Interface extends EventTarget {
       this.icBurstPenalty = overrides.icBurstPenalty;
     if (overrides.icHeldReleaseInterval !== undefined)
       this.icHeldReleaseInterval = overrides.icHeldReleaseInterval;
+    if (overrides.icMaxHeldAnnounces !== undefined)
+      this.icMaxHeldAnnounces = overrides.icMaxHeldAnnounces;
+  }
+
+  /**
+   * Buffers an announce for delayed processing while an ingress burst is
+   * latched (Python `hold_announce`). Announces at or beyond
+   * `PATHFINDER_M - 1` (127) hops are dropped rather than held; a destination
+   * already in the table always replaces its entry (newest emission wins);
+   * beyond {@link icMaxHeldAnnounces} distinct destinations, new ones are
+   * silently dropped.
+   *
+   * @param {import("../core/packet.js").Packet} packet Validated announce.
+   */
+  holdAnnounce(packet) {
+    const destHex = toHex(packet.destinationHash);
+    if (packet.hops >= 127) {
+      // Python: `if announce_packet.hops >= RNS.Transport.PATHFINDER_M-1` —
+      // near-max-hop announces carry no useful path anyway.
+      return;
+    }
+    if (this.heldAnnounces.has(destHex)) {
+      this.heldAnnounces.set(destHex, packet);
+    } else if (this.heldAnnounces.size < this.icMaxHeldAnnounces) {
+      this.heldAnnounces.set(destHex, packet);
+    }
+  }
+
+  /**
+   * Releases one held announce if conditions allow (the selection half of
+   * Python `process_held_announces`): at most one announce per
+   * {@link icHeldReleaseInterval}, never before {@link icHeldRelease}, and
+   * only while the incoming announce frequency is back below the burst
+   * threshold. Selection prefers the lowest hop count (nearest destinations
+   * converge first). The caller re-injects the returned packet into the
+   * normal inbound pipeline (Python spawns a thread calling
+   * `Transport.inbound(raw, receiving_interface)`).
+   *
+   * @returns {import("../core/packet.js").Packet|null} The announce to
+   *   re-inject, or `null` when nothing is releasable.
+   */
+  processHeldAnnounces() {
+    if (this.heldAnnounces.size === 0) return null;
+    const now = Date.now() / 1000;
+    if (now <= this.icHeldRelease) return null;
+    const freqThreshold =
+      this.age() < this.icNewTime ? this.icBurstFreqNew : this.icBurstFreq;
+    if (!(this.incomingAnnounceFrequency() < freqThreshold)) return null;
+
+    let selected = null;
+    let minHops = 128; // PATHFINDER_M
+    for (const packet of this.heldAnnounces.values()) {
+      if (packet.hops < minHops) {
+        minHops = packet.hops;
+        selected = packet;
+      }
+    }
+    if (!selected) return null;
+
+    this.icHeldRelease = now + this.icHeldReleaseInterval;
+    this.heldAnnounces.delete(toHex(selected.destinationHash));
+    return selected;
   }
 
   /**

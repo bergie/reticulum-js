@@ -20,6 +20,35 @@
   PR's tag and caches the signed announce payload for
   `Destination.PR_TAG_WINDOW` (30 s); retransmitted requests with a seen tag
   reuse the cached payload instead of re-signing and re-rotating ratchets.
+- **Held announces during announce bursts** (work doc #31 step 3, Python
+  `Interface.hold_announce` / `process_held_announces`): while an announce
+  burst is latched, announces for *unknown* destinations are buffered on the
+  receiving interface instead of processed, then released one per 5 s
+  (lowest hops first) once the burst quiets. Known destinations and
+  destinations with an outstanding `path?` request bypass the hold.
+  Buffered per interface up to `icMaxHeldAnnounces` (256); announces at ≥ 127
+  hops are never held. Re-injection re-enters the normal inbound pipeline —
+  hop count increments again and a re-latched burst simply re-holds, exactly
+  as in the Python reference (including the unlatching evaluation still
+  limiting). Driven by a lazy 5 s maintenance sweep on `TransportCore`
+  (`_sweepTick`, Python `interface_jobs_interval`) that also culls stale
+  path-request timestamps; the sweep timer is detached (`unref`) where
+  available, mirroring Python's daemon jobs/release threads.
+- **Path-request egress discipline** (work doc #31 step 4, Python
+  `Transport.path_requests` + `PATH_REQUEST_MI`): `requestPath` now records
+  a per-destination timestamp (feeding the held-announce waiting-request
+  exemption) and samples each interface's outbound-PR frequency
+  (`sentPathRequest`). New `requestPathAuto(destinationHash)` enforces the
+  reference's automated-rediscovery discipline — no request while a path is
+  known, at most one per `PATH_REQUEST_MI` (20 s) per destination — and the
+  link-failure rediscovery in `Link`'s close handler now uses it, so
+  application retry loops over dead links can no longer emit a `path?`
+  request per failure. Timestamps expire after `PATH_REQUEST_GATE_TIMEOUT`
+  (120 s).
+- **`TransportCore.hashlistMaxsize` raised from 50,000 to 1,000,000** (Python
+  `Transport.hashlist_maxsize`) — the dedup ring now matches reference scale
+  (entries are full packet-hash hex strings; the memory trade is bounded by
+  the same double-buffer culling as upstream).
 - **PR burst unlatch hysteresis** (sync with upstream "Improved PR ingress
   limiter"): a latched PR burst now needs `IC_PR_BURST_COOLDOWN` (3) + 1
   consecutive quiet evaluations to unlatch after the 15 s hold, and any
