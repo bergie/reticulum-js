@@ -175,7 +175,7 @@ export async function stampValid(stamp, targetCost, workblock) {
  * @param {Uint8Array} messageId - The 32-byte LXMF message_id.
  * @param {number} stampCost - Required leading zero bits.
  * @param {number} [expandRounds] - HKDF expansion rounds for the workblock.
- * @returns {Promise<[Uint8Array, number]|null>} `[stamp, value]` or null.
+ * @returns {Promise<[Uint8Array, number]>} `[stamp, value]`.
  */
 export async function generateStamp(
   messageId,

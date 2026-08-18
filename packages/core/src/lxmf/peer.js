@@ -135,15 +135,13 @@ export class LXMPeer {
     );
     material.set(peerIdentity.identityHash, 0); // receiving (peer) first
     material.set(localHash, peerIdentity.identityHash.length); // offering (us)
-    const generated = await generateStamp(
+    const [peeringKey, value] = await generateStamp(
       material,
       /** @type {number} */ (this.peeringCost),
       WORKBLOCK_EXPAND_ROUNDS_PEERING,
     );
-    if (!generated) return false;
-    const [key, value] = generated;
     if (value >= /** @type {number} */ (this.peeringCost)) {
-      this.peeringKey = [key, value];
+      this.peeringKey = [peeringKey, value];
       return true;
     }
     return false;

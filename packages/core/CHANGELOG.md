@@ -1,6 +1,23 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **rfed channel stamps now use the standard LXMF stamper.** The interim
+  compatibility workaround that mirrored `reticulum-rust`'s stub `LXStamper`
+  (iterated SHA-256 workblock, sequential `u128` nonce search) has been
+  removed now that the memory-hard HKDF workblock fix has landed upstream
+  (https://github.com/jrl290/Reticulum-rust/pull/2).
+  `rfed/stamp.js` is again a thin wrapper over `lxmf/stamper.js` at rfed's
+  16 expansion rounds: stamps minted by either side now cross-validate with
+  Python LXMF and fixed Rust nodes. Public API
+  (`channelStampWorkblock` / `generateChannelStamp` / `validateChannelStamp`)
+  is unchanged, but stamps generated against the old stub workblock are no
+  longer valid (nor are ours on unfixed Rust nodes) — a protocol-level change,
+  not an API one.
+- **`lxmf/stamper.js#generateStamp` no longer claims to return `null`.** The
+  random-trial search loops until a stamp meets the cost, so the `|null` in
+  the return type was dead documentation; callers
+  (`LXMRouter`, `LXMPeer`) had unreachable null checks, now removed.
 
 ## [0.6.5] - 2026-08-12
 ### Added
