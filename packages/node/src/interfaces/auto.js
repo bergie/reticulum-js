@@ -1150,6 +1150,19 @@ export class AutoInterface extends Interface {
     });
     // Inherit the parent's nominal bitrate (Python spawned-interface parity).
     peer.bitrate = this.bitrate;
+    // Inherit the parent's ingress-control settings (Python copies all ic_*
+    // fields onto spawned interfaces in AutoInterface.spawn_peer) so a
+    // node-global override applied at addInterface reaches every spawned
+    // peer too.
+    peer.ingressControl = this.ingressControl;
+    peer.icBurstHold = this.icBurstHold;
+    peer.icBurstFreqNew = this.icBurstFreqNew;
+    peer.icBurstFreq = this.icBurstFreq;
+    peer.icPrBurstFreqNew = this.icPrBurstFreqNew;
+    peer.icPrBurstFreq = this.icPrBurstFreq;
+    peer.icNewTime = this.icNewTime;
+    peer.icBurstPenalty = this.icBurstPenalty;
+    peer.icHeldReleaseInterval = this.icHeldReleaseInterval;
     this._spawnPeer(peer);
   }
 

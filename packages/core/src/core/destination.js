@@ -232,6 +232,14 @@ export class Destination extends EventTarget {
     // tick and its eventual broadcast) can detect it is stale and abort before
     // going on air. Keeps restart/stop from emitting a straggler announce.
     this._announceGeneration = 0;
+
+    // Python `path_responses`: tag → { time, announceData, hasRatchet } cache
+    // so retransmitted `path?` requests with a seen tag reuse the signed
+    // announce payload instead of re-signing (and re-rotating ratchets) per
+    // retransmission. Pruned to the {@link Destination.PR_TAG_WINDOW} on
+    // every path response.
+    /** @type {Map<string, {time: number, announceData: Uint8Array, hasRatchet: boolean}>} */
+    this.pathResponses = new Map();
   }
 
   /**
@@ -243,6 +251,13 @@ export class Destination extends EventTarget {
    * @type {Uint8Array|null}
    */
   nameHash;
+
+  /**
+   * Seconds a path-response announce payload stays reusable for retransmitted
+   * `path?` requests with the same tag (Python `Destination.PR_TAG_WINDOW`).
+   * @type {number}
+   */
+  static PR_TAG_WINDOW = 30;
 
   /**
    * Broadcasts an Announce packet advertising this destination's public key,
@@ -261,9 +276,18 @@ export class Destination extends EventTarget {
    * `PATH_RESPONSE = 0x0B` (§7.2.4). Emitted in answer to an inbound `path?`
    * request so the requester can learn a route back to us. The announce body
    * validates identically under §4.5; only the context byte distinguishes it.
+   *
+   * When called with the requesting PR's `tag`, the signed announce payload
+   * is cached for {@link PR_TAG_WINDOW} seconds and retransmissions with the
+   * same tag reuse it — mirroring the Python reference's `path_responses`
+   * cache, which keeps PR floods from forcing a fresh signature (and ratchet
+   * rotation) per retransmitted request.
+   *
+   * @param {Uint8Array|null} [tag] The `path?` request tag that triggered
+   *   this response, when known.
    */
-  async announcePathResponse() {
-    await this._emitAnnounce(ContextType.PATH_RESPONSE);
+  async announcePathResponse(tag = null) {
+    await this._emitAnnounce(ContextType.PATH_RESPONSE, undefined, tag);
   }
 
   /**
@@ -400,11 +424,19 @@ export class Destination extends EventTarget {
    * Direct ({@link announce} / {@link announcePathResponse}) callers omit it
    * and always emit.
    *
+   * A tagged PATH_RESPONSE consults the {@link pathResponses} cache first and
+   * reuses the cached payload when the tag was answered within
+   * {@link Destination.PR_TAG_WINDOW} seconds — the Python reference's
+   * defence against PR floods forcing a fresh signature (and ratchet
+   * rotation) per retransmission. Generation from scratch otherwise, and a
+   * fresh tagged response is cached.
+   *
    * @param {number} contextByte
    * @param {number} [generation] Generation token (periodic path only).
+   * @param {Uint8Array|null} [tag] The `path?` request tag for PATH_RESPONSE.
    * @private
    */
-  async _emitAnnounce(contextByte, generation) {
+  async _emitAnnounce(contextByte, generation, tag = null) {
     if (!this.interfaceLayer)
       throw new Error("Destination not bound to an RNS instance.");
 
@@ -416,61 +448,93 @@ export class Destination extends EventTarget {
       throw new Error("Destination hashes not computed.");
     }
 
-    // Verify this in your code:
-    if (this.nameHash.length !== 10) {
-      throw new Error("nameHash must be 10 bytes");
+    const tagKey =
+      contextByte === ContextType.PATH_RESPONSE && tag ? toHex(tag) : null;
+
+    /** @type {Uint8Array|null} */
+    let payload = null;
+    let hasRatchet = false;
+
+    if (tagKey) {
+      this._prunePathResponses();
+      const cached = this.pathResponses.get(tagKey);
+      if (cached) {
+        payload = cached.announceData;
+        // The ratchet context_flag matches the payload we are retransmitting.
+        hasRatchet = cached.hasRatchet;
+        log(
+          "Destination",
+          "Using cached announce data for answering path request",
+          LogLevel.DEBUG,
+        );
+      }
     }
 
-    // 1. Announce random_hash (SPEC.md §4.1):
-    //    5 random bytes || big-endian uint40 Unix-seconds.
-    //    Transit relays decode bytes [5:10] as the emission timestamp for
-    //    path-table replacement ordering (§4.5 step 6.3). 10 fully-random
-    //    bytes would be the microReticulum bug (§9.10).
-    const randomHash = createAnnounceRandomHash(
-      Identity.getRandomHash(),
-      Math.floor(Date.now() / 1000),
-    );
+    if (!payload) {
+      // Verify this in your code:
+      if (this.nameHash.length !== 10) {
+        throw new Error("nameHash must be 10 bytes");
+      }
 
-    // 2. Fetch the 64-byte Public Key (32 bytes X25519 + 32 bytes Ed25519)
-    const pubKey = await this.identity.getPublicKey();
+      // 1. Announce random_hash (SPEC.md §4.1):
+      //    5 random bytes || big-endian uint40 Unix-seconds.
+      //    Transit relays decode bytes [5:10] as the emission timestamp for
+      //    path-table replacement ordering (§4.5 step 6.3). 10 fully-random
+      //    bytes would be the microReticulum bug (§9.10).
+      const randomHash = createAnnounceRandomHash(
+        Identity.getRandomHash(),
+        Math.floor(Date.now() / 1000),
+      );
 
-    // 3. Prepare App Data (The human-readable name or metadata)
-    const appData = this.appData ?? this.identity.appData;
+      // 2. Fetch the 64-byte Public Key (32 bytes X25519 + 32 bytes Ed25519)
+      const pubKey = await this.identity.getPublicKey();
 
-    // §7.4 ratchet: when forward-secrecy ratchets are enabled on this
-    // destination, rotate if due and embed the current ratchet public (32 B)
-    // into both the signed data and the announce body, and set the packet
-    // context_flag so receivers parse it (§4.5). Empty when disabled —
-    // matching Python's ratchet = b"" slot.
-    const ratchetBytes = await this._currentRatchetForAnnounce();
-    const hasRatchet = ratchetBytes.length > 0;
+      // 3. Prepare App Data (The human-readable name or metadata)
+      const appData = this.appData ?? this.identity.appData;
 
-    // 4. Construct the Data to be Signed
-    // [DestHash (16)] + [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [Ratchet (0|32)] + [AppData]
-    const signedData = new Uint8Array(
-      16 + 64 + 10 + 10 + ratchetBytes.length + appData.length,
-    );
-    signedData.set(this.destinationHash, 0);
-    signedData.set(pubKey, 16);
-    signedData.set(this.nameHash, 16 + 64);
-    signedData.set(randomHash, 16 + 64 + 10);
-    signedData.set(ratchetBytes, 16 + 64 + 10 + 10);
-    signedData.set(appData, 16 + 64 + 10 + 10 + ratchetBytes.length);
+      // §7.4 ratchet: when forward-secrecy ratchets are enabled on this
+      // destination, rotate if due and embed the current ratchet public (32 B)
+      // into both the signed data and the announce body, and set the packet
+      // context_flag so receivers parse it (§4.5). Empty when disabled —
+      // matching Python's ratchet = b"" slot.
+      const ratchetBytes = await this._currentRatchetForAnnounce();
+      hasRatchet = ratchetBytes.length > 0;
 
-    // 5. Generate the 64-byte Ed25519 Signature
-    const signature = await this.identity.sign(signedData);
+      // 4. Construct the Data to be Signed
+      // [DestHash (16)] + [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [Ratchet (0|32)] + [AppData]
+      const signedData = new Uint8Array(
+        16 + 64 + 10 + 10 + ratchetBytes.length + appData.length,
+      );
+      signedData.set(this.destinationHash, 0);
+      signedData.set(pubKey, 16);
+      signedData.set(this.nameHash, 16 + 64);
+      signedData.set(randomHash, 16 + 64 + 10);
+      signedData.set(ratchetBytes, 16 + 64 + 10 + 10);
+      signedData.set(appData, 16 + 64 + 10 + 10 + ratchetBytes.length);
 
-    // 6. Construct the final Announce Payload for the wire
-    // [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [Ratchet (0|32)] + [Signature (64)] + [AppData]
-    const payload = new Uint8Array(
-      64 + 10 + 10 + ratchetBytes.length + 64 + appData.length,
-    );
-    payload.set(pubKey, 0);
-    payload.set(this.nameHash, 64);
-    payload.set(randomHash, 64 + 10);
-    payload.set(ratchetBytes, 64 + 10 + 10);
-    payload.set(signature, 64 + 10 + 10 + ratchetBytes.length);
-    payload.set(appData, 64 + 10 + 10 + ratchetBytes.length + 64);
+      // 5. Generate the 64-byte Ed25519 Signature
+      const signature = await this.identity.sign(signedData);
+
+      // 6. Construct the final Announce Payload for the wire
+      // [PubKey (64)] + [NameHash (10)] + [RandomHash (10)] + [Ratchet (0|32)] + [Signature (64)] + [AppData]
+      payload = new Uint8Array(
+        64 + 10 + 10 + ratchetBytes.length + 64 + appData.length,
+      );
+      payload.set(pubKey, 0);
+      payload.set(this.nameHash, 64);
+      payload.set(randomHash, 64 + 10);
+      payload.set(ratchetBytes, 64 + 10 + 10);
+      payload.set(signature, 64 + 10 + 10 + ratchetBytes.length);
+      payload.set(appData, 64 + 10 + 10 + ratchetBytes.length + 64);
+
+      if (tagKey) {
+        this.pathResponses.set(tagKey, {
+          time: Date.now() / 1000,
+          announceData: payload,
+          hasRatchet,
+        });
+      }
+    }
 
     // 7. Broadcast the Packet
     const announcePacket = new Packet({
@@ -480,7 +544,7 @@ export class Destination extends EventTarget {
       transportType: TransportType.BROADCAST,
       contextFlag: hasRatchet,
       contextByte,
-      payload: payload,
+      payload: /** @type {Uint8Array} */ (payload),
     });
 
     // DEBUG: Validate payload size
@@ -509,6 +573,21 @@ export class Destination extends EventTarget {
       return;
     }
     this.interfaceLayer.broadcast(announcePacket);
+  }
+
+  /**
+   * Drops {@link pathResponses} entries older than
+   * {@link Destination.PR_TAG_WINDOW} seconds (mirrors the stale-entry sweep
+   * at the top of the Python reference's `Destination.announce`).
+   * @private
+   */
+  _prunePathResponses() {
+    const now = Date.now() / 1000;
+    for (const [key, entry] of this.pathResponses) {
+      if (now > entry.time + Destination.PR_TAG_WINDOW) {
+        this.pathResponses.delete(key);
+      }
+    }
   }
 
   /**

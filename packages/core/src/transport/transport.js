@@ -80,13 +80,14 @@ export class TransportCore extends EventTarget {
      */
     this.persistor = null;
 
-    // §7.2.2: path-request dedup tags (unique_tag = dest_hash || tag). A leaf
-    // keeps a small bounded ring so a flood of retransmits for the same target
-    // doesn't trigger redundant path-response announces.
-    /** @type {string[]} */
-    this.discoveryPrTags = [];
+    // §7.2.2: path-request dedup tags (unique_tag = dest_hash || tag). An
+    // insertion-ordered Set gives O(1) has/add plus FIFO eviction of the
+    // oldest entry — the Python reference semantics of a 32,000-entry tag
+    // memory (`Transport.max_pr_tags`) without its O(n) list scans.
+    /** @type {Set<string>} */
+    this.discoveryPrTags = new Set();
     /** @type {number} */
-    this.maxPrTags = 256;
+    this.maxPrTags = 32000;
 
     // §Transport.packet_hashlist: inbound packet-hash dedup ring (two-set
     // double-buffered, culled at hashlistMaxsize/2, mirroring Python). A leaf
@@ -389,6 +390,13 @@ export class TransportCore extends EventTarget {
     );
     if (!result) return; // validateAnnounce already logged the rejection reason
 
+    // Ingress-control tracking (Python Transport.inbound): every
+    // signature-valid announce counts toward the receiving interface's
+    // announce-frequency window, whether or not the path table accepts it.
+    // Interfaces not deriving from the base class (ad-hoc test doubles)
+    // simply have no ingress control.
+    receivingInterface?.receivedAnnounce?.();
+
     const { identity, nameHash, randomHash, ratchet, appData } = result;
 
     // §4.5 step 4 — public-key collision rejection. First-announcer-wins: a
@@ -606,15 +614,37 @@ export class TransportCore extends EventTarget {
       return;
     }
 
+    // Ingress-control tracking (Python Transport.inbound): every PR with a
+    // parseable tag counts toward the receiving interface's PR-frequency
+    // window — including duplicates, so retransmission floods are visible
+    // to the burst detector.
+    receivingInterface?.receivedPathRequest?.();
+
     // §7.2.2 dedup on unique_tag = target || tag.
     const uniqueTag = toHex(targetHash) + toHex(tagBytes);
-    if (this.discoveryPrTags.includes(uniqueTag)) {
+    if (this.discoveryPrTags.has(uniqueTag)) {
       log("Transport", "Ignoring duplicate path request", LogLevel.DEBUG);
       return;
     }
-    this.discoveryPrTags.push(uniqueTag);
-    while (this.discoveryPrTags.length > this.maxPrTags) {
-      this.discoveryPrTags.shift();
+    this.discoveryPrTags.add(uniqueTag);
+    while (this.discoveryPrTags.size > this.maxPrTags) {
+      const oldest = this.discoveryPrTags.values().next().value;
+      if (oldest === undefined) break;
+      this.discoveryPrTags.delete(oldest);
+    }
+
+    // Ingress burst control (Python demotes these to the lowest-priority
+    // bounded TC_INGRESS_LIMITED queue, dropping on overflow; we process
+    // inbound inline, so the equivalent is a silent drop). A latched burst
+    // burns the tag too — matching Python's tag consumption order — but
+    // client retries draw fresh random tags and are unaffected.
+    if (receivingInterface?.shouldIngressLimitPr?.()) {
+      log(
+        "Transport",
+        `Dropping path request during PR ingress burst on ${receivingInterface.name}`,
+        LogLevel.DEBUG,
+      );
+      return;
     }
 
     const targetHex = toHex(targetHash);
@@ -624,7 +654,7 @@ export class TransportCore extends EventTarget {
     if (this.localDestinations.has(targetHex)) {
       const dest = this.localDestinations.get(targetHex);
       if (dest.identity) {
-        await dest.announcePathResponse();
+        await dest.announcePathResponse(tagBytes);
         log("Transport", `Answered path request for ${targetHex}`);
       }
     }

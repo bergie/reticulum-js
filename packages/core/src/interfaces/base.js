@@ -131,6 +131,56 @@ function reconnectSchemaProperties() {
 }
 
 /**
+ * Node-global ingress-control overrides accepted by the {@link Reticulum}
+ * constructor's `ingressControl` config block (camelCase forms of the Python
+ * reference's `[reticulum]`-section `ic_*` options, which apply to every
+ * interface — Python has no per-interface form of these).
+ *
+ * @typedef {Object} IngressControlConfig
+ * @property {number} [icBurstHold] Seconds a latched burst stays active
+ *   (Python config key: ic_burst_hold; default 15).
+ * @property {number} [icBurstFreqNew] Announce burst threshold in Hz for
+ *   interfaces younger than `icNewTime` (ic_burst_freq_new; default 3).
+ * @property {number} [icBurstFreq] Announce burst threshold in Hz for
+ *   established interfaces (ic_burst_freq; default 10).
+ * @property {number} [icPrBurstFreqNew] Path-request burst threshold in Hz
+ *   for new interfaces (ic_pr_burst_freq_new; default 3).
+ * @property {number} [icPrBurstFreq] Path-request burst threshold in Hz for
+ *   established interfaces (ic_pr_burst_freq; default 8).
+ * @property {number} [icNewTime] Interface age in seconds below which the
+ *   "new" thresholds apply (ic_new_time; default 7200).
+ * @property {number} [icBurstPenalty] Seconds before held announces may
+ *   release after an announce burst (ic_burst_penalty; default 15).
+ * @property {number} [icHeldReleaseInterval] Seconds between held-announce
+ *   releases (ic_held_release_interval; default 5).
+ */
+
+/**
+ * Computes the arrival frequency (Hz) over a rolling timestamp window,
+ * mirroring the Python reference `*_frequency()` methods exactly:
+ *
+ *   - fewer than `minSample + 1` samples → 0
+ *   - a sample older than `decaySeconds` decays (is dropped for the *next*
+ *     call — the current reading still uses the pre-drop sample count, as in
+ *     Python)
+ *   - non-positive span → 0 (guards same-tick sampling)
+ *
+ * @param {number[]} deque Ring of arrival timestamps (seconds).
+ * @param {number} minSample Minimum samples before a reading (exclusive).
+ * @param {number} decaySeconds Window decay in seconds.
+ * @returns {number} Frequency in Hz.
+ */
+function frequencyOverWindow(deque, minSample, decaySeconds) {
+  const n = deque.length;
+  if (!(n > minSample)) return 0;
+  const oldest = deque[0];
+  const span = Date.now() / 1000 - oldest;
+  if (span > decaySeconds) deque.shift();
+  if (span <= 0) return 0;
+  return n / span;
+}
+
+/**
  * Abstract base class for all RNS interfaces.
  * @extends EventTarget
  */
@@ -278,6 +328,322 @@ export class Interface extends EventTarget {
    * @type {number|null}
    */
   gravity = null;
+
+  // ------------------------------------------------------------------
+  // Ingress control (Python `Interface` ingress control — work doc #31)
+  // ------------------------------------------------------------------
+
+  /**
+   * Rolling-sample cap for the announce/PR frequency deques
+   * (`IA_FREQ_SAMPLES` / `IP_FREQ_SAMPLES` / `OP_FREQ_SAMPLES` in the Python
+   * reference — all 48; Python reuses `IA_FREQ_SAMPLES` for the PR deque).
+   * @type {number}
+   */
+  static FREQ_SAMPLES = 48;
+  /**
+   * Seconds after which an unanswered announce sample decays out of the
+   * deque (`AR_FREQ_DECAY = 1/AR_MINFREQ_HZ` = 10 s).
+   * @type {number}
+   */
+  static ANNOUNCE_FREQ_DECAY = 10;
+  /**
+   * Seconds after which a PR sample decays (`PR_FREQ_DECAY` = 10 s).
+   * @type {number}
+   */
+  static PR_FREQ_DECAY = 10;
+  /**
+   * Interface age in seconds below which the stricter "new interface"
+   * burst thresholds apply (`IC_NEW_TIME` = 2 h).
+   * @type {number}
+   */
+  static IC_NEW_TIME = 2 * 60 * 60;
+  /** Announce burst threshold for new interfaces, Hz (`IC_BURST_FREQ_NEW`). */
+  static IC_BURST_FREQ_NEW = 3;
+  /** Announce burst threshold for established interfaces, Hz (`IC_BURST_FREQ`). */
+  static IC_BURST_FREQ = 10;
+  /** Path-request burst threshold for new interfaces, Hz (`IC_PR_BURST_FREQ_NEW`). */
+  static IC_PR_BURST_FREQ_NEW = 3;
+  /** Path-request burst threshold for established interfaces, Hz (`IC_PR_BURST_FREQ`). */
+  static IC_PR_BURST_FREQ = 8;
+  /**
+   * Quiet evaluations required to unlatch a PR burst after the hold
+   * (`ic_pr_burst_cooldown` = 3; any above-threshold evaluation resets it).
+   * Anti-flapping hysteresis added upstream in "Improved PR ingress
+   * limiter" — the announce limiter has no cooldown.
+   * @type {number}
+   */
+  static IC_PR_BURST_COOLDOWN = 3;
+  /** Seconds a burst stays latched after activation (`IC_BURST_HOLD`). */
+  static IC_BURST_HOLD = 15;
+  /** Seconds before held announces may release after a burst (`IC_BURST_PENALTY`). */
+  static IC_BURST_PENALTY = 15;
+  /**
+   * Minimum deque samples before a frequency is reported
+   * (`IC_DEQUE_MIN_SAMPLE` = 2 — i.e. > 2 samples).
+   * @type {number}
+   */
+  static IC_DEQUE_MIN_SAMPLE = 2;
+
+  /**
+   * Whether ingress burst control is enabled on this interface (Python
+   * `ingress_control`). Disabling makes {@link shouldIngressLimit} and
+   * {@link shouldIngressLimitPr} always return `false`.
+   * @type {boolean}
+   */
+  ingressControl = true;
+  /** @type {number} */
+  icNewTime = Interface.IC_NEW_TIME;
+  /** @type {number} */
+  icBurstFreqNew = Interface.IC_BURST_FREQ_NEW;
+  /** @type {number} */
+  icBurstFreq = Interface.IC_BURST_FREQ;
+  /** @type {number} */
+  icPrBurstFreqNew = Interface.IC_PR_BURST_FREQ_NEW;
+  /** @type {number} */
+  icPrBurstFreq = Interface.IC_PR_BURST_FREQ;
+  /** @type {number} */
+  icBurstHold = Interface.IC_BURST_HOLD;
+  /** @type {number} */
+  icBurstPenalty = Interface.IC_BURST_PENALTY;
+  /** @type {number} */
+  arFreqDecay = Interface.ANNOUNCE_FREQ_DECAY;
+  /** @type {number} */
+  prFreqDecay = Interface.PR_FREQ_DECAY;
+
+  /** Incoming-announce timestamp ring (seconds). @type {number[]} */
+  iaFreqDeque = [];
+  /** Incoming path-request timestamp ring (seconds). @type {number[]} */
+  ipFreqDeque = [];
+  /** Outgoing path-request timestamp ring (seconds). @type {number[]} */
+  opFreqDeque = [];
+
+  /** @type {boolean} */
+  icBurstActive = false;
+  /** @type {number} */
+  icBurstActivated = 0;
+  /** @type {boolean} */
+  icPrBurstActive = false;
+  /** @type {number} */
+  icPrBurstActivated = 0;
+  /** Remaining quiet evaluations before a latched PR burst unlatches. */
+  icPrBurstCooldown = 0;
+  /** Earliest held-announce release time (seconds); set on burst activation. */
+  icHeldRelease = 0;
+
+  /**
+   * Applies node-global ingress-control overrides to this interface
+   * (mirrors Python, where every interface reads the `[reticulum]`-section
+   * `ic_*` defaults via `RNS.Reticulum.get_instance()._default_ic_*()` — there
+   * is no per-interface config for these). Only keys present in `overrides`
+   * are assigned; absent keys keep the class constants. Called by
+   * {@link import("../core/reticulum.js").Reticulum#addInterface} when the
+   * node was constructed with an `ingressControl` config block. These are
+   * deliberately **not** constructor options / interface schema properties:
+   * they scope to the whole node, like the Python reference.
+   *
+   * @param {Partial<IngressControlConfig>} overrides
+   */
+  applyIngressConfig(overrides) {
+    if (!overrides) return;
+    if (overrides.icBurstHold !== undefined)
+      this.icBurstHold = overrides.icBurstHold;
+    if (overrides.icBurstFreqNew !== undefined)
+      this.icBurstFreqNew = overrides.icBurstFreqNew;
+    if (overrides.icBurstFreq !== undefined)
+      this.icBurstFreq = overrides.icBurstFreq;
+    if (overrides.icPrBurstFreqNew !== undefined)
+      this.icPrBurstFreqNew = overrides.icPrBurstFreqNew;
+    if (overrides.icPrBurstFreq !== undefined)
+      this.icPrBurstFreq = overrides.icPrBurstFreq;
+    if (overrides.icNewTime !== undefined) this.icNewTime = overrides.icNewTime;
+    if (overrides.icBurstPenalty !== undefined)
+      this.icBurstPenalty = overrides.icBurstPenalty;
+    if (overrides.icHeldReleaseInterval !== undefined)
+      this.icHeldReleaseInterval = overrides.icHeldReleaseInterval;
+  }
+
+  /**
+   * Age of this interface in seconds (Python `age()`).
+   * @returns {number}
+   */
+  age() {
+    return (Date.now() - this.created) / 1000;
+  }
+
+  /**
+   * Records an inbound announce into {@link iaFreqDeque} (Python
+   * `received_announce`). Spawned interfaces propagate the sample to their
+   * parent so bursts are detected at the medium level.
+   * @param {boolean} [fromSpawned] Internal: true when called on a parent.
+   */
+  receivedAnnounce(fromSpawned = false) {
+    this.iaFreqDeque.push(Date.now() / 1000);
+    if (this.iaFreqDeque.length > Interface.FREQ_SAMPLES) {
+      this.iaFreqDeque.shift();
+    }
+    if (!fromSpawned && /** @type {any} */ (this).parentInterface) {
+      /** @type {any} */ (this).parentInterface.receivedAnnounce(true);
+    }
+  }
+
+  /**
+   * Records an inbound `path?` request into {@link ipFreqDeque} (Python
+   * `received_path_request`). Spawned interfaces propagate to their parent.
+   * @param {boolean} [fromSpawned] Internal: true when called on a parent.
+   */
+  receivedPathRequest(fromSpawned = false) {
+    this.ipFreqDeque.push(Date.now() / 1000);
+    if (this.ipFreqDeque.length > Interface.FREQ_SAMPLES) {
+      this.ipFreqDeque.shift();
+    }
+    if (!fromSpawned && /** @type {any} */ (this).parentInterface) {
+      /** @type {any} */ (this).parentInterface.receivedPathRequest(true);
+    }
+  }
+
+  /**
+   * Records an outbound `path?` request into {@link opFreqDeque} (Python
+   * `sent_path_request`); consumed by egress PR limiting (work doc #31 step 4).
+   * @param {boolean} [fromSpawned] Internal: true when called on a parent.
+   */
+  sentPathRequest(fromSpawned = false) {
+    this.opFreqDeque.push(Date.now() / 1000);
+    if (this.opFreqDeque.length > Interface.FREQ_SAMPLES) {
+      this.opFreqDeque.shift();
+    }
+    if (!fromSpawned && /** @type {any} */ (this).parentInterface) {
+      /** @type {any} */ (this).parentInterface.sentPathRequest(true);
+    }
+  }
+
+  /**
+   * Incoming announce rate in Hz over the current sample window (Python
+   * `incoming_announce_frequency`). Returns 0 with fewer than
+   * {@link Interface.IC_DEQUE_MIN_SAMPLE}+1 samples; a sample older than
+   * {@link arFreqDecay} decays out of the window.
+   * @returns {number}
+   */
+  incomingAnnounceFrequency() {
+    return frequencyOverWindow(
+      this.iaFreqDeque,
+      Interface.IC_DEQUE_MIN_SAMPLE,
+      this.arFreqDecay,
+    );
+  }
+
+  /**
+   * Incoming `path?` request rate in Hz (Python `incoming_pr_frequency`).
+   * Same sampling rules as {@link incomingAnnounceFrequency}, with the PR
+   * decay window.
+   * @returns {number}
+   */
+  incomingPrFrequency() {
+    return frequencyOverWindow(
+      this.ipFreqDeque,
+      Interface.IC_DEQUE_MIN_SAMPLE,
+      this.prFreqDecay,
+    );
+  }
+
+  /**
+   * Outgoing `path?` request rate in Hz (Python `outgoing_pr_frequency`).
+   * Needs more than one sample.
+   * @returns {number}
+   */
+  outgoingPrFrequency() {
+    return frequencyOverWindow(this.opFreqDeque, 1, this.prFreqDecay);
+  }
+
+  /**
+   * Whether announce ingress should be limited right now (Python
+   * `should_ingress_limit`). Latches a burst when the incoming announce
+   * frequency exceeds the threshold for the interface's age — stricter
+   * (`icBurstFreqNew`) during the first {@link icNewTime} seconds. Once
+   * latched, stays limiting for at least {@link icBurstHold} seconds and
+   * until the frequency drops back below the threshold; the call that
+   * unlatches still reports `true` (mirroring the Python reference, the
+   * next packet after it flows normally).
+   *
+   * Consumers: held-announce buffering for unknown destinations (work doc
+   * #31 step 3). The announce frequency side effects (latching plus arming
+   * {@link icHeldRelease} with the {@link icBurstPenalty}) match Python so
+   * the state is already correct when that lands.
+   *
+   * @returns {boolean}
+   */
+  shouldIngressLimit() {
+    if (!this.ingressControl) return false;
+    const freqThreshold =
+      this.age() < this.icNewTime ? this.icBurstFreqNew : this.icBurstFreq;
+    const iaFreq = this.incomingAnnounceFrequency();
+
+    if (this.icBurstActive) {
+      if (
+        iaFreq < freqThreshold &&
+        Date.now() / 1000 > this.icBurstActivated + this.icBurstHold
+      ) {
+        if (this.iaFreqDeque.length >= Interface.IC_DEQUE_MIN_SAMPLE) {
+          this.icBurstActive = false;
+        }
+      }
+      return true;
+    }
+
+    if (iaFreq > freqThreshold) {
+      this.icBurstActive = true;
+      this.icBurstActivated = Date.now() / 1000;
+      this.icHeldRelease = this.icBurstActivated + this.icBurstPenalty;
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Whether `path?` request ingress should be limited right now (Python
+   * `should_ingress_limit_pr`, incl. the upstream cooldown hysteresis).
+   * Latches when the incoming PR frequency exceeds the age-dependent
+   * threshold ({@link icPrBurstFreqNew} during the first {@link icNewTime}
+   * seconds, {@link icPrBurstFreq} after). Once latched, stays limiting for
+   * at least {@link icBurstHold} seconds; after the hold, unlatching takes
+   * {@link Interface.IC_PR_BURST_COOLDOWN}+1 consecutive below-threshold
+   * evaluations — any above-threshold evaluation resets the cooldown
+   * (anti-flapping at the boundary). Consumers: `TransportCore` drops
+   * unique-tag path requests while a burst is latched (work doc #31 step 2 —
+   * our inline processing equivalent of the Python reference's
+   * `TC_INGRESS_LIMITED` traffic-class demotion).
+   *
+   * @returns {boolean}
+   */
+  shouldIngressLimitPr() {
+    if (!this.ingressControl) return false;
+    const freqThreshold =
+      this.age() < this.icNewTime ? this.icPrBurstFreqNew : this.icPrBurstFreq;
+    const ipFreq = this.incomingPrFrequency();
+
+    if (this.icPrBurstActive) {
+      if (
+        ipFreq < freqThreshold &&
+        Date.now() / 1000 > this.icPrBurstActivated + this.icBurstHold
+      ) {
+        if (this.icPrBurstCooldown <= 0) {
+          this.icPrBurstActive = false;
+        } else {
+          this.icPrBurstCooldown -= 1;
+        }
+      } else {
+        this.icPrBurstCooldown = Interface.IC_PR_BURST_COOLDOWN;
+      }
+      return true;
+    }
+
+    if (ipFreq > freqThreshold) {
+      this.icPrBurstActive = true;
+      this.icPrBurstActivated = Date.now() / 1000;
+      this.icPrBurstCooldown = Interface.IC_PR_BURST_COOLDOWN;
+      return true;
+    }
+    return false;
+  }
 
   // ------------------------------------------------------------------
   // IFAC (Interface Authentication Code) — § Transport.transmit/inbound

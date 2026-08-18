@@ -15,6 +15,7 @@ import {
   Packet,
   PacketType,
 } from "../../src/core/packet.js";
+import { Interface } from "../../src/interfaces/base.js";
 import { TransportCore } from "../../src/transport/transport.js";
 import { bytesEqual, toHex } from "../../src/utils/encoding.js";
 
@@ -297,4 +298,129 @@ test("end-to-end: A requests a path, B answers, A receives a validated announce"
     bytesEqual(received.identity.identityHash, identityB.identityHash),
     "A must learn B's identity from the announce",
   );
+});
+
+// ---------------------------------------------------------------------
+// Ingress burst control + path-response cache (work doc #31 steps 1–2,
+// mirroring the Python reference's ingress control and path_responses)
+// ---------------------------------------------------------------------
+
+/**
+ * Builds a transport + owned destination whose path-response announces are
+ * captured, plus a real `Interface` as the receiving interface.
+ * @returns {Promise<{transport: TransportCore, dest: any, layer: CapturingLayer, iface: import("../../src/interfaces/base.js").Interface}>}
+ */
+async function prFixture() {
+  const identity = await Identity.generate();
+  const layer = new CapturingLayer();
+  const dest = await Destination.IN(
+    "lxmf.delivery",
+    DestType.SINGLE,
+    identity,
+    /** @type {any} */ (layer),
+  );
+  const transport = new TransportCore();
+  transport.bindLocalDestination(dest);
+  const iface = new Interface();
+  iface.name = "pr-fixture";
+  return { transport, dest, layer, iface };
+}
+
+test("a latched PR ingress burst drops unique-tag path requests", async () => {
+  const { transport, dest, layer, iface } = await prFixture();
+  // Pre-latch a burst (activation just now — hold has not elapsed).
+  iface.icPrBurstActive = true;
+  iface.icPrBurstActivated = Date.now() / 1000;
+
+  const tag = crypto.getRandomValues(new Uint8Array(16));
+  const req = new Packet({
+    packetType: PacketType.DATA,
+    destinationType: DestType.PLAIN,
+    destinationHash: await transport._pathRequestDestHash(),
+    contextByte: ContextType.NONE,
+    payload: leafPayload(/** @type {Uint8Array} */ (dest.destinationHash), tag),
+  });
+  await transport._handlePathRequest(req, iface);
+
+  assert.strictEqual(layer.packets.length, 0, "burst → dropped, no response");
+  // The PR still counted toward the frequency window before the drop.
+  assert.strictEqual(iface.ipFreqDeque.length, 1);
+});
+
+test("a flood of unique-tag PRs latches the burst and bounds responses", async () => {
+  const { transport, dest, layer, iface } = await prFixture();
+
+  // Fire 10 unique-tag PRs back-to-back (the "75 PRs/s" pattern): a new
+  // interface (age < 2 h) latches at > 3/s, so only the first few are
+  // answered before the burst detector kicks in.
+  for (let i = 0; i < 10; i++) {
+    const tag = crypto.getRandomValues(new Uint8Array(16));
+    const req = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.PLAIN,
+      destinationHash: await transport._pathRequestDestHash(),
+      contextByte: ContextType.NONE,
+      payload: leafPayload(
+        /** @type {Uint8Array} */ (dest.destinationHash),
+        tag,
+      ),
+    });
+    await transport._handlePathRequest(req, iface);
+  }
+
+  assert.strictEqual(iface.icPrBurstActive, true, "burst must latch");
+  assert.ok(
+    layer.packets.length < 10,
+    `responses must be bounded by the burst detector (got ${layer.packets.length})`,
+  );
+  assert.ok(layer.packets.length >= 1, "early PRs are still answered");
+});
+
+test("a retransmitted PR reuses the cached announce payload (path_responses)", async () => {
+  const { transport, dest, layer } = await prFixture();
+  const tag = crypto.getRandomValues(new Uint8Array(16));
+
+  const req = async () =>
+    new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.PLAIN,
+      destinationHash: await transport._pathRequestDestHash(),
+      contextByte: ContextType.NONE,
+      payload: leafPayload(
+        /** @type {Uint8Array} */ (dest.destinationHash),
+        tag,
+      ),
+    });
+
+  await transport._handlePathRequest(await req(), null);
+  assert.strictEqual(layer.packets.length, 1);
+  assert.strictEqual(
+    dest.pathResponses.size,
+    1,
+    "tagged response cached (Python path_responses)",
+  );
+
+  // Simulate the transport tag ring having overflowed (the scenario the
+  // cache defends against): clear it so the same-tag PR is processed again.
+  transport.discoveryPrTags.clear();
+  await transport._handlePathRequest(await req(), null);
+
+  assert.strictEqual(layer.packets.length, 2);
+  assert.ok(
+    bytesEqual(layer.packets[0].payload, layer.packets[1].payload),
+    "same tag → cached announce payload retransmitted, no re-signing",
+  );
+});
+
+test("path-response cache entries expire after PR_TAG_WINDOW", async () => {
+  const { dest } = await prFixture();
+
+  // Plant a stale entry and prune.
+  dest.pathResponses.set("deadbeef", {
+    time: Date.now() / 1000 - (Destination.PR_TAG_WINDOW + 5),
+    announceData: new Uint8Array(1),
+    hasRatchet: false,
+  });
+  dest._prunePathResponses();
+  assert.strictEqual(dest.pathResponses.size, 0, "stale entry pruned");
 });

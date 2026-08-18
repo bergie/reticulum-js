@@ -1,6 +1,46 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **Interface ingress burst control** (work doc #31 steps 1–2, mirroring
+  Python `Interface` ingress control). The `Interface` base class now tracks
+  rolling 48-sample announce / path-request arrival frequencies per
+  interface (`receivedAnnounce` / `receivedPathRequest` / `sentPathRequest`
+  + `incomingAnnounceFrequency` / `incomingPrFrequency` /
+  `outgoingPrFrequency`) and detects floods with the Python reference's
+  exact constants and latch/hold semantics (`shouldIngressLimit` /
+  `shouldIngressLimitPr`: burst latches above 10 announces/s or 8 PR/s — 3/s
+  for interfaces younger than 2 h — and holds for 15 s).
+  `TransportCore` counts every validated inbound announce and every tagged
+  inbound `path?` request toward the receiving interface's window, and drops
+  unique-tag path requests while a PR burst is latched (the inline-processing
+  equivalent of Python's `TC_INGRESS_LIMITED` traffic-class demotion).
+- **Path-response announce cache** (`Destination.pathResponses`, Python
+  `path_responses`): `announcePathResponse(tag)` now accepts the requesting
+  PR's tag and caches the signed announce payload for
+  `Destination.PR_TAG_WINDOW` (30 s); retransmitted requests with a seen tag
+  reuse the cached payload instead of re-signing and re-rotating ratchets.
+- **PR burst unlatch hysteresis** (sync with upstream "Improved PR ingress
+  limiter"): a latched PR burst now needs `IC_PR_BURST_COOLDOWN` (3) + 1
+  consecutive quiet evaluations to unlatch after the 15 s hold, and any
+  above-threshold evaluation resets the cooldown — anti-flapping at the
+  burst-frequency boundary. The announce limiter is unchanged (upstream
+  applies the cooldown to the PR limiter only).
+- **Node-global ingress-control config.** The `Reticulum` constructor now
+  accepts an `ingressControl` block (`icBurstHold`, `icBurstFreqNew`,
+  `icBurstFreq`, `icPrBurstFreqNew`, `icPrBurstFreq`, `icNewTime`,
+  `icBurstPenalty`, `icHeldReleaseInterval`) applied to every interface at
+  `addInterface` — mirroring the Python reference's `[reticulum]`-section
+  `ic_*` options, which have no per-interface form. Absent keys keep the
+  Python constants; per-instance programmatic control (e.g.
+  `iface.ingressControl = false`) still works. Deliberately **not** added to
+  the interface configuration schemas, since these are node-scoped, not
+  interface constructor options. `AutoInterface` spawned peers inherit the
+  parent's settings (Python `spawn_peer` parity).
+- **`TransportCore.maxPrTags` raised from 256 to 32,000** (Python
+  `Transport.max_pr_tags`), with the tag ring switched from an O(n)-scan
+  array to an insertion-ordered `Set` for O(1) dedup/eviction.
+
 ### Changed
 - **rfed channel stamps now use the standard LXMF stamper.** The interim
   compatibility workaround that mirrored `reticulum-rust`'s stub `LXStamper`
