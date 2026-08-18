@@ -46,6 +46,36 @@ import { LogLevel, log } from "../utils/log.js";
  * @property {number} txb - Total bytes transmitted, mirroring `self.txb`.
  * @property {number} created - Epoch milliseconds when the interface was
  *   constructed (Python `self.created`).
+ * @property {number} incomingAnnounceFrequency - Live incoming-announce rate
+ *   in Hz (Python `incoming_announce_frequency`). 0 with too few samples.
+ * @property {number} outgoingAnnounceFrequency - Live outgoing-announce rate
+ *   in Hz (Python `outgoing_announce_frequency`).
+ * @property {number} incomingPrFrequency - Live incoming `path?` request
+ *   rate in Hz (Python `incoming_pr_frequency`).
+ * @property {number} outgoingPrFrequency - Live outgoing `path?` request
+ *   rate in Hz (Python `outgoing_pr_frequency`).
+ * @property {boolean} announceBurstActive - Whether an announce ingress burst
+ *   is latched (Python `burst_active`).
+ * @property {number} announceBurstActivated - When the current announce burst
+ *   latched, epoch seconds (Python `burst_activated`; 0 = never).
+ * @property {number} announceBurstCount - Times an announce burst has latched
+ *   (Python `burst_count` — a subclass hook returning None there; ours is a
+ *   real counter).
+ * @property {boolean} prBurstActive - Whether a `path?` ingress burst is
+ *   latched (Python `pr_burst_active`).
+ * @property {number} prBurstActivated - When the current PR burst latched,
+ *   epoch seconds (Python `pr_burst_activated`; 0 = never).
+ * @property {number} prBurstCount - Times a PR burst has latched (Python
+ *   `pr_burst_count`).
+ * @property {number} prBurstDrops - Unique-tag path requests dropped while a
+ *   PR burst was latched (our inline equivalent of Python's ingress-limited
+ *   queue-drop counter `rxqild`).
+ * @property {number} heldAnnounces - Announces currently held awaiting
+ *   release (Python `held_announces`).
+ * @property {number} heldAnnounceReleases - Held announces released back into
+ *   the inbound pipeline so far.
+ * @property {number} heldAnnounceDrops - Announces dropped because the held
+ *   table was at its cap when they arrived.
  */
 
 /**
@@ -432,6 +462,8 @@ export class Interface extends EventTarget {
 
   /** Incoming-announce timestamp ring (seconds). @type {number[]} */
   iaFreqDeque = [];
+  /** Outgoing-announce timestamp ring (seconds). @type {number[]} */
+  oaFreqDeque = [];
   /** Incoming path-request timestamp ring (seconds). @type {number[]} */
   ipFreqDeque = [];
   /** Outgoing path-request timestamp ring (seconds). @type {number[]} */
@@ -449,6 +481,23 @@ export class Interface extends EventTarget {
   icPrBurstCooldown = 0;
   /** Earliest held-announce release time (seconds); set on burst activation. */
   icHeldRelease = 0;
+
+  // ------------------------------------------------------------------
+  // Ingress-control observability counters (work doc #31; Python surfaces
+  // burst state and drop stats via rnstatus — our inline-processing
+  // equivalents of the queue-drop counters live here)
+  // ------------------------------------------------------------------
+
+  /** Times an announce burst has latched on this interface. */
+  announceBurstCount = 0;
+  /** Times a `path?` burst has latched on this interface. */
+  prBurstCount = 0;
+  /** Unique-tag path requests dropped while a PR burst was latched. */
+  prBurstDrops = 0;
+  /** Held announces released back into the inbound pipeline. */
+  heldAnnounceReleases = 0;
+  /** Announces dropped (not held) because the held table was at its cap. */
+  heldAnnounceDrops = 0;
 
   /**
    * Announces held while an ingress burst is latched, keyed by destination
@@ -513,6 +562,8 @@ export class Interface extends EventTarget {
       this.heldAnnounces.set(destHex, packet);
     } else if (this.heldAnnounces.size < this.icMaxHeldAnnounces) {
       this.heldAnnounces.set(destHex, packet);
+    } else {
+      this.heldAnnounceDrops += 1;
     }
   }
 
@@ -549,6 +600,7 @@ export class Interface extends EventTarget {
 
     this.icHeldRelease = now + this.icHeldReleaseInterval;
     this.heldAnnounces.delete(toHex(selected.destinationHash));
+    this.heldAnnounceReleases += 1;
     return selected;
   }
 
@@ -573,6 +625,23 @@ export class Interface extends EventTarget {
     }
     if (!fromSpawned && /** @type {any} */ (this).parentInterface) {
       /** @type {any} */ (this).parentInterface.receivedAnnounce(true);
+    }
+  }
+
+  /**
+   * Records an outbound announce into {@link oaFreqDeque} (Python
+   * `sent_announce`); counted by `TransportCore.broadcast` at the transmit
+   * chokepoint, and surfaced as {@link outgoingAnnounceFrequency} for the
+   * future announce-rate-table work (#31 step 6).
+   * @param {boolean} [fromSpawned] Internal: true when called on a parent.
+   */
+  sentAnnounce(fromSpawned = false) {
+    this.oaFreqDeque.push(Date.now() / 1000);
+    if (this.oaFreqDeque.length > Interface.FREQ_SAMPLES) {
+      this.oaFreqDeque.shift();
+    }
+    if (!fromSpawned && /** @type {any} */ (this).parentInterface) {
+      /** @type {any} */ (this).parentInterface.sentAnnounce(true);
     }
   }
 
@@ -636,6 +705,15 @@ export class Interface extends EventTarget {
   }
 
   /**
+   * Outgoing announce rate in Hz (Python `outgoing_announce_frequency`).
+   * Needs more than one sample.
+   * @returns {number}
+   */
+  outgoingAnnounceFrequency() {
+    return frequencyOverWindow(this.oaFreqDeque, 1, this.arFreqDecay);
+  }
+
+  /**
    * Outgoing `path?` request rate in Hz (Python `outgoing_pr_frequency`).
    * Needs more than one sample.
    * @returns {number}
@@ -683,6 +761,7 @@ export class Interface extends EventTarget {
       this.icBurstActive = true;
       this.icBurstActivated = Date.now() / 1000;
       this.icHeldRelease = this.icBurstActivated + this.icBurstPenalty;
+      this.announceBurstCount += 1;
       return true;
     }
     return false;
@@ -730,6 +809,7 @@ export class Interface extends EventTarget {
       this.icPrBurstActive = true;
       this.icPrBurstActivated = Date.now() / 1000;
       this.icPrBurstCooldown = Interface.IC_PR_BURST_COOLDOWN;
+      this.prBurstCount += 1;
       return true;
     }
     return false;
@@ -1029,6 +1109,21 @@ export class Interface extends EventTarget {
       rxb: this.rxb,
       txb: this.txb,
       created: this.created,
+      // Ingress-control observability (Python ifstats / rnstatus fields).
+      incomingAnnounceFrequency: this.incomingAnnounceFrequency(),
+      outgoingAnnounceFrequency: this.outgoingAnnounceFrequency(),
+      incomingPrFrequency: this.incomingPrFrequency(),
+      outgoingPrFrequency: this.outgoingPrFrequency(),
+      announceBurstActive: this.icBurstActive,
+      announceBurstActivated: this.icBurstActivated,
+      announceBurstCount: this.announceBurstCount,
+      prBurstActive: this.icPrBurstActive,
+      prBurstActivated: this.icPrBurstActivated,
+      prBurstCount: this.prBurstCount,
+      prBurstDrops: this.prBurstDrops,
+      heldAnnounces: this.heldAnnounces.size,
+      heldAnnounceReleases: this.heldAnnounceReleases,
+      heldAnnounceDrops: this.heldAnnounceDrops,
     };
   }
 

@@ -45,6 +45,19 @@
   application retry loops over dead links can no longer emit a `path?`
   request per failure. Timestamps expire after `PATH_REQUEST_GATE_TIMEOUT`
   (120 s).
+- **Ingress-control observability** (work doc #31): `Interface.getStats()`
+  now surfaces the flood-defense state mirroring the Python reference's
+  rnstatus fields — live `incomingAnnounceFrequency` /
+  `outgoingAnnounceFrequency` / `incomingPrFrequency` /
+  `outgoingPrFrequency` readings, burst latch state
+  (`announceBurstActive`/`Activated`/`Count`, `prBurstActive`/`Activated`/
+  `Count`), and held-announce bookkeeping (`heldAnnounces`, releases,
+  cap-drops). `prBurstDrops` counts unique-tag path requests dropped while a
+  PR burst was latched (the inline equivalent of Python's `rxqild` queue-drop
+  counter). New `sentAnnounce` outbound tracking (sampled by
+  `TransportCore.broadcast` for ANNOUNCE packets) completes the rnstatus
+  frequency quartet; all fields are additive to `InterfaceStats` and RNode's
+  telemetry snapshot inherits them via its `super.getStats()` spread.
 - **`TransportCore.hashlistMaxsize` raised from 50,000 to 1,000,000** (Python
   `Transport.hashlist_maxsize`) — the dedup ring now matches reference scale
   (entries are full packet-hash hex strings; the memory trade is bounded by

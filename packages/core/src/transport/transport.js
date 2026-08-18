@@ -727,6 +727,7 @@ export class TransportCore extends EventTarget {
     // burns the tag too — matching Python's tag consumption order — but
     // client retries draw fresh random tags and are unaffected.
     if (receivingInterface?.shouldIngressLimitPr?.()) {
+      receivingInterface.prBurstDrops += 1;
       log(
         "Transport",
         `Dropping path request during PR ingress burst on ${receivingInterface.name}`,
@@ -754,6 +755,14 @@ export class TransportCore extends EventTarget {
    * @param {import("../interfaces/base.js").Interface|null} sourceInterface
    */
   broadcast(packet, sourceInterface = null) {
+    // §Egress tracking (Python transmit calls `interface.sent_announce()` for
+    // ANNOUNCE packets): the outgoing-announce frequency feeds the rnstatus
+    // stats surface and, later, the announce-rate-table work (#31 step 6).
+    if (packet.packetType === PacketType.ANNOUNCE) {
+      for (const iface of this.interfaces) {
+        if (iface !== sourceInterface) iface.sentAnnounce?.();
+      }
+    }
     for (const iface of this.interfaces) {
       if (iface === sourceInterface || !iface._packetWriter) continue;
 
