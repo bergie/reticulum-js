@@ -1,4 +1,4 @@
-This repository is for building a pure JavaScript implementaton of the Reticulum Networking stack.
+This repository is for building a pure JavaScript implementation of the Reticulum Networking stack.
 
 We aim for as close to full compatibility with the Python reference implementation as possible.
 
@@ -12,12 +12,6 @@ The canonical specification is the Reticulum Network Python implementation which
 
 When the two protocol specifications disagree, the Python implementation is correct.
 
-## Work documents
-
-Technical work is planned with work documents (in Markdown) that are managed using `rngit` tool and repository in `rns://3ea5aad068a337670f5bb8073226adb4/public/reticulum-js`. The appropriate [pi skill extension](https://github.com/bergie/pi-rngit-work-document-skill) should be available.
-
-When planning new work, there should always be a corresponding work document created explaining the idea. When implementing, the appropriate work document should be kept up-to-date by posting updates to it. Agent may _propose_ work documents, not _create_ them.
-
 ## Designing interfaces
 
 We aim for modern standard JavaScript feel. This means consistent use of Promises, Web Streams, and if needed, EventTarget. No platform-specific patterns for Node.js or Deno.
@@ -30,9 +24,13 @@ It is also important to use same terms and concepts as in the Python implementat
 
 Every API interface needs to have TypeScript definitions in JsDoc format. Run `npm run types` after every change to verify compatibility.
 
+## Formatting
+
+Fix formatting with `npm run format` after any changes to source files or tests.
+
 ## Tests
 
-We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should recide in corresponding file under `test` folder, so that for instance tests for Identity (implementation `packages/core/src/core/identity.js` are in `packages/core/test/core/identity.test.js`.
+We aim for good test coverage. Tests are to be implemented using the Node.js built-in `node:test` library. Tests for each library file should reside in corresponding file under `test` folder, so that for instance tests for Identity (implementation `packages/core/src/core/identity.js` are in `packages/core/test/core/identity.test.js`.
 
 All tests should be verified against the Python reference implementation to make sure we are testing Reticulum compatibility instead of just quirks of our local implementation.
 
@@ -52,17 +50,9 @@ The `@reticulum/core` package (`packages/core`) may only depend on the standard 
 
 ## Boundaries
 
-- ✅ **Always**: write at least smoketests for any new functionality
-- ✅ **Always**: ensure type safety. Always check eith `npm run types` after changes and fix as needed
-- ✅ **Always**: fix formatting with `npm run format` (in Android/Termux `biome check --use-editorconfig=true --write packages/*/src packages/*/test examples`) after any changes to source files or tests
+In addition to the global boundaries:
+
 - ✅ **Always**: compare implementation with how the Python reference implementation works and adapt to be compatible with it
-- ✅ **Always**: Use `git mv` instead of `mv' for renaming files
-- ✅ **Always**: document any major changes in the per-package `CHANGELOG.md`. Changes always go to the Unreleased segment. Do not update the root-level 'CHANGELOG.md`, that one is done as part of the release process
-- ✅ **Always**: Remove ambiguity and legacy support from APIs you modify. Right now there are no API consumers outside this repo so we can keep things fluid
-- ✅ **Always**: Use the logging helper from `packages/core/src/utils/log.js` instead of `console.log` (and `.warn/.error`)
-- ✅ **Always**: Keep the work document associated with current task up-to-date
-- ⚠️ **Ask first**: adding dependencies
-- ⚠️ **Ask first**: modify CI config
-- ⚠️ **Ask first**: allow an optional input to a method
-- 🚫 **Never**: AI agents may not make commits on their own, instead notify user that there are uncommitted changes to review
-- 🚫 **Never**: AI agents may not mark work documents completed on their own, instead ask user to do so
+- ✅ **Always**: use the logging helper from `packages/core/src/utils/log.js` instead of `console.log` (and `.warn/.error`)
+- ✅ **Always**: document major changes in the per-package `CHANGELOG.md` (Unreleased segment)
+- 🚫 **Never**: update the root-level `CHANGELOG.md` — that is done as part of the release process
