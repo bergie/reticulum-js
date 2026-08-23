@@ -55,6 +55,10 @@ test("getStats surfaces the ingress-control state with fresh defaults", () => {
   assert.strictEqual(stats.outgoingAnnounceFrequency, 0);
   assert.strictEqual(stats.incomingPrFrequency, 0);
   assert.strictEqual(stats.outgoingPrFrequency, 0);
+  // Protocol-violation counters (RNS 1.5.0) start at zero.
+  assert.strictEqual(stats.protocolViolations, 0);
+  assert.strictEqual(stats.ifacViolations, 0);
+  assert.strictEqual(stats.packetFilterHits, 0);
   // Pre-existing fields still present.
   assert.strictEqual(stats.rxb, 0);
   assert.strictEqual(stats.txb, 0);

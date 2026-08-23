@@ -76,6 +76,13 @@ import { LogLevel, log } from "../utils/log.js";
  *   the inbound pipeline so far.
  * @property {number} heldAnnounceDrops - Announces dropped because the held
  *   table was at its cap when they arrived.
+ * @property {number} protocolViolations - Generic protocol violations
+ *   (RNS 1.5.0 `protocol_violations`): malformed packets, bad signatures,
+ *   tagless/oversized path requests, etc.
+ * @property {number} ifacViolations - IFAC-specific violations (RNS 1.5.0
+ *   `ifac_violations`): missing/invalid/short IFAC fields.
+ * @property {number} packetFilterHits - Inbound packet-filter (dedup) hits
+ *   (RNS 1.5.0 `packet_filter_hits`).
  */
 
 /**
@@ -499,6 +506,21 @@ export class Interface extends EventTarget {
   /** Announces dropped (not held) because the held table was at its cap. */
   heldAnnounceDrops = 0;
 
+  // -----------------------------------------------------------------
+  // Per-interface protocol violation tracking (RNS 1.5.0). Counters for
+  // malformed / invalid inbound traffic, surfaced via getStats(). Each
+  // helper increments, logs at DEBUG, and returns `null` so it chains as the
+  // `return` value at every drop site (mirroring Python's
+  // `interface.protocol_violation(...)` returning `None`).
+  // -----------------------------------------------------------------
+
+  /** Generic protocol violations: malformed packets, bad signatures, etc. */
+  protocolViolations = 0;
+  /** IFAC-specific violations: missing/invalid/short IFAC fields. */
+  ifacViolations = 0;
+  /** Inbound packet-filter (dedup) hits. */
+  packetFilterHits = 0;
+
   /**
    * Announces held while an ingress burst is latched, keyed by destination
    * hash hex (Python `held_announces`). Drained by
@@ -720,6 +742,59 @@ export class Interface extends EventTarget {
    */
   outgoingPrFrequency() {
     return frequencyOverWindow(this.opFreqDeque, 1, this.prFreqDecay);
+  }
+
+  /**
+   * Records a generic protocol violation on this interface (Python
+   * `protocol_violation`): malformed packets, invalid announce signatures,
+   * tagless / oversized path requests, undecodable MTU signalling, inbound
+   * processing exceptions. Increments {@link protocolViolations}, logs at
+   * DEBUG, and returns `null` so it chains as the `return` value at every
+   * drop site.
+   *
+   * @param {string|null} [description] Optional human-readable detail.
+   * @returns {null}
+   */
+  protocolViolation(description = null) {
+    this.protocolViolations += 1;
+    log(
+      this.name,
+      `Protocol violation on ${this.name}: ${description ?? ""}`,
+      LogLevel.DEBUG,
+    );
+    return null;
+  }
+
+  /**
+   * Records an IFAC (interface authentication code) violation on this
+   * interface (Python `ifac_violation`): missing IFAC flag, insufficient
+   * packet size for the IFAC field, or an IFAC that fails re-verification.
+   * Increments {@link ifacViolations}, logs at DEBUG, returns `null`.
+   *
+   * @param {string|null} [description]
+   * @returns {null}
+   */
+  ifacViolation(description = null) {
+    this.ifacViolations += 1;
+    log(
+      this.name,
+      `IFAC violation on ${this.name}: ${description ?? ""}`,
+      LogLevel.DEBUG,
+    );
+    return null;
+  }
+
+  /**
+   * Records a packet-filter (dedup) hit on this interface (Python
+   * `packet_filter_hit`): an inbound non-announce packet whose hash is
+   * already in the dedup ring. Increments {@link packetFilterHits}, returns
+   * `null`.
+   *
+   * @returns {null}
+   */
+  packetFilterHit() {
+    this.packetFilterHits += 1;
+    return null;
   }
 
   /**
@@ -1010,19 +1085,39 @@ export class Interface extends EventTarget {
    * @protected
    */
   async _openRaw(raw) {
+    if (raw.length <= 2) {
+      return this.protocolViolation(
+        "Insufficient packet size for IFAC processing",
+      );
+    }
     if (!this.ifacEnabled) {
       // No IFAC configured: reject anything claiming to carry an IFAC.
-      return hasIfacFlag(raw) ? null : raw;
+      return hasIfacFlag(raw)
+        ? this.protocolViolation(
+            "IFAC flag set on packet for interface without IFAC enabled",
+          )
+        : raw;
     }
     await this._ensureIfacMaterial();
-    if (!hasIfacFlag(raw)) return null; // IFAC expected but flag absent.
-    return openIfac(raw, {
+    if (!hasIfacFlag(raw)) {
+      return this.ifacViolation(
+        "Missing IFAC flag on packet for IFAC-enabled interface",
+      );
+    }
+    if (raw.length <= 2 + this.ifacSize) {
+      return this.ifacViolation("Insufficient packet size for IFAC packet");
+    }
+    const opened = await openIfac(raw, {
       ifacIdentity: /** @type {import("../core/identity.js").Identity} */ (
         this.ifacIdentity
       ),
       ifacKey: /** @type {Uint8Array} */ (this.ifacKey),
       ifacSize: this.ifacSize,
     });
+    if (!opened) {
+      return this.ifacViolation("Invalid IFAC on packet");
+    }
+    return opened;
   }
 
   /**
@@ -1124,6 +1219,9 @@ export class Interface extends EventTarget {
       heldAnnounces: this.heldAnnounces.size,
       heldAnnounceReleases: this.heldAnnounceReleases,
       heldAnnounceDrops: this.heldAnnounceDrops,
+      protocolViolations: this.protocolViolations,
+      ifacViolations: this.ifacViolations,
+      packetFilterHits: this.packetFilterHits,
     };
   }
 

@@ -28,6 +28,7 @@ import {
   InterfaceDiscovery,
   isHostname,
   isIpAddress,
+  OP_ADDR,
   parseDiscoveryAnnounce,
   sanitizeName,
   WORKBLOCK_EXPAND_ROUNDS,
@@ -61,8 +62,10 @@ function makeInfo({
   latitude = null,
   longitude = null,
   height = null,
+  operatorLxmfAddress = undefined,
 }) {
-  return new Map([
+  /** @type {Map<number, any>} */
+  const map = new Map([
     [0x00, type],
     [0x01, transport],
     [0xfe, transportId],
@@ -73,6 +76,10 @@ function makeInfo({
     [0x02, reachableOn],
     [0x06, port],
   ]);
+  if (operatorLxmfAddress !== undefined) {
+    map.set(OP_ADDR, operatorLxmfAddress);
+  }
+  return map;
 }
 
 /** In-memory KV storage adapter implementing the work-doc-#16 interface. */
@@ -268,6 +275,114 @@ test("parses a Python-generated discovery announce byte-for-byte (interop)", asy
     toHex(/** @type {Uint8Array} */ (info?.stamp)),
     expected.stamp.__bytes_hex__,
   );
+});
+
+// ---------------------------------------------------------------------
+// Operator LXMF address (RNS 1.5.0 OP_ADDR)
+// ---------------------------------------------------------------------
+
+test("parseDiscoveryAnnounce surfaces operator_lxmf_address when OP_ADDR is present", async () => {
+  const transportId = crypto.getRandomValues(new Uint8Array(16));
+  const opAddr = crypto.getRandomValues(new Uint8Array(16)); // 16 bytes
+  const info = makeInfo({
+    transportId,
+    name: "Op Node",
+    reachableOn: "example.com",
+    port: 42424,
+    operatorLxmfAddress: opAddr,
+  });
+  const appData = await buildDiscoveryAppData(info, { stampCost: 8 });
+  const announced = await Identity.generate();
+  const parsed = await parseDiscoveryAnnounce(appData, announced, {
+    requiredValue: 8,
+  });
+  assert.ok(parsed, "parser should accept OP_ADDR");
+  assert.strictEqual(
+    parsed?.operator_lxmf_address,
+    toHex(opAddr),
+    "operator_lxmf_address surfaced as hex",
+  );
+});
+
+test("parseDiscoveryAnnounce omits operator_lxmf_address when OP_ADDR is absent", async () => {
+  const transportId = crypto.getRandomValues(new Uint8Array(16));
+  const info = makeInfo({
+    transportId,
+    name: "No Op Node",
+    reachableOn: "example.com",
+    port: 42424,
+  });
+  const appData = await buildDiscoveryAppData(info, { stampCost: 8 });
+  const announced = await Identity.generate();
+  const parsed = await parseDiscoveryAnnounce(appData, announced, {
+    requiredValue: 8,
+  });
+  assert.ok(parsed);
+  assert.strictEqual(
+    parsed?.operator_lxmf_address,
+    undefined,
+    "no OP_ADDR → no operator_lxmf_address field",
+  );
+});
+
+test("parseDiscoveryAnnounce accepts a nil OP_ADDR and omits the field", async () => {
+  const transportId = crypto.getRandomValues(new Uint8Array(16));
+  const info = makeInfo({
+    transportId,
+    name: "Nil Op Node",
+    reachableOn: "example.com",
+    port: 42424,
+    operatorLxmfAddress: null,
+  });
+  const appData = await buildDiscoveryAppData(info, { stampCost: 8 });
+  const announced = await Identity.generate();
+  const parsed = await parseDiscoveryAnnounce(appData, announced, {
+    requiredValue: 8,
+  });
+  assert.ok(parsed);
+  assert.strictEqual(
+    parsed?.operator_lxmf_address,
+    undefined,
+    "nil OP_ADDR → no operator_lxmf_address field",
+  );
+});
+
+test("parseDiscoveryAnnounce rejects a non-bytes OP_ADDR", async () => {
+  const transportId = crypto.getRandomValues(new Uint8Array(16));
+  const info = makeInfo({
+    transportId,
+    name: "Bad Op Node",
+    reachableOn: "example.com",
+    port: 42424,
+    operatorLxmfAddress: "not-bytes",
+  });
+  const appData = await buildDiscoveryAppData(info, { stampCost: 8 });
+  const announced = await Identity.generate();
+  const parsed = await parseDiscoveryAnnounce(appData, announced, {
+    requiredValue: 8,
+  });
+  assert.strictEqual(
+    parsed,
+    null,
+    "non-bytes OP_ADDR is a protocol violation → rejected",
+  );
+});
+
+test("parseDiscoveryAnnounce rejects a wrong-length OP_ADDR", async () => {
+  const transportId = crypto.getRandomValues(new Uint8Array(16));
+  const info = makeInfo({
+    transportId,
+    name: "WrongLen Op Node",
+    reachableOn: "example.com",
+    port: 42424,
+    operatorLxmfAddress: crypto.getRandomValues(new Uint8Array(8)), // 8 bytes, not 16
+  });
+  const appData = await buildDiscoveryAppData(info, { stampCost: 8 });
+  const announced = await Identity.generate();
+  const parsed = await parseDiscoveryAnnounce(appData, announced, {
+    requiredValue: 8,
+  });
+  assert.strictEqual(parsed, null, "OP_ADDR not 16 bytes → rejected");
 });
 
 // ---------------------------------------------------------------------

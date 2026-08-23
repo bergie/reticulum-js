@@ -99,6 +99,13 @@ export const CODINGRATE = 0x0c;
 export const MODULATION = 0x0d;
 /** Radio channel (`int`). */
 export const CHANNEL = 0x0e;
+/**
+ * Operator LXMF address (`bytes | nil`, 16 bytes). Optional field carrying
+ * the transport node operator's LXMF destination hash (RNS 1.5.0,
+ * `interface.discovery_lxmf_address`). When present, surfaced as
+ * `operatorLxmfAddress` (hex) on the parsed record.
+ */
+export const OP_ADDR = 0xf0;
 
 /**
  * Interface types the announce *handler* accepts (`DISCOVERABLE_INTERFACE_TYPES`
@@ -424,6 +431,8 @@ export function buildConfigEntry(fields, backboneSupport = true) {
  * @property {number} [cr]
  * @property {number} [channel]
  * @property {string} [modulation]
+ * @property {string} [operator_lxmf_address] Operator LXMF destination hash
+ *   (hex, 16 bytes), when the announcer included one (RNS 1.5.0 `OP_ADDR`).
  * @property {string} [config_entry]
  * @property {number} [discovered] Unix seconds first heard (persistence only).
  * @property {number} [last_heard] Unix seconds last heard (persistence only).
@@ -603,6 +612,28 @@ async function buildDiscoveredInfo(unpacked, announcedIdentity, meta) {
     }
   }
 
+  // §RNS 1.5.0 OP_ADDR: optional operator LXMF address. `nil` or a 16-byte
+  // (TRUNCATED_HASHLENGTH/8) destination hash; anything else is a protocol
+  // violation (Python raises ValueError).
+  /** @type {Uint8Array|null} */
+  let operatorLxmfAddress = null;
+  if (unpacked[String(OP_ADDR)] !== undefined) {
+    const opAddr = unpacked[String(OP_ADDR)];
+    if (opAddr !== null && !(opAddr instanceof Uint8Array)) {
+      throw new Error(
+        "Invalid data in operator LXMF address field of announce",
+      );
+    }
+    if (opAddr instanceof Uint8Array) {
+      if (opAddr.length !== Identity.TRUNCATED_HASHLENGTH / 8) {
+        throw new Error(
+          "Invalid data in operator LXMF address field of announce",
+        );
+      }
+      operatorLxmfAddress = opAddr;
+    }
+  }
+
   const transportIdHex = toHex(transportId);
   const networkIdHex = toHex(announcedIdentity.identityHash);
   const displayName = name || `Discovered ${interfaceType}`;
@@ -622,6 +653,10 @@ async function buildDiscoveredInfo(unpacked, announcedIdentity, meta) {
     longitude: unpacked[String(LONGITUDE)] ?? null,
     height: unpacked[String(HEIGHT)] ?? null,
   };
+
+  if (operatorLxmfAddress) {
+    info.operator_lxmf_address = toHex(operatorLxmfAddress);
+  }
 
   if (unpacked[String(IFAC_NETNAME)] !== undefined) {
     info.ifac_netname = String(unpacked[String(IFAC_NETNAME)]);

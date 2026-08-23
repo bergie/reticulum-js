@@ -121,8 +121,10 @@ test("a destination with an outstanding path request bypasses the hold", async (
     await buildWireAnnounce("hold.waiting.pr");
   const transport = new TransportCore();
   const iface = burstInterface();
-  // Record a recent outbound `path?` request for this destination.
-  transport.pathRequests.set(toHex(destinationHash), nowSec());
+  // Record a recent outbound `path?` request for this destination. The
+  // held-announce exemption keys off the in-flight PR table (RNS 1.5.0),
+  // which is cleared on announce receipt — distinct from the egress MI gate.
+  transport.inflightPathRequests.set(toHex(destinationHash), nowSec());
 
   /** @type {any} */
   let event = null;

@@ -446,6 +446,10 @@ test("requestPath records the timestamp and outbound-PR samples", async () => {
     transport.pathRequests.has(toHex(target)),
     "timestamp recorded (Python Transport.path_requests)",
   );
+  assert.ok(
+    transport.inflightPathRequests.has(toHex(target)),
+    "in-flight PR recorded (RNS 1.5.0 Transport.inflight_path_requests)",
+  );
   assert.strictEqual(iface.opFreqDeque.length, 1, "outbound PR sampled");
 });
 
@@ -495,5 +499,67 @@ test("the sweep culls path-request timestamps past the gate timeout", async () =
     transport.pathRequests.size,
     0,
     "stale timestamp culled (PATH_REQUEST_GATE_TIMEOUT)",
+  );
+});
+
+test("the sweep culls in-flight path requests past the gate timeout", async () => {
+  const transport = new TransportCore();
+  const target = crypto.getRandomValues(new Uint8Array(16));
+  transport.inflightPathRequests.set(
+    toHex(target),
+    Date.now() / 1000 - (TransportCore.PATH_REQUEST_GATE_TIMEOUT + 10),
+  );
+  await transport._sweepTick();
+  assert.strictEqual(
+    transport.inflightPathRequests.size,
+    0,
+    "stale in-flight PR culled (PATH_REQUEST_GATE_TIMEOUT)",
+  );
+});
+
+test("a matching announce clears the in-flight path request for that destination", async () => {
+  // RNS 1.5.0: announce receipt pops the destination from inflight_path_requests
+  // (Transport.py:2387), so a later announce for the same dest is no longer
+  // exempt from the held-announce hold.
+  const transport = new TransportCore();
+  const iface = new Interface();
+  iface.online = true;
+  iface.bitrate = 1000;
+  transport.interfaces.add(iface);
+
+  // Build a real, wire-valid announce (serialize + deserialize so the packet
+  // the transport sees is exactly what a remote peer would send).
+  const identity = await Identity.generate();
+  /** @type {Packet[]} */ const captured = [];
+  const layer = {
+    broadcast: (pkt) => captured.push(pkt),
+    useImplicitProof: true,
+  };
+  const dest = await Destination.IN(
+    "inflight.clear",
+    DestType.SINGLE,
+    identity,
+    layer,
+  );
+  const target = /** @type {Uint8Array} */ (dest.destinationHash);
+  const targetHex = toHex(target);
+  await dest.announce();
+  const pkt = Packet.deserialize(captured[0].serialize());
+
+  // Simulate an outstanding PR we sent for this destination.
+  transport.inflightPathRequests.set(targetHex, Date.now() / 1000);
+  transport.pathRequests.set(targetHex, Date.now() / 1000);
+
+  await transport._handleAnnounce(pkt, iface);
+
+  assert.ok(
+    !transport.inflightPathRequests.has(targetHex),
+    "in-flight PR cleared on matching announce",
+  );
+  // The egress MI-gate table is NOT cleared by announce receipt — only by the
+  // sweep. So a re-request within MI is still suppressed.
+  assert.ok(
+    transport.pathRequests.has(targetHex),
+    "egress MI-gate timestamp survives announce receipt",
   );
 });

@@ -16,6 +16,7 @@ import {
   DestType,
   getEnumName,
   HeaderType,
+  PATHFINDER_M,
   Packet,
   PacketType,
   TransportType,
@@ -104,13 +105,25 @@ export class TransportCore extends EventTarget {
     this.hashlistMaxsize = 1_000_000;
 
     // §Path requests: timestamp (seconds) of the last `path?` request this
-    // node sent per destination (Python `Transport.path_requests`). Doubles
-    // as (a) the waiting-request exemption for held announces (Python checks
-    // it before holding announces we asked to hear about) and (b) the
-    // PATH_REQUEST_MI minimum-interval gate for automated re-requests.
-    // Entries older than PATH_REQUEST_GATE_TIMEOUT are culled by the sweep.
+    // node sent per destination (Python `Transport.path_requests`). Feeds the
+    // PATH_REQUEST_MI minimum-interval gate for automated re-requests in
+    // {@link requestPathAuto}. Entries older than PATH_REQUEST_GATE_TIMEOUT
+    // are culled by the sweep.
     /** @type {Map<string, number>} */
     this.pathRequests = new Map();
+
+    // §In-flight path requests (RNS 1.5.0, Python `Transport.inflight_path_requests`):
+    // destinations with a `path?` request *outstanding and unanswered*. Set
+    // by {@link requestPath}, cleared on a matching announce
+    // (Transport.py:2387) or when we answer a PR ourselves for a local dest
+    // (Transport.py:3508), culled at PATH_REQUEST_GATE_TIMEOUT. This is the
+    // held-announce waiting-request exemption (an announce for a dest we
+    // asked about must never be delayed past its freshness window) — kept
+    // *separate* from {@link pathRequests} so the egress MI gate (which only
+    // cares when we last asked) is unaffected by announce receipts clearing
+    // the in-flight table.
+    /** @type {Map<string, number>} */
+    this.inflightPathRequests = new Map();
 
     // Lazily-started sweep (Python's interface jobs / table culling in
     // Transport.jobs): drains held announces one per interval and culls stale
@@ -314,7 +327,7 @@ export class TransportCore extends EventTarget {
         `Dropped duplicate packet for ${destHex}`,
         LogLevel.DEBUG,
       );
-      return;
+      return receivingInterface?.packetFilterHit?.();
     }
 
     // §6.5: a regular PROOF (packet_type=PROOF, context=NONE) is addressed to
@@ -406,7 +419,15 @@ export class TransportCore extends EventTarget {
       packet.contextFlag,
       packet.payload,
     );
-    if (!result) return; // validateAnnounce already logged the rejection reason
+    if (!result) {
+      // Python counts a protocol violation for an invalid announce signature
+      // (the blackholed case is transport-mode, #23 — not handled here yet).
+      // validateAnnounce collapses body-too-short / bad-signature / hash-mismatch
+      // into `null`; all three are malformed/spoofed inbound traffic.
+      return receivingInterface?.protocolViolation?.(
+        `Invalid announce signature for ${destHex}`,
+      );
+    }
 
     // Ingress-control tracking (Python Transport.inbound): every
     // signature-valid announce counts toward the receiving interface's
@@ -421,10 +442,12 @@ export class TransportCore extends EventTarget {
     // destinations pass (their re-announce cadence is governed by the
     // random_blob/path-table rules), as do destinations we have an
     // outstanding `path?` request for — the announce we asked to hear about
-    // must never be delayed past its freshness window.
+    // must never be delayed past its freshness window. Keyed off the
+    // in-flight PR table (RNS 1.5.0), which is cleared on announce receipt —
+    // distinct from the egress MI-gate `pathRequests`.
     if (!this.routingTable.hasRoute(packet.destinationHash)) {
       if (
-        !this.pathRequests.has(destHex) &&
+        !this.inflightPathRequests.has(destHex) &&
         receivingInterface?.shouldIngressLimit?.()
       ) {
         receivingInterface.holdAnnounce(packet);
@@ -486,6 +509,13 @@ export class TransportCore extends EventTarget {
         LogLevel.DEBUG,
       );
     }
+
+    // §In-flight path requests (RNS 1.5.0, Transport.py:2387): a validated
+    // announce for this destination resolves any outstanding PR we sent —
+    // pop it so a later announce for the same dest is no longer exempt from
+    // the held-announce hold (and so the in-flight table doesn't grow
+    // unbounded between sweeps).
+    this.inflightPathRequests.delete(destHex);
 
     log(
       "Transport",
@@ -633,9 +663,13 @@ export class TransportCore extends EventTarget {
     }
     this.broadcast(packet);
     // §Transport.path_requests: remember when we last asked for this
-    // destination — feeds the held-announce waiting-request exemption and
-    // the PATH_REQUEST_MI gate in requestPathAuto.
+    // destination — feeds the PATH_REQUEST_MI gate in requestPathAuto.
     this.pathRequests.set(toHex(destinationHash), Date.now() / 1000);
+    // §In-flight path requests: this PR is now outstanding and unanswered.
+    // Cleared by a matching announce (or the sweep, at
+    // PATH_REQUEST_GATE_TIMEOUT). Feeds the held-announce waiting-request
+    // exemption — an announce for a dest we asked about must never be held.
+    this.inflightPathRequests.set(toHex(destinationHash), Date.now() / 1000);
     this._ensureSweep();
   }
 
@@ -689,17 +723,29 @@ export class TransportCore extends EventTarget {
     // capped at 16 bytes.
     /** @type {Uint8Array|null} */
     let tagBytes = null;
+    /** Whether the raw tag exceeded the 16-byte cap (protocol violation). */
+    let oversizedTag = false;
     if (data.length > 32) {
       // requesting_transport_instance = data[16:32]  (ignored on a leaf)
+      // Python takes the whole trailing run as the tag, then truncates to 16;
+      // an oversized raw tag is a protocol violation.
+      if (data.length - 32 > 16) oversizedTag = true;
       tagBytes = data.slice(32, 48);
     } else if (data.length > 16) {
+      if (data.length - 16 > 16) oversizedTag = true;
       tagBytes = data.slice(16, 32);
+    }
+
+    if (oversizedTag) {
+      receivingInterface?.protocolViolation?.(
+        "Excessive path request tag size",
+      );
     }
 
     if (!tagBytes || tagBytes.length === 0) {
       // §7.2.1 note 1: tagless requests are dropped.
       log("Transport", "Dropping tagless path request", LogLevel.DEBUG);
-      return;
+      return receivingInterface?.protocolViolation?.("Tagless path request");
     }
 
     // Ingress-control tracking (Python Transport.inbound): every PR with a
@@ -798,6 +844,17 @@ export class TransportCore extends EventTarget {
    *   active link instead of routing by destination.
    */
   async sendPacket(packet, linkId = null) {
+    // §RNS 1.5.0 (Packet.send): a packet whose hop count has already reached
+    // PATHFINDER_M (128) is invalid and must not be sent. Matches the receive-
+    // side guard in Packet.deserialize.
+    if ((packet.hops ?? 0) >= PATHFINDER_M) {
+      log(
+        "Transport",
+        `Refusing to send packet with excessive hop count ${packet.hops ?? 0}`,
+        LogLevel.DEBUG,
+      );
+      return;
+    }
     const destHex = toHex(packet.destinationHash);
     const packetHash = await packet.getHash();
     log("Transport", `Send ${toHex(packetHash)} to ${destHex}`);
@@ -1138,10 +1195,18 @@ export class TransportCore extends EventTarget {
       }
     }
 
+    // Cull stale in-flight path requests (RNS 1.5.0, Transport.jobs).
+    for (const [destHex, t] of this.inflightPathRequests) {
+      if (now > t + TransportCore.PATH_REQUEST_GATE_TIMEOUT) {
+        this.inflightPathRequests.delete(destHex);
+      }
+    }
+
     if (
       this._sweepTimer &&
       !this._hasHeldAnnounces() &&
-      this.pathRequests.size === 0
+      this.pathRequests.size === 0 &&
+      this.inflightPathRequests.size === 0
     ) {
       clearInterval(this._sweepTimer);
       this._sweepTimer = null;

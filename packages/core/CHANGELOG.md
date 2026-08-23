@@ -82,6 +82,37 @@
 - **`TransportCore.maxPrTags` raised from 256 to 32,000** (Python
   `Transport.max_pr_tags`), with the tag ring switched from an O(n)-scan
   array to an insertion-ordered `Set` for O(1) dedup/eviction.
+- **Per-interface protocol-violation tracking** (RNS 1.5.0 re-sync, work
+  doc #31 update #9). The `Interface` base class now counts three classes of
+  malformed-traffic events — `protocolViolations` (invalid announce
+  signature, tagless path request, oversized PR tag), `ifacViolations`
+  (IFAC size/flag failures in `_openRaw`), and `packetFilterHits` (duplicate
+  non-announce packets) — via new `protocolViolation()` / `ifacViolation()` /
+  `packetFilterHit()` helpers, all surfaced in `getStats()` and
+  `InterfaceStats`. `TransportCore` wires the transport-side detection:
+  invalid-announce-signature → `protocolViolation`, tagless / oversized-tag
+  path requests → `protocolViolation`, duplicate non-announce packets →
+  `packetFilterHit`.
+- **In-flight path-request tracking split from the egress gate** (RNS 1.5.0
+  `Transport.inflight_path_requests`, work doc #31 update #9). `requestPath`
+  now records the destination in a separate `inflightPathRequests` map
+  (cleared on matching announce receipt, culled by the sweep past
+  `PATH_REQUEST_GATE_TIMEOUT`), distinct from the egress `PATH_REQUEST_MI`
+  gate (`pathRequests`). The held-announce waiting-request exemption now
+  keys off `inflightPathRequests`, so a freshly-arrived announce for a
+  destination we just asked about is no longer held — while the MI gate still
+  prevents re-requesting it within 20 s. The sweep's graceful-shutdown check
+  now drains both tables.
+- **Early excessive-hop rejection on send** (RNS 1.5.0): `sendPacket`
+  returns early without emitting when `packet.hops >= PATHFINDER_M` (128),
+  preventing a leaf from propagating a packet that would be immediately
+  dropped downstream.
+- **Operator LXMF address in discovery announces** (RNS 1.5.0
+  `OP_ADDR = 0xf0`): `parseDiscoveryAnnounce` now recognizes the optional
+  `OP_ADDR` field in the discovery app-data map and surfaces the 16-byte
+  operator LXMF address as `operator_lxmf_address` (hex) on the parsed
+  record. A nil or absent `OP_ADDR` is fine; a non-bytes or wrong-length value
+  is treated as a discovery protocol violation (parse returns `null`).
 
 ### Changed
 - **rfed channel stamps now use the standard LXMF stamper.** The interim
