@@ -247,6 +247,31 @@ export class Reticulum {
   }
 
   /**
+   * The bitrate of the slowest currently-online interface, in bits/s, or
+   * `null` when no online interface reports a usable bitrate
+   * (`RNS.Reticulum.get_lowest_interface_bitrate`). Delegates to
+   * {@link TransportCore.lowestInterfaceBitrate}. (The Python reference also
+   * has a shared-instance RPC branch; reticulum-js has no shared-instance
+   * model yet, so only the local delegation is exposed.)
+   * @returns {number|null}
+   */
+  getLowestInterfaceBitrate() {
+    return this.transport.lowestInterfaceBitrate;
+  }
+
+  /**
+   * A full round trip for an MTU on the slowest currently-online interface,
+   * plus per-hop grace, in seconds (`RNS.Reticulum.get_medium_path_timeout`).
+   * Delegates to {@link TransportCore.mediumPathTimeout}; returns `0` when no
+   * online interface bitrate is known. (No shared-instance RPC branch — see
+   * {@link getLowestInterfaceBitrate}.)
+   * @returns {number} seconds
+   */
+  getMediumPathTimeout() {
+    return this.transport.mediumPathTimeout();
+  }
+
+  /**
    * Graceful shutdown: stops interface discovery, disconnects every attached
    * interface, and flushes the persistence layer so the final debounced batch
    * isn't lost. A per-interface disconnect failure is logged and the rest

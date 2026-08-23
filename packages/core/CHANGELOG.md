@@ -15,6 +15,18 @@
   inbound `path?` request toward the receiving interface's window, and drops
   unique-tag path requests while a PR burst is latched (the inline-processing
   equivalent of Python's `TC_INGRESS_LIMITED` traffic-class demotion).
+- **Adaptive medium-path timeouts** (work doc #32, mirroring Python
+  `Transport.lowest_interface_bitrate` / `medium_path_timeout` and
+  `RNS.Reticulum.get_lowest_interface_bitrate` /
+  `get_medium_path_timeout`). `TransportCore.lowestInterfaceBitrate` computes
+  the slowest currently-online interface bitrate on read (no jobs loop on the
+  leaf path, so no cached field); `TransportCore.mediumPathTimeout()` returns
+  `2 * (MTU * 8 / max(lowest, MINIMUM_BITRATE)) + DEFAULT_PER_HOP_TIMEOUT`, or
+  `0` when no online interface bitrate is known. `Reticulum.getLowestInterfaceBitrate()`
+  / `getMediumPathTimeout()` expose the helpers at the API. These complete
+  the medium-wide complement to the next-hop bitrate-adaptive timeouts from
+  work doc #29; they become load-bearing for path-request / discovery
+  deadlines (work doc #23 Phase 4).
 - **Path-response announce cache** (`Destination.pathResponses`, Python
   `path_responses`): `announcePathResponse(tag)` now accepts the requesting
   PR's tag and caches the signed announce payload for

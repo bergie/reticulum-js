@@ -38,6 +38,12 @@ const MTU = 500;
  * (protocol-fixed). See {@link MTU} note on why it's mirrored here.
  */
 const DEFAULT_PER_HOP_TIMEOUT = 6;
+/**
+ * Minimum acceptable interface bitrate in bits/s — mirrors
+ * `RNS.Reticulum.MINIMUM_BITRATE` (protocol-fixed). See {@link MTU} note on
+ * why it's mirrored here.
+ */
+const MINIMUM_BITRATE = 5;
 
 /**
  * The central network router for the Reticulum node.
@@ -1034,6 +1040,53 @@ export class TransportCore extends EventTarget {
   extraLinkProofTimeout(iface) {
     if (!iface?.bitrate) return 0;
     return (8 / iface.bitrate) * MTU;
+  }
+
+  /**
+   * The bitrate of the slowest currently-online interface, in bits/s, or
+   * `null` when no online interface reports a usable bitrate
+   * (`Transport.lowest_interface_bitrate`).
+   *
+   * The Python reference caches this in the transport jobs loop
+   * (`prioritize_interfaces`); JS has no jobs loop on the leaf path, so this
+   * is computed on read by iterating the live interface set — cheap (the
+   * set is walked by {@link prioritizeInterfaces} already) and never stale.
+   * Add/remove and online transitions are already reflected through
+   * `addInterface` / `removeInterface` / the `closed` event wiring, so no
+   * extra listeners are needed.
+   * @returns {number|null}
+   */
+  get lowestInterfaceBitrate() {
+    let min = Infinity;
+    for (const iface of this.interfaces) {
+      if (
+        iface.online &&
+        typeof iface.bitrate === "number" &&
+        iface.bitrate > 0 &&
+        iface.bitrate < min
+      ) {
+        min = iface.bitrate;
+      }
+    }
+    return min === Infinity ? null : min;
+  }
+
+  /**
+   * A full round trip for an MTU on the slowest currently-online interface,
+   * plus per-hop grace (`Transport.medium_path_timeout`):
+   * `2 * (MTU * 8 / max(lowest_bitrate, MINIMUM_BITRATE)) +
+   * DEFAULT_PER_HOP_TIMEOUT`, or `0` when no online interface bitrate is known.
+   *
+   * Used where the relevant medium isn't a single known next hop but "whatever
+   * the network can reach us over" — most notably path-request / discovery
+   * deadlines. Complements the next-hop-based {@link firstHopTimeout}.
+   * @returns {number} seconds
+   */
+  mediumPathTimeout() {
+    const lowest = this.lowestInterfaceBitrate;
+    if (!lowest) return 0;
+    const rate = Math.max(lowest, MINIMUM_BITRATE);
+    return 2 * ((MTU * 8) / rate) + DEFAULT_PER_HOP_TIMEOUT;
   }
 
   /**

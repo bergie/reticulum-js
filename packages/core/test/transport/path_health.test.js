@@ -143,6 +143,90 @@ test("extraLinkProofTimeout: (8 / bitrate) * MTU, 0 without a bitrate", () => {
   );
 });
 
+/**
+ * Online interface stub with a configurable bitrate for the medium-timeout
+ * tests. Mirrors `attachLoopback`'s shape but with explicit `online` control
+ * and no packet routing.
+ * @param {number} bitrate
+ * @param {boolean} [online]
+ */
+function onlineIface(bitrate, online = true) {
+  return Object.assign(new EventTarget(), {
+    name: `iface-${bitrate}`,
+    bitrate,
+    online,
+  });
+}
+
+test("lowestInterfaceBitrate: min of online interfaces with a bitrate", () => {
+  const rns = new Reticulum();
+  const transport = rns.transport;
+  // No interfaces → null.
+  assert.strictEqual(transport.lowestInterfaceBitrate, null);
+
+  const fast = onlineIface(1_000_000);
+  const slow = onlineIface(1000);
+  transport.addInterface(fast);
+  transport.addInterface(slow);
+  assert.strictEqual(transport.lowestInterfaceBitrate, 1000);
+
+  // Removing the slow one recomputes from the remaining set.
+  transport.removeInterface(slow);
+  assert.strictEqual(transport.lowestInterfaceBitrate, 1_000_000);
+});
+
+test("lowestInterfaceBitrate: ignores offline / zero / non-numeric bitrates", () => {
+  const rns = new Reticulum();
+  const transport = rns.transport;
+  const online = onlineIface(5000, true);
+  const offline = onlineIface(100, false);
+  const zero = onlineIface(0, true);
+  const nonNumeric = Object.assign(new EventTarget(), {
+    name: "nn",
+    online: true,
+    bitrate: "fast",
+  });
+  transport.addInterface(online);
+  transport.addInterface(offline);
+  transport.addInterface(zero);
+  transport.addInterface(nonNumeric);
+  assert.strictEqual(transport.lowestInterfaceBitrate, 5000);
+
+  // Only the offline one left → null.
+  transport.removeInterface(online);
+  assert.strictEqual(transport.lowestInterfaceBitrate, null);
+});
+
+test("mediumPathTimeout: 0 with no online bitrate", () => {
+  const rns = new Reticulum();
+  const transport = rns.transport;
+  assert.strictEqual(transport.mediumPathTimeout(), 0);
+  // An offline interface doesn't lift the unknown state.
+  transport.addInterface(onlineIface(1000, false));
+  assert.strictEqual(transport.mediumPathTimeout(), 0);
+});
+
+test("mediumPathTimeout: 2*(MTU*8/rate) + DEFAULT_PER_HOP_TIMEOUT", () => {
+  const rns = new Reticulum();
+  const transport = rns.transport;
+  transport.addInterface(onlineIface(1000));
+  // 2 * (500 * 8 / 1000) + 6 = 2 * 4 + 6 = 14 seconds.
+  assert.strictEqual(transport.mediumPathTimeout(), 14);
+  // Reticulum.getMediumPathTimeout delegates to the transport.
+  assert.strictEqual(rns.getMediumPathTimeout(), 14);
+  // Reticulum.getLowestInterfaceBitrate delegates too.
+  assert.strictEqual(rns.getLowestInterfaceBitrate(), 1000);
+});
+
+test("mediumPathTimeout: clamps sub-minimum bitrate to MINIMUM_BITRATE", () => {
+  const rns = new Reticulum();
+  const transport = rns.transport;
+  // bitrate below MINIMUM_BITRATE (5) is clamped up to 5.
+  transport.addInterface(onlineIface(1));
+  // 2 * (500 * 8 / 5) + 6 = 2 * 800 + 6 = 1606 seconds.
+  assert.strictEqual(transport.mediumPathTimeout(), 1606);
+});
+
 test("PacketReceipt.startTimeout fires setFailed and leaves the registry", async () => {
   const packetHash = crypto.getRandomValues(new Uint8Array(32));
   const destinationHash = crypto.getRandomValues(new Uint8Array(16));
