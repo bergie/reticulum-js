@@ -847,10 +847,20 @@ export class RNodeInterface extends Interface {
     if (this.postOpenDelayMs > 0) await sleep(this.postOpenDelayMs);
 
     this.detect();
+    // Re-send the detect probe periodically while waiting for a response.
+    // Python sends it once and (for serial) only waits 0.2s, but ESP32-based
+    // boards (Heltec, T-Beam, ...) reset when the host opens the serial port
+    // (DTR/RTS glitch through the auto-reset circuit) and can boot slower than
+    // the post-open delay, so the one-shot probe can hit a booting device and
+    // be lost. rnodeconf — the reference tool for this situation — sleeps 2.5s
+    // before probing (`device_probe`). Re-probing is idempotent on the wire
+    // (the firmware just answers each query) and catches the device whenever
+    // it becomes ready, without diverging from the Python protocol.
     const detected = await this._waitFor(
       () => this.detected,
       this.detectTimeout * 1000,
       "detect",
+      () => this.detect(),
     );
     if (!detected) {
       throw new Error(`Could not detect RNode device for ${this.name}`);
@@ -1968,18 +1978,28 @@ export class RNodeInterface extends Interface {
    * Resolves once `predicate` returns true, or after `timeoutMs`. Returns the
    * final predicate value (so callers can distinguish a real hit from a
    * timeout). Polls at 50ms, mirroring the Python reference's polling waits.
+   * While waiting, `retry` (if given) is invoked every `retryEveryMs` — used to
+   * re-send probes whose response may have been lost (e.g. detect queries sent
+   * to a device still booting after a port-open reset).
    * @param {() => boolean} predicate
    * @param {number} timeoutMs
    * @param {string} what
+   * @param {(() => void) | null} [retry]
+   * @param {number} [retryEveryMs]
    * @returns {Promise<boolean>}
    * @private
    */
-  async _waitFor(predicate, timeoutMs, what) {
+  async _waitFor(predicate, timeoutMs, what, retry = null, retryEveryMs = 500) {
     const start = Date.now();
+    let lastRetry = start;
     while (!predicate()) {
       if (Date.now() - start > timeoutMs) {
         log(this.name, `${what} timed out`, LogLevel.WARNING);
         return false;
+      }
+      if (retry && Date.now() - lastRetry >= retryEveryMs) {
+        lastRetry = Date.now();
+        retry();
       }
       await sleep(50);
     }

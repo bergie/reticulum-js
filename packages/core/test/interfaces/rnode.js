@@ -291,6 +291,62 @@ test("detect timeout aborts when the device never responds", async () => {
   const iface = new FakeTransport({ ...RADIO, detectTimeout: 0.2 });
   await assert.rejects(() => iface.connect(), /Could not detect RNode device/);
   assert.equal(iface.online, false);
+  // connect() spawns a background reconnect loop (Python parity); detach it
+  // so the test does not keep the process alive retrying forever.
+  await iface.disconnect();
+});
+
+/** Counts how many complete CMD_DETECT probe bursts have been written. */
+function countDetectBursts(iface) {
+  let count = 0;
+  for (const chunk of iface.written) {
+    for (let i = 0; i + 3 < chunk.length; i++) {
+      if (
+        chunk[i] === C.FEND &&
+        chunk[i + 1] === C.CMD_DETECT &&
+        chunk[i + 2] === C.DETECT_REQ &&
+        chunk[i + 3] === C.FEND
+      ) {
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+test("detect probe is re-sent until the device responds", async () => {
+  // Regression: ESP32-based boards reset when the host opens the serial port
+  // and can still be booting when the first probe is sent, so the first (and
+  // in the Python reference, only) probe is lost. Simulate a device that only
+  // starts answering once at least three probe bursts have gone out.
+  const iface = new FakeTransport({ ...RADIO, detectTimeout: 5 });
+  const connectPromise = iface.connect();
+  await waitFor(() => countDetectBursts(iface) >= 3, 10_000);
+  iface.push(
+    new Uint8Array([
+      ...cmdFrame(C.CMD_DETECT, [C.DETECT_RESP]),
+      ...cmdFrame(C.CMD_FW_VERSION, [1, 52]),
+      ...cmdFrame(C.CMD_PLATFORM, [C.PLATFORM_ESP32]),
+      ...cmdFrame(C.CMD_MCU, [0x01]),
+    ]),
+  );
+  await waitFor(() => iface.detected);
+  iface.push(
+    new Uint8Array([
+      ...cmdFrame(C.CMD_FREQUENCY, be32(iface.frequency)),
+      ...cmdFrame(C.CMD_BANDWIDTH, be32(iface.bandwidth)),
+      ...cmdFrame(C.CMD_TXPOWER, [iface.txPower]),
+      ...cmdFrame(C.CMD_SF, [iface.sf]),
+      ...cmdFrame(C.CMD_CR, [iface.cr]),
+      ...cmdFrame(C.CMD_RADIO_STATE, [C.RADIO_STATE_ON]),
+    ]),
+  );
+  await connectPromise;
+  assert.equal(iface.online, true);
+  // The handshake only succeeded because probing continued past the lost
+  // first attempts.
+  assert.ok(countDetectBursts(iface) >= 3);
+  await iface.disconnect();
 });
 
 test("CMD_DATA inbound is unescaped and dispatched as a packet", async () => {

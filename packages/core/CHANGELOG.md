@@ -126,6 +126,21 @@
   record. A nil or absent `OP_ADDR` is fine; a non-bytes or wrong-length value
   is treated as a discovery protocol violation (parse returns `null`).
 
+### Fixed
+- **RNode detect handshake now re-probes while waiting** for the detect
+  response instead of sending the query once. ESP32-based boards (Heltec,
+  T-Beam, ...) reset when the host opens the serial port (a DTR/RTS glitch
+  through the auto-reset circuit) and can still be booting when the one-shot
+  probe arrives — the probe is lost and the interface times out with
+  `detect timed out` forever (every reconnect re-opens the port and resets the
+  device again). The Python reference sends the query once (and rnodeconf,
+  the reference tool for this hardware, sleeps 2.5 s before probing); the
+  interface now re-sends the detect query every 500 ms during the detect
+  window, which is idempotent on the wire and detects the device as soon as
+  it finishes booting. Also detached the interface in the
+  `detect timeout aborts` test so its background reconnect loop no longer
+  keeps the test process alive.
+
 ### Changed
 - **rfed channel stamps now use the standard LXMF stamper.** The interim
   compatibility workaround that mirrored `reticulum-rust`'s stub `LXStamper`
