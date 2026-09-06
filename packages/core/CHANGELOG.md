@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.7.0] - 2026-09-06
 ### Added
 - **Interface ingress burst control** (work doc #31 steps 1–2, mirroring
   Python `Interface` ingress control). The `Interface` base class now tracks

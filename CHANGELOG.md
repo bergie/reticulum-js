@@ -2,6 +2,182 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-06
+### Added
+- **core**: **Interface ingress burst control** (work doc #31 steps 1–2, mirroring
+  Python `Interface` ingress control). The `Interface` base class now tracks
+  rolling 48-sample announce / path-request arrival frequencies per
+  interface (`receivedAnnounce` / `receivedPathRequest` / `sentPathRequest`
+  + `incomingAnnounceFrequency` / `incomingPrFrequency` /
+  `outgoingPrFrequency`) and detects floods with the Python reference's
+  exact constants and latch/hold semantics (`shouldIngressLimit` /
+  `shouldIngressLimitPr`: burst latches above 10 announces/s or 8 PR/s — 3/s
+  for interfaces younger than 2 h — and holds for 15 s).
+  `TransportCore` counts every validated inbound announce and every tagged
+  inbound `path?` request toward the receiving interface's window, and drops
+  unique-tag path requests while a PR burst is latched (the inline-processing
+  equivalent of Python's `TC_INGRESS_LIMITED` traffic-class demotion).
+- **core**: **Adaptive medium-path timeouts** (work doc #32, mirroring Python
+  `Transport.lowest_interface_bitrate` / `medium_path_timeout` and
+  `RNS.Reticulum.get_lowest_interface_bitrate` /
+  `get_medium_path_timeout`). `TransportCore.lowestInterfaceBitrate` computes
+  the slowest currently-online interface bitrate on read (no jobs loop on the
+  leaf path, so no cached field); `TransportCore.mediumPathTimeout()` returns
+  `2 * (MTU * 8 / max(lowest, MINIMUM_BITRATE)) + DEFAULT_PER_HOP_TIMEOUT`, or
+  `0` when no online interface bitrate is known. `Reticulum.getLowestInterfaceBitrate()`
+  / `getMediumPathTimeout()` expose the helpers at the API. These complete
+  the medium-wide complement to the next-hop bitrate-adaptive timeouts from
+  work doc #29; they become load-bearing for path-request / discovery
+  deadlines (work doc #23 Phase 4).
+- **core**: **Path-response announce cache** (`Destination.pathResponses`, Python
+  `path_responses`): `announcePathResponse(tag)` now accepts the requesting
+  PR's tag and caches the signed announce payload for
+  `Destination.PR_TAG_WINDOW` (30 s); retransmitted requests with a seen tag
+  reuse the cached payload instead of re-signing and re-rotating ratchets.
+- **core**: **Held announces during announce bursts** (work doc #31 step 3, Python
+  `Interface.hold_announce` / `process_held_announces`): while an announce
+  burst is latched, announces for *unknown* destinations are buffered on the
+  receiving interface instead of processed, then released one per 5 s
+  (lowest hops first) once the burst quiets. Known destinations and
+  destinations with an outstanding `path?` request bypass the hold.
+  Buffered per interface up to `icMaxHeldAnnounces` (256); announces at ≥ 127
+  hops are never held. Re-injection re-enters the normal inbound pipeline —
+  hop count increments again and a re-latched burst simply re-holds, exactly
+  as in the Python reference (including the unlatching evaluation still
+  limiting). Driven by a lazy 5 s maintenance sweep on `TransportCore`
+  (`_sweepTick`, Python `interface_jobs_interval`) that also culls stale
+  path-request timestamps; the sweep timer is detached (`unref`) where
+  available, mirroring Python's daemon jobs/release threads.
+- **core**: **Path-request egress discipline** (work doc #31 step 4, Python
+  `Transport.path_requests` + `PATH_REQUEST_MI`): `requestPath` now records
+  a per-destination timestamp (feeding the held-announce waiting-request
+  exemption) and samples each interface's outbound-PR frequency
+  (`sentPathRequest`). New `requestPathAuto(destinationHash)` enforces the
+  reference's automated-rediscovery discipline — no request while a path is
+  known, at most one per `PATH_REQUEST_MI` (20 s) per destination — and the
+  link-failure rediscovery in `Link`'s close handler now uses it, so
+  application retry loops over dead links can no longer emit a `path?`
+  request per failure. Timestamps expire after `PATH_REQUEST_GATE_TIMEOUT`
+  (120 s).
+- **core**: **Ingress-control observability** (work doc #31): `Interface.getStats()`
+  now surfaces the flood-defense state mirroring the Python reference's
+  rnstatus fields — live `incomingAnnounceFrequency` /
+  `outgoingAnnounceFrequency` / `incomingPrFrequency` /
+  `outgoingPrFrequency` readings, burst latch state
+  (`announceBurstActive`/`Activated`/`Count`, `prBurstActive`/`Activated`/
+  `Count`), and held-announce bookkeeping (`heldAnnounces`, releases,
+  cap-drops). `prBurstDrops` counts unique-tag path requests dropped while a
+  PR burst was latched (the inline equivalent of Python's `rxqild` queue-drop
+  counter). New `sentAnnounce` outbound tracking (sampled by
+  `TransportCore.broadcast` for ANNOUNCE packets) completes the rnstatus
+  frequency quartet; all fields are additive to `InterfaceStats` and RNode's
+  telemetry snapshot inherits them via its `super.getStats()` spread.
+- **core**: **`TransportCore.hashlistMaxsize` raised from 50,000 to 1,000,000** (Python
+  `Transport.hashlist_maxsize`) — the dedup ring now matches reference scale
+  (entries are full packet-hash hex strings; the memory trade is bounded by
+  the same double-buffer culling as upstream).
+- **core**: **PR burst unlatch hysteresis** (sync with upstream "Improved PR ingress
+  limiter"): a latched PR burst now needs `IC_PR_BURST_COOLDOWN` (3) + 1
+  consecutive quiet evaluations to unlatch after the 15 s hold, and any
+  above-threshold evaluation resets the cooldown — anti-flapping at the
+  burst-frequency boundary. The announce limiter is unchanged (upstream
+  applies the cooldown to the PR limiter only).
+- **core**: **Node-global ingress-control config.** The `Reticulum` constructor now
+  accepts an `ingressControl` block (`icBurstHold`, `icBurstFreqNew`,
+  `icBurstFreq`, `icPrBurstFreqNew`, `icPrBurstFreq`, `icNewTime`,
+  `icBurstPenalty`, `icHeldReleaseInterval`) applied to every interface at
+  `addInterface` — mirroring the Python reference's `[reticulum]`-section
+  `ic_*` options, which have no per-interface form. Absent keys keep the
+  Python constants; per-instance programmatic control (e.g.
+  `iface.ingressControl = false`) still works. Deliberately **not** added to
+  the interface configuration schemas, since these are node-scoped, not
+  interface constructor options. `AutoInterface` spawned peers inherit the
+  parent's settings (Python `spawn_peer` parity).
+- **core**: **`TransportCore.maxPrTags` raised from 256 to 32,000** (Python
+  `Transport.max_pr_tags`), with the tag ring switched from an O(n)-scan
+  array to an insertion-ordered `Set` for O(1) dedup/eviction.
+- **core**: **Per-interface protocol-violation tracking** (RNS 1.5.0 re-sync, work
+  doc #31 update #9). The `Interface` base class now counts three classes of
+  malformed-traffic events — `protocolViolations` (invalid announce
+  signature, tagless path request, oversized PR tag), `ifacViolations`
+  (IFAC size/flag failures in `_openRaw`), and `packetFilterHits` (duplicate
+  non-announce packets) — via new `protocolViolation()` / `ifacViolation()` /
+  `packetFilterHit()` helpers, all surfaced in `getStats()` and
+  `InterfaceStats`. `TransportCore` wires the transport-side detection:
+  invalid-announce-signature → `protocolViolation`, tagless / oversized-tag
+  path requests → `protocolViolation`, duplicate non-announce packets →
+  `packetFilterHit`.
+- **core**: **In-flight path-request tracking split from the egress gate** (RNS 1.5.0
+  `Transport.inflight_path_requests`, work doc #31 update #9). `requestPath`
+  now records the destination in a separate `inflightPathRequests` map
+  (cleared on matching announce receipt, culled by the sweep past
+  `PATH_REQUEST_GATE_TIMEOUT`), distinct from the egress `PATH_REQUEST_MI`
+  gate (`pathRequests`). The held-announce waiting-request exemption now
+  keys off `inflightPathRequests`, so a freshly-arrived announce for a
+  destination we just asked about is no longer held — while the MI gate still
+  prevents re-requesting it within 20 s. The sweep's graceful-shutdown check
+  now drains both tables.
+- **core**: **Early excessive-hop rejection on send** (RNS 1.5.0): `sendPacket`
+  returns early without emitting when `packet.hops >= PATHFINDER_M` (128),
+  preventing a leaf from propagating a packet that would be immediately
+  dropped downstream.
+- **core**: **Operator LXMF address in discovery announces** (RNS 1.5.0
+  `OP_ADDR = 0xf0`): `parseDiscoveryAnnounce` now recognizes the optional
+  `OP_ADDR` field in the discovery app-data map and surfaces the 16-byte
+  operator LXMF address as `operator_lxmf_address` (hex) on the parsed
+  record. A nil or absent `OP_ADDR` is fine; a non-bytes or wrong-length value
+  is treated as a discovery protocol violation (parse returns `null`).
+### Changed
+- **core**: **rfed channel stamps now use the standard LXMF stamper.** The interim
+  compatibility workaround that mirrored `reticulum-rust`'s stub `LXStamper`
+  (iterated SHA-256 workblock, sequential `u128` nonce search) has been
+  removed now that the memory-hard HKDF workblock fix has landed upstream
+  (https://github.com/jrl290/Reticulum-rust/pull/2).
+  `rfed/stamp.js` is again a thin wrapper over `lxmf/stamper.js` at rfed's
+  16 expansion rounds: stamps minted by either side now cross-validate with
+  Python LXMF and fixed Rust nodes. Public API
+  (`channelStampWorkblock` / `generateChannelStamp` / `validateChannelStamp`)
+  is unchanged, but stamps generated against the old stub workblock are no
+  longer valid (nor are ours on unfixed Rust nodes) — a protocol-level change,
+  not an API one.
+- **core**: **`lxmf/stamper.js#generateStamp` no longer claims to return `null`.** The
+  random-trial search loops until a stamp meets the cost, so the `|null` in
+  the return type was dead documentation; callers
+  (`LXMRouter`, `LXMPeer`) had unreachable null checks, now removed.
+### Fixed
+- **core**: **Interfaces can transmit again after a connectivity drop and recovery.**
+  Reconnecting client interfaces (TCP client, local client, WebSocket
+  client, WebRTC) replace their readable/writable streams on every
+  re-establishment and drop their stale packet writer, but the transport
+  acquired the writer exactly once at `addInterface` time and never
+  re-acquired it — after the first reconnect the interface was permanently
+  silenced for the transport: `broadcast()` silently skipped it (announces
+  and `path?` requests never left the node again, so peers never re-learned
+  a path back) and routed sends threw `Interface ... has no packet writer`.
+  A typical casualty is a node peered with a local rnsd over a TCP client
+  interface: any network hiccup between the two machines (wifi roaming,
+  reboot, power cycle) killed all communications until process restart,
+  even though the interface itself reconnected cleanly.
+  `TransportCore.addInterface` now re-acquires the packet writer on every
+  interface `connected` event (and tolerates stream-less interfaces whose
+  `writable` getter throws). Added connectivity lost/regained tests at
+  both levels: transport-vs-fake-interface (broadcast + routed sends across
+  a drop/reconnect) and an end-to-end TCP test against a raw server standing
+  in for rnsd.
+- **core**: **RNode detect handshake now re-probes while waiting** for the detect
+  response instead of sending the query once. ESP32-based boards (Heltec,
+  T-Beam, ...) reset when the host opens the serial port (a DTR/RTS glitch
+  through the auto-reset circuit) and can still be booting when the one-shot
+  probe arrives — the probe is lost and the interface times out with
+  `detect timed out` forever (every reconnect re-opens the port and resets the
+  device again). The Python reference sends the query once (and rnodeconf,
+  the reference tool for this hardware, sleeps 2.5 s before probing); the
+  interface now re-sends the detect query every 500 ms during the detect
+  window, which is idempotent on the wire and detects the device as soon as
+  it finishes booting. Also detached the interface in the
+  `detect timeout aborts` test so its background reconnect loop no longer
+  keeps the test process alive.
+
 ## [0.6.5] - 2026-08-12
 ### Added
 - **core**: **RFed raw (non-LXMF) channel payloads.** The RFed spec treats the
