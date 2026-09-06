@@ -149,11 +149,27 @@ export class TransportCore extends EventTarget {
 
     // 1. Hook into the Interface's existing outbound Framer
     // Since iface.writable is the input to the interface framer stream
-    // (HDLC or KISS), we just get a writer for it.
-    const writable = iface.writable;
-    if (writable && !iface._packetWriter) {
-      iface._packetWriter = writable.getWriter();
-    }
+    // (HDLC or KISS), we just get a writer for it. Reconnecting interfaces
+    // (TCP / local / WebSocket clients, WebRTC) replace their streams on
+    // every re-establishment and drop the stale writer, so re-acquire on
+    // each `connected` event — without this the interface could never
+    // transmit again after a connectivity drop and recovery (broadcast()
+    // silently skips writer-less interfaces, _transmit() throws).
+    // Interfaces without a byte stream of their own (listening servers, the
+    // AutoInterface parent) expose no usable writable and are skipped.
+    const refreshPacketWriter = () => {
+      let writable = null;
+      try {
+        writable = iface.writable;
+      } catch (_e) {
+        // A throwing getter marks a stream-less interface type.
+      }
+      if (writable && !iface._packetWriter) {
+        iface._packetWriter = writable.getWriter();
+      }
+    };
+    refreshPacketWriter();
+    iface.addEventListener("connected", refreshPacketWriter);
 
     // 2. Listen to the Interface's inbound Packet loop
     iface.addEventListener("packet", (/** @type {any} */ event) => {

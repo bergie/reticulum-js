@@ -127,6 +127,25 @@
   is treated as a discovery protocol violation (parse returns `null`).
 
 ### Fixed
+- **Interfaces can transmit again after a connectivity drop and recovery.**
+  Reconnecting client interfaces (TCP client, local client, WebSocket
+  client, WebRTC) replace their readable/writable streams on every
+  re-establishment and drop their stale packet writer, but the transport
+  acquired the writer exactly once at `addInterface` time and never
+  re-acquired it — after the first reconnect the interface was permanently
+  silenced for the transport: `broadcast()` silently skipped it (announces
+  and `path?` requests never left the node again, so peers never re-learned
+  a path back) and routed sends threw `Interface ... has no packet writer`.
+  A typical casualty is a node peered with a local rnsd over a TCP client
+  interface: any network hiccup between the two machines (wifi roaming,
+  reboot, power cycle) killed all communications until process restart,
+  even though the interface itself reconnected cleanly.
+  `TransportCore.addInterface` now re-acquires the packet writer on every
+  interface `connected` event (and tolerates stream-less interfaces whose
+  `writable` getter throws). Added connectivity lost/regained tests at
+  both levels: transport-vs-fake-interface (broadcast + routed sends across
+  a drop/reconnect) and an end-to-end TCP test against a raw server standing
+  in for rnsd.
 - **RNode detect handshake now re-probes while waiting** for the detect
   response instead of sending the query once. ESP32-based boards (Heltec,
   T-Beam, ...) reset when the host opens the serial port (a DTR/RTS glitch

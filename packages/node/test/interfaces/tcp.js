@@ -1,13 +1,17 @@
 import assert from "node:assert";
 import net from "node:net";
+import { Readable } from "node:stream";
 import { test } from "node:test";
 import {
+  ContextType,
   DestType,
   HeaderType,
   Packet,
   PacketType,
 } from "@reticulum/core/src/core/packet.js";
+import { createHdlcUnframerStream } from "@reticulum/core/src/transport/hdlc-framer.js";
 import { kissFrame } from "@reticulum/core/src/transport/kiss-framer.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import {
   TCPClientInterface,
   TCPServerInterface,
@@ -252,6 +256,104 @@ test("TCP client reconnects after the remote end drops", async () => {
   await client.disconnect();
   for (const s of accepted) s.destroy();
   await new Promise((resolve) => rawServer.close(resolve));
+});
+
+/**
+ * Resolves once `predicate` holds, rejecting after `ms` deadline.
+ * @template T
+ * @param {() => boolean} predicate
+ * @param {number} [ms]
+ * @returns {Promise<void>}
+ */
+function waitFor(predicate, ms = 5000) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const check = () => {
+      if (predicate()) return resolve(undefined);
+      if (Date.now() - started > ms)
+        return reject(new Error("waitFor deadline exceeded"));
+      setTimeout(check, 10);
+    };
+    check();
+  });
+}
+
+test("transport keeps transmitting over a TCP client across connectivity loss and recovery", async () => {
+  // A raw TCP server standing in for rnsd: it accepts HDLC-framed RNS
+  // packets and records which connection each decoded packet arrived on.
+  /** @type {import('node:net').Socket[]} */
+  const accepted = [];
+  /** @type {{connection: number, packet: import("@reticulum/core/src/core/packet.js").Packet}[]} */
+  const received = [];
+  let connectionCount = 0;
+  const rawServer = net.createServer((socket) => {
+    const connection = ++connectionCount;
+    accepted.push(socket);
+    Readable.toWeb(Readable.from(socket))
+      .pipeThrough(createHdlcUnframerStream(Packet))
+      .pipeTo(
+        new WritableStream({
+          write(packet) {
+            received.push({ connection, packet });
+          },
+        }),
+      )
+      .catch(() => {
+        /* socket teardown mid-frame */
+      });
+  });
+  await new Promise((resolve) => rawServer.listen(0, "127.0.0.1", resolve));
+  const port = /** @type {import('node:net').AddressInfo} */ (
+    rawServer.address()
+  ).port;
+
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    reconnectWait: 0.05,
+    connectTimeout: 2,
+  });
+  await client.connect();
+  const transport = new TransportCore();
+  transport.addInterface(client, true);
+
+  try {
+    const mkData = () =>
+      new Packet({
+        packetType: PacketType.DATA,
+        destinationType: DestType.PLAIN,
+        destinationHash: crypto.getRandomValues(new Uint8Array(16)),
+        contextByte: ContextType.NONE,
+        payload: new Uint8Array([1, 2, 3]),
+      });
+
+    // Pre-drop: the broadcast reaches rnsd over the first connection.
+    transport.broadcast(mkData());
+    await waitFor(() => received.length >= 1);
+    assert.strictEqual(received[0].connection, 1);
+
+    // Connectivity lost: rnsd drops our connection.
+    accepted[0].destroy();
+    await waitFor(() => connectionCount >= 2, "client should reconnect");
+    assert.ok(client.isOpen, "client should be back online");
+
+    // Connectivity regained: the transport must still reach rnsd over the new
+    // connection. Regression: the stale packet writer used to leave the
+    // interface permanently silenced for the transport.
+    transport.broadcast(mkData());
+    await waitFor(
+      () => received.some((entry) => entry.connection === 2),
+      "post-reconnect broadcast should arrive on the new connection",
+    );
+    assert.ok(
+      received.every((entry) => entry.connection <= 2),
+      "no stray connections expected",
+    );
+  } finally {
+    await client.disconnect();
+    for (const s of accepted) s.destroy();
+    await new Promise((resolve) => rawServer.close(resolve));
+  }
 });
 
 test("TCP client reconnects in the background after a first failed dial", async () => {

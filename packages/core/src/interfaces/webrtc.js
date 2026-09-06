@@ -228,7 +228,8 @@ export class WebRTCInterface extends Interface {
     const channel = this.channel;
     channel.binaryType = "arraybuffer";
     // Streams are replaced on every (re)connect; drop any stale writer so the
-    // next `send()` re-acquires one bound to the fresh writable.
+    // next `send()` (or the transport's `connected` listener) re-acquires one
+    // bound to the fresh writable.
     this._packetWriter = null;
 
     // Inbound: RTCDataChannel binary messages -> Packets.

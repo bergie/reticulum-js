@@ -348,7 +348,8 @@ export class TCPClientInterface extends Interface {
    */
   _setupStreams(socket) {
     // Streams are replaced on every reconnect; drop any stale writer so the
-    // next `send()` re-acquires one bound to the fresh writable.
+    // next `send()` (or the transport's `connected` listener) re-acquires one
+    // bound to the fresh writable.
     this._packetWriter = null;
     const nodeReadable = Readable.from(socket);
     const nodeWritable = new Writable({
