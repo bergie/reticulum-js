@@ -25,6 +25,8 @@
  * browser-safe main entry — the discovery is meaningless without a local
  * socket to connect to anyway.
  */
+
+import { Buffer } from "node:buffer";
 import { existsSync, readFileSync } from "node:fs";
 import net from "node:net";
 import { homedir } from "node:os";
@@ -249,6 +251,20 @@ export function getSharedInstanceEndpoint(options = {}) {
 const RECONNECT_WAIT_SECONDS = 8;
 
 /**
+ * The HDLC flag byte (Python `RNS.Interfaces.HDLC.FLAG`, 0x7E). A keepalive
+ * frame is an *empty* HDLC frame — two flag bytes back to back, exactly what
+ * the Python reference's `LocalClientInterface.send_keepalive` writes.
+ */
+const HDLC_FLAG = 0x7e;
+
+/**
+ * Default spacing between shared-instance keepalive frames. Mirrors the
+ * cadence of the Python reference's `phy_keepalive` sends, which are driven by
+ * the transport jobs loop (`Transport.interface_jobs_interval` = 5 s).
+ */
+const KEEPALIVE_INTERVAL_MS = 5000;
+
+/**
  * Initial keepalive probe delay, in milliseconds. Mirrors the Python reference
  * `TCP_PROBE_AFTER` (5s) applied to the shared-instance TCP socket.
  */
@@ -270,6 +286,12 @@ const PROBE_AFTER_MS = 5000;
  * @property {boolean} [autoReconnect] - Reconnect after drops (initiator only).
  *   Defaults to `true`.
  * @property {number} [reconnectWait] - Seconds between attempts. Defaults to 8.
+ * @property {number} [keepaliveIntervalMs] - Spacing between shared-instance
+ *   keepalive frames, in milliseconds. Defaults to 5000, matching the Python
+ *   reference's `phy_keepalive` cadence. `0` disables keepalives (an
+ *   Android-hosted shared instance will then pause downstream traffic to this
+ *   client whenever it has been silent for 12 seconds — see {@link
+ *   LocalClientInterface#sendKeepalive}).
  * @property {number|null} [maxReconnectTries] - Attempt cap, or `null` for
  *   unlimited. Defaults to unlimited.
  * @property {number} [connectTimeout] - Per-dial timeout in seconds. Defaults
@@ -488,6 +510,73 @@ export class LocalClientInterface extends Interface {
     this.online = false;
     /** @type {Promise<void> | null} */
     this._loopPromise = null;
+    /**
+     * Spacing between shared-instance keepalive frames, in milliseconds.
+     * `0` disables them. See {@link sendKeepalive} for why the default is on.
+     * @type {number}
+     */
+    this.keepaliveIntervalMs =
+      options.keepaliveIntervalMs ?? KEEPALIVE_INTERVAL_MS;
+    /** @type {ReturnType<typeof setInterval> | null} */
+    this._keepaliveTimer = null;
+  }
+
+  /**
+   * Sends an empty HDLC frame over the shared-instance socket, mirroring the
+   * Python reference `LocalClientInterface.send_keepalive` (`phy_keepalive`,
+   * driven by the 5-second transport jobs loop).
+   *
+   * Why this is non-optional: a shared instance hosted on **Android** (Termux,
+   * Sideband's daemon) treats every local client as a potentially-sleeping
+   * Android app: after `CLIENT_SLEEP_PAUSE_TIMEOUT` (12 s) without inbound
+   * traffic from the client, the daemon **silently drops all downstream
+   * packets** addressed to it (`LocalInterface.process_outgoing` under
+   * `pause_on_client_sleep`) — announces, path responses, link requests and
+   * messages all vanish while the client looks perfectly connected. Python
+   * clients keep that window permanently refreshed with an empty HDLC frame
+   * every 5 s; we do the same. The frame is harmless to every receiver — the
+   * HDLC unframer yields a complete, empty frame and ignores it, and the
+   * socket-level bytes are what refresh an Android daemon's pause timer.
+   *
+   * No-op while offline or without a socket (e.g. mid-reconnect).
+   * @returns {void}
+   */
+  sendKeepalive() {
+    if (!this.online || !this.socket) return;
+    try {
+      this.socket.write(Buffer.from([HDLC_FLAG, HDLC_FLAG]));
+    } catch (/** @type {any} */ e) {
+      log(
+        "LocalClient",
+        `Failed to send keepalive: ${e.message}`,
+        LogLevel.WARNING,
+      );
+    }
+  }
+
+  /**
+   * Starts the periodic keepalive timer (initiator only). Idempotent.
+   * @private
+   */
+  _startKeepalive() {
+    if (this._keepaliveTimer) return;
+    if (!this.initiator || this.keepaliveIntervalMs <= 0) return;
+    this._keepaliveTimer = setInterval(
+      () => this.sendKeepalive(),
+      this.keepaliveIntervalMs,
+    );
+    this._keepaliveTimer?.unref?.();
+  }
+
+  /**
+   * Stops the periodic keepalive timer, if running.
+   * @private
+   */
+  _stopKeepalive() {
+    if (this._keepaliveTimer) {
+      clearInterval(this._keepaliveTimer);
+      this._keepaliveTimer = null;
+    }
   }
 
   /** @returns {boolean} */
@@ -587,6 +676,7 @@ export class LocalClientInterface extends Interface {
         this._setupStreams(socket);
         this.online = true;
         this._closed = false;
+        this._startKeepalive();
         this.dispatchEvent(new CustomEvent("connected", this._connectDetail()));
         resolve();
       });
@@ -636,6 +726,7 @@ export class LocalClientInterface extends Interface {
    */
   async disconnect() {
     this._cancelReconnect();
+    this._stopKeepalive();
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;

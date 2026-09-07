@@ -416,3 +416,83 @@ test("parses the real ~/.reticulum/config when present", () => {
     assert.strictEqual(typeof endpoint.socketPath, "string");
   }
 });
+
+test("LocalClientInterface sends shared-instance keepalive frames", async () => {
+  // An Android-hosted shared instance (rnsd on Termux) drops ALL downstream
+  // packets to a local client that has been silent for 12 s
+  // (CLIENT_SLEEP_PAUSE_TIMEOUT); Python clients keep that window refreshed
+  // with an empty HDLC frame every 5 s (phy_keepalive). The client must do
+  // the same so announces, path responses, link requests and messages reach
+  // it even while its own traffic is sparse.
+  /** @type {Buffer[]} */
+  const received = [];
+  const { server, port } = await new Promise((resolve) => {
+    const server = net.createServer((socket) => {
+      socket.on("data", (d) => received.push(Buffer.from(d)));
+    });
+    server.listen(0, "127.0.0.1", () =>
+      resolve({
+        server,
+        port: /** @type {import('node:net').AddressInfo} */ (server.address())
+          .port,
+      }),
+    );
+  });
+
+  const client = new LocalClientInterface({
+    port,
+    reconnectWait: 0.05,
+    keepaliveIntervalMs: 40,
+  });
+  await client.connect();
+
+  // Two keepalive intervals are plenty for at least one frame (and enough
+  // margin to observe the cadence) while staying fast for the test suite.
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  await client.disconnect();
+
+  // Every keepalive frame is an *empty* HDLC frame: two FLAG (0x7E) bytes.
+  const bytes = Buffer.concat(received);
+  assert.ok(
+    bytes.includes(Buffer.from([0x7e, 0x7e])),
+    "expected at least one empty HDLC keepalive frame (0x7e 0x7e)",
+  );
+  // And nothing but flags: keepalives must not smuggle packet data.
+  for (const b of bytes) {
+    assert.strictEqual(b, 0x7e, "keepalive traffic must be only HDLC flags");
+  }
+
+  await new Promise((resolve) => server.close(resolve));
+});
+
+test("LocalClientInterface keepalive can be disabled with 0 interval", async () => {
+  /** @type {number} */
+  let received = 0;
+  const { server, port } = await new Promise((resolve) => {
+    const server = net.createServer((socket) => {
+      socket.on("data", (d) => {
+        received += d.length;
+      });
+    });
+    server.listen(0, "127.0.0.1", () =>
+      resolve({
+        server,
+        port: /** @type {import('node:net').AddressInfo} */ (server.address())
+          .port,
+      }),
+    );
+  });
+
+  const client = new LocalClientInterface({
+    port,
+    reconnectWait: 0.05,
+    keepaliveIntervalMs: 0,
+  });
+  await client.connect();
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  await client.disconnect();
+
+  assert.strictEqual(received, 0, "no traffic expected with keepalives off");
+
+  await new Promise((resolve) => server.close(resolve));
+});
