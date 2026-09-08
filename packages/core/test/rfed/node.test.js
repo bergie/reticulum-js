@@ -381,8 +381,14 @@ describe("RFedNode — stamp enforcement", () => {
   });
 
   test("an under-stamped publish (no cached cost) is silently dropped", async () => {
+    // The node cannot tell an unstamped payload from a stamped one on the wire:
+    // it always interprets the trailing 32 bytes as a stamp and validates the
+    // PoW. With stampCost 8 (−3 flexibility) random trailing bytes would pass
+    // with p=2⁻⁵, making this test flaky — so use a cost high enough that an
+    // accidental pass is negligible (2⁻²¹ here; validation is a single hash
+    // regardless of the cost).
     const { node, nodeHash, client } = await fixture({
-      nodeConfig: { stampCost: 8 },
+      nodeConfig: { stampCost: 24 },
     });
 
     // No subscribe → no cached stamp cost → the client publishes stamp-less,

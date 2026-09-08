@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+- De-flaked the rfed stamp-enforcement tests (`node.test.js`, `client.test.js`):
+  with a low `stampCost` (8, minus 3 flexibility) the trailing bytes of an
+  unstamped publish are validated as a stamp and pass the PoW check with
+  probability 2⁻⁵, so the "under-stamped publish is silently dropped" tests
+  failed about 3% of runs. They now use `stampCost: 24`, making an accidental
+  pass negligible (2⁻²¹).
+
 ## [0.7.0] - 2026-09-06
 ### Added
 - **Interface ingress burst control** (work doc #31 steps 1–2, mirroring

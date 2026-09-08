@@ -451,7 +451,10 @@ describe("rfed client — subscribe + publish + live fanout receive", () => {
   test("a publish without a valid stamp is silently dropped", async () => {
     // Node requires a stamp; client does NOT subscribe first, so it has no
     // cached cost and publishes stamp-less — the node must drop it.
-    const { node, nodeHash, client } = await fixture({ stampCost: 8 });
+    // A high cost keeps the test deterministic: the trailing bytes of an
+    // unstamped payload are validated as a stamp and would pass with
+    // p=2^-cost (2^-8 at cost 8 — a real, if rare, flake).
+    const { node, nodeHash, client } = await fixture({ stampCost: 24 });
 
     await client.publish(
       nodeHash,
