@@ -2,6 +2,43 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-09
+### Fixed
+- **core**: **Unresponsive paths no longer blackhole outbound traffic forever.** A route
+  marked `UNRESPONSIVE` by a failed proof/link attempt was previously only
+  *marked* — `sendPacket` kept routing packets into it while `hasPath()`
+  stayed true, so `requestPathAuto` and the pre-link path wait never
+  re-solicited, and delivery stayed broken until a process restart (the
+  "works after start, then dies" pattern). Matching the Python reference
+  (`Transport.expire_path` from the jobs-loop link check, and LXMF
+  `process_outbound`'s "the link was never activated, retrying path
+  request" / "trying to rediscover path" handling), `sendPacket` now expires
+  an `UNRESPONSIVE` route before routing so the send degrades to the
+  default-interface leaf broadcast and a fresh `path?` request or announce
+  can rebuild the route; `requestPathAuto` and `LXMRouter._requestAndAwaitPath`
+  treat an unresponsive path as unusable and re-request; and
+  `LXMRouter._establishDirectLink` expires the route and re-requests the path
+  when a link cannot be established, so the next attempt doesn't ride the
+  dead route.
+- **core**: **Opportunistic LXMF delivery is now observable, not fire-and-forget.**
+  `sendPacket` returns the `PacketReceipt` it tracks for opportunistic
+  CTX_NONE DATA (and `Destination.send` passes it through),
+  `PacketReceipt.whenSettled()` exposes the terminal delivery outcome, and
+  `LXMRouter._sendOpportunistic` awaits the recipient's PROOF — resolving on
+  delivery and **rejecting** when the proof wait times out (the packet was
+  silently dropped). This is the transport-level counterpart of Python
+  LXMF's per-message delivery state, and gives callers (e.g.
+  signalk-reticulum's direct-first / propagation-fallback deliverer) the
+  failure signal they need to fall back instead of reporting success at
+  framer-write time.
+- **core**: De-flaked the rfed stamp-enforcement tests (`node.test.js`, `client.test.js`):
+  with a low `stampCost` (8, minus 3 flexibility) the trailing bytes of an
+  unstamped publish are validated as a stamp and pass the PoW check with
+  probability 2⁻⁵, so the "under-stamped publish is silently dropped" tests
+  failed about 3% of runs. They now use `stampCost: 24`, making an accidental
+  pass negligible (2⁻²¹).
+- **node**: **`LocalClientInterface` now sends shared-instance keepalive frames** (an empty HDLC frame every 5 s, mirroring the Python reference's `phy_keepalive` / `LocalClientInterface.send_keepalive`). A shared instance hosted on **Android** (rnsd under Termux, Sideband's daemon) treats every local client as a potentially-sleeping Android app: after `CLIENT_SLEEP_PAUSE_TIMEOUT` (12 s) without inbound traffic from the client, `LocalInterface.process_outgoing` under `pause_on_client_sleep` **silently drops every downstream packet** addressed to it — announces, path responses, link requests, and messages all vanish while the client looks perfectly connected. Python clients keep that window permanently refreshed with their 5-second `phy_keepalive` frames (enabled whenever the client itself runs on Android); the JS client had no application-level keepalive at all, so on an Android daemon a quiet JS client was starved of all mesh traffic. Verified with a real cross-implementation setup (Python rnsd 1.5.0 transport + TCP mesh peer + JS local client): before the fix the JS client received zero announces and its opportunistic DATA never arrived; with the 5 s keepalive it ingests every announce and its traffic is delivered and decrypted. The keepalive is on by default (harmless to non-Android daemons — the empty frame is shorter than a packet header and ignored by the HDLC unframer) and can be disabled with `keepaliveIntervalMs: 0`.
+
 ## [0.7.0] - 2026-09-06
 ### Added
 - **core**: **Interface ingress burst control** (work doc #31 steps 1–2, mirroring

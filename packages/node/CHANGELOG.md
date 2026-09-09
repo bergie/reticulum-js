@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.7.1] - 2026-09-09
 ### Fixed
 - **`LocalClientInterface` now sends shared-instance keepalive frames** (an empty HDLC frame every 5 s, mirroring the Python reference's `phy_keepalive` / `LocalClientInterface.send_keepalive`). A shared instance hosted on **Android** (rnsd under Termux, Sideband's daemon) treats every local client as a potentially-sleeping Android app: after `CLIENT_SLEEP_PAUSE_TIMEOUT` (12 s) without inbound traffic from the client, `LocalInterface.process_outgoing` under `pause_on_client_sleep` **silently drops every downstream packet** addressed to it — announces, path responses, link requests, and messages all vanish while the client looks perfectly connected. Python clients keep that window permanently refreshed with their 5-second `phy_keepalive` frames (enabled whenever the client itself runs on Android); the JS client had no application-level keepalive at all, so on an Android daemon a quiet JS client was starved of all mesh traffic. Verified with a real cross-implementation setup (Python rnsd 1.5.0 transport + TCP mesh peer + JS local client): before the fix the JS client received zero announces and its opportunistic DATA never arrived; with the 5 s keepalive it ingests every announce and its traffic is delivered and decrypted. The keepalive is on by default (harmless to non-Android daemons — the empty frame is shorter than a packet header and ignored by the HDLC unframer) and can be disabled with `keepaliveIntervalMs: 0`.
 

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-09
 ### Fixed
 - **Unresponsive paths no longer blackhole outbound traffic forever.** A route
   marked `UNRESPONSIVE` by a failed proof/link attempt was previously only

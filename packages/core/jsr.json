@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/core",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "license": "EUPL-1.2",
   "exports": {
     ".": "./src/index.js",
