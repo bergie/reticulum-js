@@ -75,6 +75,10 @@ export class PacketReceipt {
     this.sentAt = Date.now();
     /** Proof-wait timeout timer (cleared on delivery/failure). @type {ReturnType<typeof setTimeout> | null} */
     this._timeoutTimer = null;
+    /** @type {Promise<ReceiptStatus>|null} cached by {@link whenSettled}. */
+    this._settledPromise = null;
+    /** @type {((status: ReceiptStatus) => void)|null} resolves {@link _settledPromise}. */
+    this._settledResolve = null;
   }
 
   /**
@@ -182,6 +186,27 @@ export class PacketReceipt {
   }
 
   /**
+   * Resolves once the receipt reaches a terminal state, yielding the final
+   * {@link ReceiptStatus} (`DELIVERED` or `FAILED`). Awaiting this is how a
+   * caller learns whether the receiver actually proved the packet — the
+   * transport's `startTimeout` guarantees settlement even when no PROOF ever
+   * arrives. Resolves immediately for an already-settled receipt.
+   *
+   * @returns {Promise<ReceiptStatus>}
+   */
+  whenSettled() {
+    if (this.status !== ReceiptStatus.SENDING) {
+      return Promise.resolve(this.status);
+    }
+    if (!this._settledPromise) {
+      this._settledPromise = new Promise((resolve) => {
+        this._settledResolve = resolve;
+      });
+    }
+    return this._settledPromise;
+  }
+
+  /**
    * Marks the receipt delivered, removes it from the registry, and fires the
    * `delivered` callback once. Idempotent.
    */
@@ -189,6 +214,8 @@ export class PacketReceipt {
     if (this.status === ReceiptStatus.DELIVERED) return;
     this.clearTimeout();
     this.status = ReceiptStatus.DELIVERED;
+    this._settledResolve?.(this.status);
+    this._settledResolve = null;
     PacketReceipt.receipts.delete(toHex(this.truncatedHash));
     if (this.callbacks.delivered) {
       try {
@@ -211,6 +238,8 @@ export class PacketReceipt {
     if (this.status === ReceiptStatus.FAILED) return;
     this.clearTimeout();
     this.status = ReceiptStatus.FAILED;
+    this._settledResolve?.(this.status);
+    this._settledResolve = null;
     if (this.callbacks.failed) {
       try {
         this.callbacks.failed(this);

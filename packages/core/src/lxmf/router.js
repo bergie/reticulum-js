@@ -6,6 +6,7 @@
 import { Destination } from "../core/destination.js";
 import { Identity } from "../core/identity.js";
 import { ContextType, DestType, Packet, PacketType } from "../core/packet.js";
+import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
 import { Resource } from "../core/resource.js";
 import { Link, LinkStatus } from "../transport/link.js";
 import { toHex } from "../utils/encoding.js";
@@ -1276,6 +1277,13 @@ export class LXMRouter extends EventTarget {
    * with the recipient's public key via Destination.send, exactly mirroring
    * LXMessage.__as_packet for the OPPORTUNISTIC case.
    *
+   * The send is **settled**, not fire-and-forget: the tracked packet receipt
+   * is awaited, so the returned promise resolves only once the receiver's
+   * PROOF arrives (Python's per-message delivery state) and **rejects** when
+   * the proof wait times out — the mesh silently dropped the packet (stale
+   * path, offline recipient, …). Without this, callers reported success at
+   * framer-write time and never learned delivery was failing.
+   *
    * Factored out of {@link send} so the opportunistic path stays reachable as a
    * fallback once DIRECT delivery became the default, and is unit-testable in
    * isolation.
@@ -1309,7 +1317,17 @@ export class LXMRouter extends EventTarget {
       transportType: 0,
       payload: wireData.subarray(DESTINATION_LENGTH),
     });
-    await peerDestination.send(opportunisticPacket);
+    const receipt = await peerDestination.send(opportunisticPacket);
+    if (receipt instanceof PacketReceipt) {
+      const status = await receipt.whenSettled();
+      if (status !== ReceiptStatus.DELIVERED) {
+        throw new Error(
+          `Opportunistic delivery to ${toHex(
+            message.destinationHash,
+          )} failed: no delivery proof was received from the recipient`,
+        );
+      }
+    }
   }
 
   /**
@@ -1330,17 +1348,24 @@ export class LXMRouter extends EventTarget {
   async _requestAndAwaitPath(destinationHash, timeoutMs) {
     const transport = /** @type {any} */ (this.rns?.transport);
     if (!transport) return false;
-    if (
+    // A usable path is one that exists *and* is not marked UNRESPONSIVE by a
+    // failed proof/link attempt — a stale-but-present route must not block
+    // re-solicitation (Python: LXMF's rediscovery after failed attempts).
+    const usablePath = () =>
       typeof transport.hasPath === "function" &&
-      transport.hasPath(destinationHash)
-    ) {
+      transport.hasPath(destinationHash) &&
+      !(
+        typeof transport.pathIsUnresponsive === "function" &&
+        transport.pathIsUnresponsive(destinationHash)
+      );
+    if (usablePath()) {
       return true;
     }
     if (typeof transport.requestPath !== "function") return false;
     const destHex = toHex(destinationHash);
     log(
       "LXMF",
-      `No path to ${destHex}; requesting before DIRECT link`,
+      `No usable path to ${destHex}; requesting before DIRECT link`,
       LogLevel.DEBUG,
     );
     try {
@@ -1349,10 +1374,7 @@ export class LXMRouter extends EventTarget {
       // Best effort — the wait below still gives a late response a chance.
     }
     // A fast path response may already have been ingested.
-    if (
-      typeof transport.hasPath === "function" &&
-      transport.hasPath(destinationHash)
-    ) {
+    if (usablePath()) {
       return true;
     }
     return new Promise((resolve) => {
@@ -1448,6 +1470,18 @@ export class LXMRouter extends EventTarget {
         `DIRECT link to ${destHex} failed, falling back to opportunistic: ${e}`,
         LogLevel.WARNING,
       );
+      // Python LXMRouter.process_outbound: "The link to … was never
+      // activated, retrying path request" — a link that cannot be
+      // established over a known route means the route is dead. Expire it
+      // and request a fresh path (MI-gated) so the next attempt — ours or an
+      // opportunistic fallback's — doesn't ride the dead route forever.
+      const transport = /** @type {any} */ (this.rns?.transport);
+      try {
+        transport?.routingTable?.expireRoute?.(destinationHash);
+        await transport?.requestPathAuto?.(destinationHash);
+      } catch {
+        /* best effort */
+      }
       return null;
     }
   }

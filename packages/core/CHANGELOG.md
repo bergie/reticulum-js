@@ -3,6 +3,33 @@
 ## [Unreleased]
 
 ### Fixed
+- **Unresponsive paths no longer blackhole outbound traffic forever.** A route
+  marked `UNRESPONSIVE` by a failed proof/link attempt was previously only
+  *marked* — `sendPacket` kept routing packets into it while `hasPath()`
+  stayed true, so `requestPathAuto` and the pre-link path wait never
+  re-solicited, and delivery stayed broken until a process restart (the
+  "works after start, then dies" pattern). Matching the Python reference
+  (`Transport.expire_path` from the jobs-loop link check, and LXMF
+  `process_outbound`'s "the link was never activated, retrying path
+  request" / "trying to rediscover path" handling), `sendPacket` now expires
+  an `UNRESPONSIVE` route before routing so the send degrades to the
+  default-interface leaf broadcast and a fresh `path?` request or announce
+  can rebuild the route; `requestPathAuto` and `LXMRouter._requestAndAwaitPath`
+  treat an unresponsive path as unusable and re-request; and
+  `LXMRouter._establishDirectLink` expires the route and re-requests the path
+  when a link cannot be established, so the next attempt doesn't ride the
+  dead route.
+- **Opportunistic LXMF delivery is now observable, not fire-and-forget.**
+  `sendPacket` returns the `PacketReceipt` it tracks for opportunistic
+  CTX_NONE DATA (and `Destination.send` passes it through),
+  `PacketReceipt.whenSettled()` exposes the terminal delivery outcome, and
+  `LXMRouter._sendOpportunistic` awaits the recipient's PROOF — resolving on
+  delivery and **rejecting** when the proof wait times out (the packet was
+  silently dropped). This is the transport-level counterpart of Python
+  LXMF's per-message delivery state, and gives callers (e.g.
+  signalk-reticulum's direct-first / propagation-fallback deliverer) the
+  failure signal they need to fall back instead of reporting success at
+  framer-write time.
 - De-flaked the rfed stamp-enforcement tests (`node.test.js`, `client.test.js`):
   with a low `stampCost` (8, minus 3 flexibility) the trailing bytes of an
   unstamped publish are validated as a stamp and pass the PoW check with

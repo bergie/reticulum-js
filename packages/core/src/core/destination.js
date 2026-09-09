@@ -1374,7 +1374,10 @@ export class Destination extends EventTarget {
    * Encrypts the packet payload for this destination and sends it via the
    * bound transport.
    * @param {Packet} packet
-   * @returns {Promise<void>}
+   * @returns {Promise<import("./packet_receipt.js").PacketReceipt|null>}
+   *   The proof receipt tracked by the transport for an opportunistic
+   *   CTX_NONE DATA packet (observable via `whenSettled()`), or `null` for
+   *   any other packet shape.
    */
   async send(packet) {
     if (!this.interfaceLayer) {
@@ -1394,6 +1397,6 @@ export class Destination extends EventTarget {
       transportId: packet.transportId,
     });
 
-    await this.interfaceLayer.transport.sendPacket(encryptedPacket);
+    return await this.interfaceLayer.transport.sendPacket(encryptedPacket);
   }
 }

@@ -708,7 +708,16 @@ export class TransportCore extends EventTarget {
    */
   async requestPathAuto(destinationHash) {
     if (!destinationHash || destinationHash.length !== 16) return false;
-    if (this.hasPath(destinationHash)) return false;
+    // Skip while a *usable* path is known. A route marked UNRESPONSIVE by a
+    // failed proof/link attempt is not usable: request a fresh path so the
+    // response announce rebuilds the route (Python's jobs-loop rediscovery
+    // and LXMF's "link was never activated, retrying path request").
+    if (
+      this.hasPath(destinationHash) &&
+      !this.pathIsUnresponsive(destinationHash)
+    ) {
+      return false;
+    }
     const destHex = toHex(destinationHash);
     const last = this.pathRequests.get(destHex) ?? 0;
     if (Date.now() / 1000 - last < TransportCore.PATH_REQUEST_MI) {
@@ -864,6 +873,10 @@ export class TransportCore extends EventTarget {
    * @param {import("../core/packet.js").Packet} packet
    * @param {Uint8Array|null} [linkId] When set, hand the packet to the named
    *   active link instead of routing by destination.
+   * @returns {Promise<import("../core/packet_receipt.js").PacketReceipt|null>}
+   *   The tracked proof receipt for an opportunistic CTX_NONE DATA packet
+   *   (awaitable via {@link import("../core/packet_receipt.js").PacketReceipt#whenSettled}),
+   *   or `null` for any other packet (link DATA, announces, …).
    */
   async sendPacket(packet, linkId = null) {
     // §RNS 1.5.0 (Packet.send): a packet whose hop count has already reached
@@ -875,7 +888,7 @@ export class TransportCore extends EventTarget {
         `Refusing to send packet with excessive hop count ${packet.hops ?? 0}`,
         LogLevel.DEBUG,
       );
-      return;
+      return null;
     }
     const destHex = toHex(packet.destinationHash);
     const packetHash = await packet.getHash();
@@ -888,7 +901,7 @@ export class TransportCore extends EventTarget {
         throw new Error(`Link ${linkHex} is not available`);
       }
       await link.send(packet);
-      return;
+      return null;
     }
 
     // PLAIN/GROUP destinations are always broadcast; announces never reach
@@ -897,9 +910,27 @@ export class TransportCore extends EventTarget {
       packet.packetType !== PacketType.ANNOUNCE &&
       packet.destinationType !== DestType.PLAIN &&
       packet.destinationType !== DestType.GROUP;
-    const route = routable
+    let route = routable
       ? this.routingTable.getRoute(packet.destinationHash)
       : undefined;
+
+    // §7 path-health: a route marked UNRESPONSIVE by a failed proof/link
+    // attempt is a confirmed-dead path — routing more packets into it just
+    // blackholes them while `hasPath()` stays true, so nothing ever
+    // re-solicits. Expire it (the leaf counterpart of Python
+    // `Transport.expire_path`, which the reference calls from its jobs-loop
+    // link check and LXMF calls after failed delivery attempts) so this send
+    // degrades to the leaf broadcast below and a fresh `path?` request or
+    // announce can rebuild the route.
+    if (route && route.state === PathState.UNRESPONSIVE) {
+      log(
+        "Transport",
+        `Expiring unresponsive path to ${destHex} before send`,
+        LogLevel.DEBUG,
+      );
+      this.routingTable.expireRoute(packet.destinationHash);
+      route = undefined;
+    }
 
     if (route) {
       // §Transport.outbound (~l.1126): send on the interface the path was
@@ -960,7 +991,9 @@ export class TransportCore extends EventTarget {
       // a slow next hop gets a proportionally longer proof wait.
       receipt.startTimeout(this.firstHopTimeout(packet.destinationHash) * 1000);
       PacketReceipt.track(receipt);
+      return receipt;
     }
+    return null;
   }
 
   /**
