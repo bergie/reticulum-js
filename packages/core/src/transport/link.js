@@ -1160,11 +1160,14 @@ export class Link extends EventTarget {
   // -----------------------------------------------------------------------
 
   /**
-   * Cleanly tears down the link by sending a LINKCLOSE whose encrypted body is
-   * the link_id, then transitioning to CLOSED locally.
+   * Builds and sends the LINKCLOSE packet (encrypted body = link_id), without
+   * touching the status. Shared by the graceful {@link Link#teardown} and
+   * the watchdog's stale teardown, mirroring the Python reference's
+   * `Link.__teardown_packet`.
+   * @returns {Promise<void>}
+   * @private
    */
-  async teardown() {
-    if (this.status === LinkStatus.CLOSED) return;
+  async _sendLinkClose() {
     const packet = new Packet({
       packetType: PacketType.DATA,
       destinationType: DestType.LINK,
@@ -1173,6 +1176,15 @@ export class Link extends EventTarget {
       payload: this.linkId,
     });
     await this.send(packet);
+  }
+
+  /**
+   * Cleanly tears down the link by sending a LINKCLOSE whose encrypted body is
+   * the link_id, then transitioning to CLOSED locally.
+   */
+  async teardown() {
+    if (this.status === LinkStatus.CLOSED) return;
+    await this._sendLinkClose();
     this.teardownReason = this.initiator
       ? LinkTeardownReason.INITIATOR_CLOSED
       : LinkTeardownReason.DESTINATION_CLOSED;
@@ -2047,6 +2059,18 @@ export class Link extends EventTarget {
     log("Link", `Watchdog tick for ${toHex(this.linkId)}`, LogLevel.EXTREME);
     const now = Date.now();
     if (now >= this.lastInboundTime + this.staleTime * 1000) {
+      // Send the LINKCLOSE like the Python reference does when a link goes
+      // stale (Link.py: status STALE → `__teardown_packet()` → CLOSED with
+      // TIMEOUT). The peer may well still be reachable — asymmetric path
+      // loss (our keepalive pings dropped, its traffic would get through),
+      // a route that recovered between the last failed ping and now — and
+      // a LINKCLOSE lets it tear its side down at once instead of waiting
+      // out its own staleness window. Best-effort, fire-and-forget: on a
+      // fully dead path the packet is dropped silently and the peer learns
+      // from its own watchdog, exactly as if we had sent nothing.
+      this._sendLinkClose().catch((e) =>
+        log("Link", `Stale teardown send failed: ${e}`, LogLevel.ERROR),
+      );
       this.teardownReason = LinkTeardownReason.TIMEOUT;
       this.status = LinkStatus.CLOSED;
       this.dispatchEvent(

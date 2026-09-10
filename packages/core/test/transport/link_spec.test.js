@@ -902,6 +902,14 @@ test("§6.7 a link whose peer vanished is torn down even while keepalives are be
     LinkTeardownReason.TIMEOUT,
     "the teardown reason must be TIMEOUT",
   );
+  // The stale teardown sends a LINKCLOSE like the Python reference
+  // (`__teardown_packet`), so a still-reachable peer learns at once.
+  assert.ok(
+    transportI.receivedPackets.some(
+      (p) => p.contextByte === ContextType.LINKCLOSE,
+    ),
+    "a LINKCLOSE was sent when the stale link tore down",
+  );
 
   // Stop lingering timers on the still-healthy responder side.
   await new Promise((r) => setTimeout(r, 50));
