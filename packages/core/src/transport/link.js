@@ -164,6 +164,17 @@ export class Link extends EventTarget {
   /** @type {number} */
   keepaliveInterval = Link.KEEPALIVE_MAX;
 
+  /**
+   * Wall-clock ms of the last keepalive *sent* on this link (Python
+   * `Link.last_keepalive`, maintained by `had_outbound(is_keepalive=True)`).
+   * Purely an egress-cadence guard: unlike {@link Link#lastInboundTime} it
+   * never counts toward liveness — a keepalive we *sent* proves nothing about
+   * the peer still being there. Gating pings on it also prevents a ping storm
+   * while a pong is in flight or lost.
+   * @type {number}
+   */
+  lastKeepaliveTime = 0;
+
   /** @type {number} */
   staleTime = Link.STALE_FACTOR * Link.KEEPALIVE_MAX;
 
@@ -2043,14 +2054,27 @@ export class Link extends EventTarget {
       );
       return;
     }
+    // Send a keepalive ping when there has been no inbound traffic for an
+    // interval (Python: `now >= last_inbound + keepalive`), rate-limited to one
+    // per interval by `last_keepalive`. Sending a keepalive must NOT refresh
+    // liveness — Python counts only *inbound* traffic (and link proofs) via
+    // `last_inbound`; `had_outbound(is_keepalive=True)` touches just
+    // `last_keepalive`/`last_outbound`. Resetting the stale clock on our own
+    // ping made an initiator-side link whose peer had vanished (connection
+    // drop without a teardown — interface loss, rnsd restart, peer going out
+    // of range) look ACTIVE forever: every watchdog tick sent a ping into the
+    // void and reset `lastInboundTime`, so the stale branch never fired, the
+    // link was never evicted, and every send over the zombie link silently
+    // vanished while callers were told delivery succeeded.
     if (
       this.initiator &&
-      now >= this.lastInboundTime + this.keepaliveInterval * 1000
+      now >= this.lastInboundTime + this.keepaliveInterval * 1000 &&
+      now >= this.lastKeepaliveTime + this.keepaliveInterval * 1000
     ) {
+      this.lastKeepaliveTime = now;
       this._sendKeepalive(true).catch((e) =>
         log("Link", `Keepalive failed: ${e}`, LogLevel.ERROR),
       );
-      this.lastInboundTime = now;
     }
   }
 

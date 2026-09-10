@@ -25,6 +25,7 @@ import {
   isLinkPacketUnencrypted,
   Link,
   LinkStatus,
+  LinkTeardownReason,
   linkIdFromLrPacket,
 } from "../../src/transport/link.js";
 import { RoutingTable } from "../../src/transport/router.js";
@@ -827,3 +828,99 @@ async function awaitActive(initiator, getResponder, timeoutMs = 1000) {
       `(initiator=${initiator.status}, responder=${getResponder()?.status})`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// §6.7  Watchdog liveness: keepalive *sends* must not refresh it
+// (Python Link.py: `last_inbound`/`last_proof` only, `had_outbound` never)
+// ---------------------------------------------------------------------------
+
+/**
+ * Establishes a link pair and returns it together with both transports, so a
+ * test can sever the connection (a connection drop without a LINKCLOSE —
+ * interface loss, daemon restart, peer out of range).
+ *
+ * @returns {Promise<{initiator: Link, responder: Link, transportI: MockTransport, transportR: MockTransport}>}
+ */
+async function makeSeverablePair() {
+  const responderIdentity = await Identity.generate();
+  const transportI = new MockTransport();
+  const transportR = new MockTransport();
+  transportI.peer = transportR;
+  transportR.peer = transportI;
+
+  const responderDest = await Destination.create(
+    "responder",
+    Direction.IN,
+    DestType.SINGLE,
+    responderIdentity,
+    /** @type {any} */ ({ transport: transportR }),
+  );
+  transportR.addDestination(responderDest.destinationHash, responderDest);
+
+  const initiatorDest = await Destination.create(
+    "responder",
+    Direction.OUT,
+    DestType.SINGLE,
+    responderIdentity,
+    /** @type {any} */ ({ transport: transportI }),
+  );
+
+  const initiator = await Link.initiate(initiatorDest, transportI);
+  await awaitActive(initiator, () => [...transportR.links.values()][0]);
+  const responder = [...transportR.links.values()][0];
+  if (!responder) throw new Error("severable pair failed: no responder link");
+  return { initiator, responder, transportI, transportR };
+}
+
+test("§6.7 a link whose peer vanished is torn down even while keepalives are being sent (no zombie links)", async () => {
+  const { initiator, transportI } = await makeSeverablePair();
+
+  // Shrink the cadence so the 1 s watchdog tick sees a full cycle:
+  // keepalive every 0.6 s, stale after 1.2 s (the STALE_FACTOR relation).
+  initiator.keepaliveInterval = 0.6;
+  initiator.staleTime = 1.2;
+
+  // The peer goes away without a LINKCLOSE. The initiator keeps "sending"
+  // keepalive pings (the mock accepts the write) but nothing comes back.
+  transportI.peer = null;
+
+  // With the Python semantics, the stale branch must fire on a later tick:
+  // sending a ping refreshes only `last_keepalive`, never liveness. The old
+  // behaviour reset `last_inbound` on every ping, so the link stayed ACTIVE
+  // forever and every send over the zombie silently vanished.
+  const deadline = Date.now() + 5000;
+  while (initiator.status !== LinkStatus.CLOSED && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.strictEqual(
+    initiator.status,
+    LinkStatus.CLOSED,
+    "an initiator link with no inbound traffic must tear down despite its own keepalive sends",
+  );
+  assert.strictEqual(
+    initiator.teardownReason,
+    LinkTeardownReason.TIMEOUT,
+    "the teardown reason must be TIMEOUT",
+  );
+
+  // Stop lingering timers on the still-healthy responder side.
+  await new Promise((r) => setTimeout(r, 50));
+});
+
+test("§6.7 keepalive ping/pong refreshes liveness on a healthy link", async () => {
+  const { initiator } = await makeSeverablePair();
+
+  initiator.keepaliveInterval = 0.6;
+  initiator.staleTime = 1.2;
+
+  // Leave the pair connected: each ping is answered with a pong, and the pong
+  // (inbound traffic) refreshes `last_inbound`. The link must stay ACTIVE well
+  // past the stale horizon of a silent link.
+  await new Promise((r) => setTimeout(r, 4000));
+  assert.strictEqual(
+    initiator.status,
+    LinkStatus.ACTIVE,
+    "a healthy link must survive on keepalive ping/pong round trips",
+  );
+  await initiator.teardown();
+});

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- **Zombie links: an initiator-side link whose peer vanished no longer stays ACTIVE forever.** The link watchdog's keepalive branch reset `lastInboundTime` after *sending* a ping, but liveness is measured from that very clock (`now >= lastInboundTime + staleTime`) — so a link that died without a LINKCLOSE (connection drop, interface loss, rnsd restart, peer going out of range) kept "sending" keepalives into the void, each one resetting its own staleness timer, and never tore down. Every subsequent `LXMRouter.send()` reused the cached `directLinks` entry (status still ACTIVE), silently encrypted the message to the dead link session, and reported success — messages vanished until the process was restarted (the "everything works after a restart, then the peer goes away for a while and LXMF stops arriving" pattern). Matching the Python reference (`Link.watchdog`: liveness counts only *inbound* traffic via `last_inbound`/`last_proof`; `send_keepalive` → `had_outbound(is_keepalive=True)` touches only `last_keepalive`), sending a keepalive no longer refreshes liveness, and a new `lastKeepaliveTime` field gates the ping cadence (Python `last_keepalive`) so a missing pong cannot cause a per-tick ping storm. A dead initiator link now tears down after `staleTime` (2 × the RTT-adapted keepalive interval), the LXMF router evicts it on `statuschange`, and the next send establishes a fresh link. Covered by two watchdog tests: a severed peer tears the link down despite keepalive sends, and a healthy link survives on ping/pong round trips
 
 ## [0.7.1] - 2026-09-09
 ### Fixed
