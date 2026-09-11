@@ -64,6 +64,17 @@ const PATH_REQUEST_WAIT_MS = 7_000;
 const RESOURCE_TRANSFER_TIMEOUT_MS = 60_000;
 
 /**
+ * Upper bound on remembered message ids for inbound deduplication. Entries
+ * are only ever inserted once (a repeat delivery is dropped, not re-inserted),
+ * so insertion order is chronological order and the oldest entry is evicted
+ * first. Python keeps `locally_delivered_transient_ids` (persisted to disk,
+ * pruned after `MESSAGE_EXPIRY * 6` in its jobs loop); this port keeps the
+ * cache in memory like `processedTransientIds`, and 4096 entries spans days
+ * of mesh traffic in one process while staying trivially small.
+ */
+const DELIVERED_MESSAGE_CACHE_MAX = 4096;
+
+/**
  * Handles LXMF routing and message processing.
  * @description LXMF Router for managing incoming and outgoing messages
  */
@@ -106,6 +117,14 @@ export class LXMRouter extends EventTarget {
     // (LXMRouter.locally_processed_transient_ids).
     /** @type {Map<string, number>} */
     this.processedTransientIds = new Map();
+    // Tracks message ids (§5.5 — Python LXMessage.hash) of messages already
+    // delivered through the "message" event, so the same message arriving
+    // over another path (link + opportunistic + a propagation sync, or a
+    // sender retry) is dispatched exactly once (Python
+    // LXMRouter.locally_delivered_transient_ids / lxmf_delivery's
+    // has_message check).
+    /** @type {Map<string, number>} */
+    this.locallyDeliveredMessageIds = new Map();
     // --- Peer mesh (§5.8.4): peered propagation nodes keyed by dest hash. ---
     /** @type {Map<string, LXMPeer>} */
     this.peers = new Map();
@@ -672,6 +691,33 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
+   * Whether a message with this message id has already been delivered to
+   * local handlers, no matter which path it arrived on (Python
+   * `LXMRouter.has_message`, keyed by `LXMessage.hash`).
+   * @param {Uint8Array} messageId - SHA-256 of the signed part (§5.5).
+   * @returns {boolean}
+   */
+  hasMessage(messageId) {
+    return this.locallyDeliveredMessageIds.has(toHex(messageId));
+  }
+
+  /**
+   * Records a message id as locally delivered (Python
+   * `locally_delivered_transient_ids[message.hash] = time.time()`), evicting
+   * the oldest entries past {@link DELIVERED_MESSAGE_CACHE_MAX}.
+   * @param {string} messageIdHex
+   * @private
+   */
+  _rememberDelivered(messageIdHex) {
+    this.locallyDeliveredMessageIds.set(messageIdHex, Date.now() / 1000);
+    while (this.locallyDeliveredMessageIds.size > DELIVERED_MESSAGE_CACHE_MAX) {
+      const oldest = this.locallyDeliveredMessageIds.keys().next().value;
+      if (oldest === undefined) break;
+      this.locallyDeliveredMessageIds.delete(oldest);
+    }
+  }
+
+  /**
    * Downloads messages addressed to `identity` from the configured propagation
    * node (LXMRouter.request_messages_from_propagation_node).
    *
@@ -731,9 +777,16 @@ export class LXMRouter extends EventTarget {
       const tid = await Message.transientIdFromPropagationData(lxmfData);
       const tidHex = toHex(tid);
       if (this.processedTransientIds.has(tidHex)) continue;
-      if (await this._ingestPropagationData(lxmfData)) {
-        this.processedTransientIds.set(tidHex, Date.now() / 1000);
-        receivedIds.push(tid);
+      // Dispatch — or drop as an already-delivered duplicate (a copy of a
+      // message we already received over a link / opportunistically; Python
+      // lxmf_delivery's has_message check). Either way the transient id is
+      // now processed and the copy acked to the node so it is purged: Python
+      // message_get_response acks every fetched message, duplicates
+      // included, and records locally_processed before attempting delivery.
+      const dispatched = await this._ingestPropagationData(lxmfData);
+      this.processedTransientIds.set(tidHex, Date.now() / 1000);
+      receivedIds.push(tid);
+      if (dispatched) {
         received++;
       }
     }
@@ -749,10 +802,11 @@ export class LXMRouter extends EventTarget {
   /**
    * Decrypts a synced `lxmf_data` (base form, stamp already stripped by the
    * node) addressed to this router's delivery destination and dispatches it as
-   * a `message` event. Returns false if it is not for us or undecryptable.
+   * a `message` event. Returns false if it is not for us, undecryptable, or a
+   * duplicate of a message already delivered over another path.
    *
    * @param {Uint8Array} lxmfData
-   * @returns {Promise<boolean>}
+   * @returns {Promise<boolean>} whether the message was dispatched
    * @private
    */
   async _ingestPropagationData(lxmfData) {
@@ -767,8 +821,7 @@ export class LXMRouter extends EventTarget {
     );
     if (!message) return false;
     const senderIdentity = await Destination.recall(message.sourceHash);
-    await this._dispatchMessage(message, null, senderIdentity ?? undefined);
-    return true;
+    return this._dispatchMessage(message, null, senderIdentity ?? undefined);
   }
 
   /**
@@ -1046,10 +1099,19 @@ export class LXMRouter extends EventTarget {
    * the message is still delivered, mirroring Python's
    * `lxmf_delivery` SOURCE_UNKNOWN behaviour.
    *
+   * Deduplicates by message id before dispatching (Python `lxmf_delivery`'s
+   * `has_message` check): every delivery of the same wire message — over a
+   * link, as an opportunistic packet, via a propagation-node sync, through the
+   * embedded node's local delivery, or re-ingested from a paper URI — carries
+   * the same id, so the second and later copies are dropped instead of
+   * re-dispatched (which would re-run message handlers and duplicate replies).
+   * Returns whether the message was dispatched; `false` means it was a
+   * duplicate.
+   *
    * @param {Message} message
    * @param {Uint8Array|null} linkId
    * @param {Identity} [senderIdentity] - optional pre-recalled sender identity.
-   * @returns {Promise<void>}
+   * @returns {Promise<boolean>}
    * @private
    */
   async _dispatchMessage(message, linkId, senderIdentity) {
@@ -1057,6 +1119,21 @@ export class LXMRouter extends EventTarget {
       throw new Error(
         "Invalid LXMF message signature: Cryptographic proof failed.",
       );
+    }
+
+    if (message.messageId && message.messageId.length > 0) {
+      const messageIdHex = toHex(message.messageId);
+      if (this.locallyDeliveredMessageIds.has(messageIdHex)) {
+        log(
+          "LXMF",
+          `Ignored already received message ${messageIdHex} from ${toHex(
+            message.sourceHash,
+          )}`,
+          LogLevel.DEBUG,
+        );
+        return false;
+      }
+      this._rememberDelivered(messageIdHex);
     }
 
     this.dispatchEvent(
@@ -1067,6 +1144,7 @@ export class LXMRouter extends EventTarget {
         },
       }),
     );
+    return true;
   }
 
   /**
