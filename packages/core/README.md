@@ -50,9 +50,8 @@ messages:
 
 ```js
 import { fromHex, Identity, Reticulum, toHex } from "@reticulum/core";
-// LXMF is a deep import — it isn't re-exported from the package root to keep
-// the core bundle lean for browsers.
-import { LXMessage, LXMRouter } from "@reticulum/core/src/lxmf/index.js";
+// LXMF messaging lives in its own package — install `@reticulum/lxmf`.
+import { LXMessage, LXMRouter } from "@reticulum/lxmf";
 // TCP and shared-instance interfaces are Node-only — install `@reticulum/node`.
 import {
   LocalClientInterface,
@@ -165,7 +164,7 @@ propagated one, but instead of travelling over the network it is encoded as an
 
 ```js
 import { toHex } from "@reticulum/core";
-import { LXMFConstants, LXMessage } from "@reticulum/core/src/lxmf/index.js";
+import { LXMFConstants, LXMessage } from "@reticulum/lxmf";
 
 // Build the recipient's outbound lxmf.delivery destination from a recalled
 // identity (typically learned from an announce).

@@ -37,17 +37,13 @@ export { Reticulum } from "./core/reticulum.js";
 //   import { TCPClientInterface } from "@reticulum/core/src/interfaces/tcp.js";
 // The interface registry (`src/interfaces/registry.js`) is likewise Node-only
 // (it imports every interface) and must be imported by subpath as well.
-// --- 5. LXMF (Lightweight Extensible Message Format) & rfed (Federation) ---
-// Asynchronous messaging + store-and-forward federation. These are NOT
-// re-exported here: they're sizable, server-leaning modules, and ESM eagerly
-// evaluates the whole static import graph — so re-exporting them would bloat
-// `import { Reticulum } from "@reticulum/core"` for browsers. Each module has
-// a barrel index — import it by subpath, e.g.:
-//   import { LXMessage, LXMRouter } from "@reticulum/core/src/lxmf/index.js";
-//   import { RFedNode } from "@reticulum/core/src/rfed/index.js";
-// (For the leanest graph, import a single symbol from its module file, e.g.
-// `.../rfed/node.js` — the barrel pulls in the whole module.)
-// (Wire-compatible with the Rust `rfed` reference, protocol version 1.)
+// --- 5. LXMF (messaging) & rfed (federation) ---
+// These live in their own packages since work doc #35:
+//   import { LXMRouter, LXMessage } from "@reticulum/lxmf";
+//   import { RFedNode } from "@reticulum/rfed";
+// (Both are wire-compatible with their upstream references: LXMF/LXMF.py and
+// the Rust `rfed`, protocol version 1.) The generic PoW stamp primitives they
+// build on stay in core: `src/utils/stamper.js`.
 // --- Persistence (work doc #16) ---
 // Selective persistence coordinator; a platform-neutral storage contract; and
 // a reference in-memory backend. Real backends live in companion packages
@@ -107,12 +103,14 @@ export {
   THRESHOLD_UNKNOWN as DISCOVERY_THRESHOLD_UNKNOWN,
   WORKBLOCK_EXPAND_ROUNDS as DISCOVERY_WORKBLOCK_EXPAND_ROUNDS,
 } from "./transport/discovery.js";
-export { Link } from "./transport/link.js";
+export { Link, LinkStatus } from "./transport/link.js";
 export {
   base64ToBytes,
   base64UrlToBytes,
+  bytesEqual,
   bytesToBase64,
   bytesToBase64Url,
+  concatBytes,
   fromHex,
   toHex,
 } from "./utils/encoding.js";
@@ -124,6 +122,7 @@ export {
   getLogLevel,
   LOG_LEVEL_ENV,
   LogLevel,
+  log,
   parseLogLevel,
   setLogLevel,
 } from "./utils/log.js";

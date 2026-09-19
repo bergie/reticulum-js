@@ -252,7 +252,7 @@ export class WebRTCSignaling extends EventTarget {
     this.destination.appData = this._buildAppData();
     // Bind to the transport (not just the Reticulum wrapper) so inbound
     // LINKREQUESTs and link packets addressed to this destination are
-    // delivered. Mirrors `src/lxmf/router.js` and the bundled examples.
+    // delivered. Mirrors `@reticulum/lxmf`'s router and the bundled examples.
     this.rns.transport.bindLocalDestination(this.destination);
 
     this._linkRequestListener = (event) => {

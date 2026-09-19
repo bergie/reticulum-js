@@ -9,8 +9,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import { MessageStore } from "@reticulum/core/src/lxmf/message_store.js";
-import { bytesEqual } from "@reticulum/core/src/utils/encoding.js";
+import { bytesEqual } from "@reticulum/core";
+import { MessageStore } from "@reticulum/lxmf";
 import { loadLXMFStore, saveLXMFStore } from "../../src/storage/lxmf.js";
 
 function tempDir() {

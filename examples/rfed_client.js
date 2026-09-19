@@ -23,13 +23,13 @@ import {
   Reticulum,
   toHex,
 } from "@reticulum/core";
-import { LXMessage } from "@reticulum/core/src/lxmf/index.js";
-import { RFedClient } from "@reticulum/core/src/rfed/index.js";
+import { LXMessage } from "@reticulum/lxmf";
 import {
   FileStorageAdapter,
   LocalClientInterface,
   TCPClientInterface,
 } from "@reticulum/node";
+import { RFedClient } from "@reticulum/rfed";
 
 // Default target: the "Lille Oe" rfed node's `rfed.node` destination. All
 // rfed.* destinations share one identity, so recalling this hash yields the

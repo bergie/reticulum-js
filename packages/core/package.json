@@ -25,9 +25,7 @@
   ],
   "typedocOptions": {
     "entryPoints": [
-      "src/index.js",
-      "src/lxmf/index.js",
-      "src/rfed/index.js"
+      "src/index.js"
     ],
     "entryPointStrategy": "resolve"
   },

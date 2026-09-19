@@ -19,7 +19,7 @@ Paths written as `src/...` in this section are relative to the core package.
 
 - **No Node.js imports reachable from the core `index.js`.** Files imported
   transitively via static `import` from `src/index.js` — `src/core`,
-  `src/crypto`, `src/transport`, `src/lxmf`, `src/webrtc`, and the
+  `src/crypto`, `src/transport`, `src/webrtc`, and the
   browser-safe entries under `src/interfaces` — **must not** import Node.js
   dependencies, including the `node:` core libraries (`node:net`,
   `node:http`, `node:dgram`, `node:fs`, …). This is what guarantees a browser
@@ -109,7 +109,6 @@ reticulum-js/                                 # private monorepo root (npm works
 │   │       ├── core/                         # domain logic (identity, destination, packet, resource, …)
 │   │       ├── transport/                    # mesh routing + link mgmt (link, channel, buffer,
 │   │       │                                 #   hdlc/kiss-framer, discovery, transport, router)
-│   │       ├── lxmf/                         # LXMF messaging (message, router, propagation, …)
 │   │       ├── webrtc/                       # WebRTC transport signaling (DI-first)
 │   │       ├── interfaces/                   # browser-safe I/O ONLY
 │   │       │   ├── base.js                   # Interface base class
@@ -118,8 +117,12 @@ reticulum-js/                                 # private monorepo root (npm works
 │   │       │   ├── rnode-webserial.js        # RNodeWebSerialInterface (navigator.serial backend)
 │   │       │   ├── websocket.js              # WebSocketClientInterface
 │   │       │   └── webrtc.js                 # WebRTCInterface (wraps an RTCDataChannel)
-│   │       ├── utils/                        # encoding, log, msgpack
+│   │       ├── utils/                        # encoding, log, msgpack, stamper (PoW stamps)
 │   │       └── index.js                      # public API exports
+│   ├── lxmf/                                 # LXMF messaging (message, router, propagation, …)
+│   │   └── src/                              #   — @reticulum/lxmf, depends on core
+│   ├── rfed/                                 # rfed federation (node, client, channels, blobs, sync)
+│   │   └── src/                              #   — @reticulum/rfed, depends on core + lxmf
 │   ├── node/                                 # Node-builtin interfaces + registry
 │   │   └── src/
 │   │       ├── interfaces/                   # auto, tcp, local_client, http_server, rnode-serial, registry

@@ -1,0 +1,19 @@
+{
+  "name": "@reticulum/lxmf",
+  "version": "0.7.2",
+  "license": "EUPL-1.2",
+  "exports": {
+    ".": "./src/index.js",
+    "./src/message_store.js": "./src/message_store.js"
+  },
+  "publish": {
+    "include": [
+      "src/",
+      "README.md",
+      "CHANGELOG.md",
+      "package.json",
+      "jsr.json",
+      "types/"
+    ]
+  }
+}

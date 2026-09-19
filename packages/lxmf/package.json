@@ -1,0 +1,45 @@
+{
+  "name": "@reticulum/lxmf",
+  "version": "0.7.2",
+  "description": "LXMF (Lightweight Extensible Message Format) for reticulum-js — one-to-one messages, router, paper messaging, and propagation nodes",
+  "keywords": [
+    "reticulum",
+    "rns",
+    "mesh",
+    "lxmf",
+    "messaging"
+  ],
+  "license": "EUPL-1.2",
+  "author": "Henri Bergius <henri.bergie@iki.fi>",
+  "homepage": "https://reticulum.js.org/",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/bergie/reticulum-js.git"
+  },
+  "rngit": "rns://adafb3153efd4d96d532568a5208b3b5/reticulum/reticulum-js",
+  "type": "module",
+  "main": "src/index.js",
+  "types": "types/src/index.d.ts",
+  "files": [
+    "src",
+    "types",
+    "CHANGELOG.md"
+  ],
+  "typedocOptions": {
+    "entryPoints": [
+      "src/index.js"
+    ],
+    "entryPointStrategy": "resolve"
+  },
+  "scripts": {
+    "test": "node --test --test-force-exit --test-timeout 5000 test/*.js test/**/*.js",
+    "test:deno": "deno test --allow-all --no-check test/*.js test/**/*.js",
+    "test:bun": "bun test",
+    "lint": "npx @biomejs/biome check --use-editorconfig=true src/",
+    "types": "tsc && node scripts/fix-dts.mjs",
+    "preversion": "npm run types"
+  },
+  "dependencies": {
+    "@reticulum/core": "^0.7.2"
+  }
+}

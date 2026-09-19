@@ -1,7 +1,11 @@
 /**
- * @file keys.js
- * @description X25519 / Ed25519 generation and parsing
+ * @module @reticulum/core/src/crypto/keys.js
+ * @description X25519 / Ed25519 generation and parsing — Web Crypto
+ *   import/export helpers for raw keys (the operations SubtleCrypto supports;
+ *   used by key sealing and rfed channel derivation).
  */
+
+/* @ts-self-types="../../types/src/crypto/keys.d.ts" */
 
 /**
  * An asymmetric key pair (private + public CryptoKey).

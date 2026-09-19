@@ -57,7 +57,11 @@ import { compileChangelog } from "./compile-changelog.mjs";
 const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Internal workspace deps whose `"^x"` range is rewritten on a version bump. */
-const INTERNAL_PACKAGES = ["@reticulum/core"];
+const INTERNAL_PACKAGES = [
+  "@reticulum/core",
+  "@reticulum/lxmf",
+  "@reticulum/rfed",
+];
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -234,6 +238,7 @@ export function runRelease({
   const metas = packageMetas(root);
   if (metas.length === 0)
     throw new Error(`No packages found under ${join(root, "packages")}`);
+  const internalPackages = INTERNAL_PACKAGES;
 
   const versions = new Set(metas.map((m) => m.json.version));
   if (versions.size !== 1) {
@@ -312,15 +317,20 @@ export function runRelease({
       manifests.push({ path: m.jsrPath, json: m.jsrJson, isJsr: true });
     for (const { path, json, isJsr } of manifests) {
       const after = applyVersionBump(json, version, isJsr ? [] : undefined);
-      const depBefore = json.dependencies?.["@reticulum/core"];
-      const depAfter = after.dependencies?.["@reticulum/core"];
-      const depNote =
-        depBefore && depAfter && depBefore !== depAfter
-          ? `  (@reticulum/core dep ${depBefore} -> ${depAfter})`
-          : "";
+      const depNotes = Object.entries(json.dependencies ?? {})
+        .filter(
+          ([dep, before]) =>
+            internalPackages.includes(dep) &&
+            /** @type {string} */ (before) !== after.dependencies?.[dep],
+        )
+        .map(
+          ([dep, before]) =>
+            `  (${dep} dep ${/** @type {string} */ (before)} -> ${after.dependencies?.[dep]})`,
+        )
+        .join("");
       const label = isJsr ? " jsr.json" : "";
       console.log(
-        `  ${m.name}${label}: ${json.version} -> ${version}${depNote}`,
+        `  ${m.name}${label}: ${json.version} -> ${version}${depNotes}`,
       );
       if (!dryRun) writeJSON(path, after);
     }

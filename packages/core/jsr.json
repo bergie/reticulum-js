@@ -11,14 +11,13 @@
     "./src/interfaces/rnode.js": "./src/interfaces/rnode.js",
     "./src/interfaces/webrtc.js": "./src/interfaces/webrtc.js",
     "./src/interfaces/websocket.js": "./src/interfaces/websocket.js",
-    "./src/lxmf/index.js": "./src/lxmf/index.js",
-    "./src/lxmf/message_store.js": "./src/lxmf/message_store.js",
-    "./src/rfed/index.js": "./src/rfed/index.js",
     "./src/transport/hdlc-framer.js": "./src/transport/hdlc-framer.js",
     "./src/transport/kiss-framer.js": "./src/transport/kiss-framer.js",
     "./src/transport/transport.js": "./src/transport/transport.js",
     "./src/utils/encoding.js": "./src/utils/encoding.js",
     "./src/utils/log.js": "./src/utils/log.js",
+    "./src/utils/stamper.js": "./src/utils/stamper.js",
+    "./src/crypto/keys.js": "./src/crypto/keys.js",
     "./src/webrtc/signaling.js": "./src/webrtc/signaling.js"
   },
   "publish": {

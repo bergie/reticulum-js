@@ -23,16 +23,16 @@
  */
 
 import { Identity } from "../core/identity.js";
+import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
+import { LogLevel, log } from "../utils/log.js";
+import { MicroMsgPack } from "../utils/msgpack.js";
 import {
   generateStamp,
   STAMP_SIZE,
   stampValid,
   stampValue,
   stampWorkblock,
-} from "../lxmf/stamper.js";
-import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
-import { LogLevel, log } from "../utils/log.js";
-import { MicroMsgPack } from "../utils/msgpack.js";
+} from "../utils/stamper.js";
 
 // ---------------------------------------------------------------------
 // Constants (RNS/Discovery.py)

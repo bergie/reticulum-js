@@ -61,8 +61,8 @@
  */
 import { parseArgs } from "node:util";
 import { fromHex, Identity, Reticulum, toHex } from "@reticulum/core";
-import { LXMRouter } from "@reticulum/core/src/lxmf/index.js";
-import { RFedNode } from "@reticulum/core/src/rfed/index.js";
+import { LXMRouter } from "@reticulum/lxmf";
+import { RFedNode } from "@reticulum/rfed";
 import {
   AutoInterface,
   FileStorageAdapter,

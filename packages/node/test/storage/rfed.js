@@ -11,14 +11,13 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import { Identity, toHex } from "@reticulum/core";
+import { bytesEqual, Identity, toHex } from "@reticulum/core";
 import {
   BlobStore,
   DeferredQueue,
   NotifyRegistry,
   SubscriptionTable,
-} from "@reticulum/core/src/rfed/index.js";
-import { bytesEqual } from "@reticulum/core/src/utils/encoding.js";
+} from "@reticulum/rfed";
 import { loadRFedStores, saveRFedStores } from "../../src/storage/rfed.js";
 
 /** Creates an isolated temp dir and returns it plus a cleanup fn. */

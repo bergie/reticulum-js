@@ -18,7 +18,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MsgPack } from "@reticulum/core";
-import { MessageStore } from "@reticulum/core/src/lxmf/message_store.js";
+import { MessageStore } from "@reticulum/lxmf";
 
 const STORE_FILE = "propagation_messages.rmp";
 

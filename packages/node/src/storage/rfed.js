@@ -30,14 +30,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { MsgPack } from "@reticulum/core";
+import { fromHex, MsgPack, toHex } from "@reticulum/core";
 import {
   BlobStore,
   DeferredQueue,
   NotifyRegistry,
   SubscriptionTable,
-} from "@reticulum/core/src/rfed/index.js";
-import { fromHex, toHex } from "@reticulum/core/src/utils/encoding.js";
+} from "@reticulum/rfed";
 
 /**
  * Persists the four rfed stores to disk. The `blobs/` tree is rewritten from
