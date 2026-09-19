@@ -16,7 +16,7 @@ We aim for modern standard JavaScript feel. This means consistent use of Promise
 
 At this stage there are no external users for this library, and so API changes are totally OK to do. It is important to keep the API simple and disambiguated. Backwards compatibility is not necessary, just make sure to adapt tests and type definitions.
 
-It is also important to use same terms and concepts as in the Python implementation to maintain familiarity. On high level we should expose roughly the same objects and methods as Python does (allowing for "JavaScriptization" of them). Naming should be changed from Python's `snake_case` to JavaScript's `camelCase` convention.
+It is also important to use same terms and concepts as in the Python and C++ implementations to maintain familiarity. On high level we should expose roughly similar objects and methods as they do (allowing for "JavaScriptization"). Naming should be changed from Python's `snake_case` to JavaScript's `camelCase` convention.
 
 ## Type definitions
 
