@@ -18,27 +18,15 @@
  * transport routes Single-destination packets and whose known-destinations
  * cache has the node's identity recalled (e.g. after hearing its announce).
  *
- * === Design rationale: no link support for publish ===
+ * === Publish delivery: DATA or link Resource ===
  *
- * The publish endpoint (`rfed.channel.publish`) does not use Resource transfers
- * over links, even for payloads exceeding the MTU. This is intentional and matches
- * the Rust reference implementation:
- *
- *   - **Spec compatibility**: Rust `rfed` is the canonical RFed implementation and
- *     does not support links on publish. Allowing links would create interop issues
- *     where JS clients work with JS nodes but fail with Rust nodes.
- *
- *   - **Fire-and-forget semantics**: Publish is designed for one-way delivery where
- *     the client sends and forgets. Links add handshake complexity for no benefit.
- *
- *   - **Intentional MTU limit**: RFed is optimized for small messages (channel updates,
- *     state sync, notifications) within a single packet (~500 bytes after overhead).
- *     For larger transfers (LXMF messages, files, etc.), use a direct link outside the
- *     RFed protocol.
- *
- *   - **Forward compatibility**: If Rust adds link support in the future, the JS
- *     client can be updated to match. The direction must always be Rust spec → JS
- *     implementation, never the reverse.
+ * Payloads up to the link MDU (`PUBLISH_DATA_MAX`, 431 B at the default
+ * MTU) go out as a single fire-and-forget DATA packet — the common case
+ * for channel updates and state sync. Anything larger would fragment into
+ * packets the node drops, so it is instead sent as a Resource over a link
+ * to the publish destination. The node ingests both paths identically,
+ * matching the reference implementation (whose publish endpoint accepts
+ * both single DATA packets and oversized link Resources).
  */
 
 import {
@@ -49,6 +37,7 @@ import {
   MsgPack as MicroMsgPack,
   Packet,
   PacketType,
+  Resource,
   toHex,
 } from "@reticulum/core";
 import { LXMessage as Message } from "@reticulum/lxmf";
@@ -71,6 +60,13 @@ const PULL_PATH = "/rfed/pull";
 const NOTIFY_REGISTER_PATH = "/rfed/notify/register";
 const NOTIFY_UNREGISTER_PATH = "/rfed/notify/unregister";
 const NOTIFY_CLEAR_PATH = "/rfed/notify/clear";
+
+/**
+ * Largest publish payload sent as a single fire-and-forget DATA packet —
+ * the link MDU (431 B at the default 500 B MTU). Anything larger is sent
+ * as a Resource over a link to the publish destination.
+ */
+const PUBLISH_DATA_MAX = 431;
 
 /** Modern split rfed destination names (SPEC §2). Share the node identity. */
 const CHANNEL_SUBSCRIBE_NAME = "rfed.channel.subscribe";
@@ -396,8 +392,14 @@ export class RFedClient {
 
   /**
    * Sends a prepared rfed SEND payload to the node's `rfed.channel.publish`
-   * destination as a fire-and-forget DATA packet. Shared by {@link publish}
-   * and {@link publishRaw}.
+   * destination. Shared by {@link publish} and {@link publishRaw}.
+   *
+   * Payloads up to the link MDU go out as a single fire-and-forget DATA
+   * packet. Anything larger would be fragmented into packets the node drops,
+   * so it is instead sent as a Resource over a link to the publish
+   * destination — the node ingests both paths identically. This mirrors the
+   * reference: a DATA-only publish endpoint silently loses any publish
+   * larger than the link MDU (~431 B).
    *
    * @param {Uint8Array} nodeHash
    * @param {Uint8Array} rfedPayload
@@ -412,6 +414,20 @@ export class RFedClient {
       nodeIdentity,
       this.rns,
     );
+    if (rfedPayload.length > PUBLISH_DATA_MAX) {
+      const link = await dest.createLink();
+      const resource = new Resource({
+        data: rfedPayload,
+        link,
+        bz2: this.rns.compressionProvider || undefined,
+      });
+      await resource.advertise();
+      // advertise() only sends the advertisement; the node pulls the payload
+      // via RESOURCE_REQ. Wait for the transfer to COMPLETE before reporting
+      // success — otherwise the message may never be stored.
+      await resource.whenComplete();
+      return;
+    }
     const packet = new Packet({
       packetType: PacketType.DATA,
       contextFlag: true,

@@ -393,6 +393,33 @@ describe("RFedNode — deferred delivery", () => {
       /rfed pull error code 0xf0/,
     );
   });
+
+  // The reference node accepts SENDs larger than the link MDU (~431 B) as
+  // Resource transfers on a link to the publish destination; a DATA-only
+  // publish endpoint silently drops them.
+  test("oversized publish: payload beyond the DATA MDU arrives as a link Resource and is ingested", async () => {
+    const { node, nodeHash, client, clientDeliveryHash } = await fixture();
+
+    await client.subscribe(nodeHash, "public.oversized");
+    const received = [];
+    await client.listen((d) => received.push(d));
+    await waitFor(() => node.isOnline(clientDeliveryHash));
+
+    // Well over the 431-byte DATA MDU, forcing the client onto the
+    // link + Resource path.
+    const body = "x".repeat(1200);
+    await client.publish(
+      nodeHash,
+      "public.oversized",
+      new Message({ content: body }),
+    );
+
+    const decoded = await waitFor(() => received[0], 15000);
+    assert.strictEqual(decoded.message.content, body);
+    assert.strictEqual(decoded.signatureValid, true);
+    // The oversized blob was stored and is served to sync peers.
+    assert.strictEqual(node.blobStore.allMessageIds().length, 1);
+  });
 });
 
 describe("RFedNode — stamp enforcement", () => {

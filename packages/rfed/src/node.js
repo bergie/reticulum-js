@@ -22,23 +22,12 @@
  *
  * === Link support note ===
  *
- * The publish destination (`rfed.channel.publish`) does NOT accept link requests,
- * even though this JavaScript implementation technically could. This is an intentional
- * design decision for spec compatibility:
- *
- *   - The Rust `rfed` reference implementation (the canonical spec) does not support
- *     links on the publish endpoint.
- *   - Publish is fire-and-forget: clients send a single DATA packet and never wait
- *     for a response. Links add no value to this pattern.
- *   - Allowing links would create a fragmentation point where JS clients could send
- *     payloads via Resource (large messages) that Rust nodes would silently drop.
- *   - The MTU limit (~500 bytes after headers/encryption) is intentional: RFed is
- *     designed for small real-time messages (channel updates, state sync). For large
- *     transfers, use a direct link outside RFed (as LXMF does).
- *
- * If Rust adds link support in the future, this JavaScript implementation can easily
- * add it for compatibility, but the direction must be: Rust spec → JS implementation,
- * never the reverse.
+ * The publish destination (`rfed.channel.publish`) accepts link requests in
+ * addition to fire-and-forget DATA SENDs. Payloads at or under the link MDU
+ * (431 B) arrive as a single DATA packet; anything larger arrives as a
+ * Resource transfer — both land in the same `_handleSend` ingest, matching
+ * the reference node (a DATA-only publish endpoint silently drops any
+ * publish larger than the link MDU).
  */
 
 import {
@@ -401,6 +390,46 @@ export class RFedNode {
         );
       });
     });
+    // A publish payload larger than the link MDU (~431 B) arrives as a
+    // Resource on an established link instead of a single DATA packet —
+    // both paths land in the same `_handleSend` ingest, matching the
+    // reference node (a DATA-only publish endpoint silently drops any
+    // larger publish).
+    publishDest.addEventListener(
+      "link_request",
+      async (/** @type {any} */ event) => {
+        try {
+          const link = await publishDest.acceptLink(event.detail.packet);
+          link.bz2 = this.rns.compressionProvider || undefined;
+          link.addEventListener("resource", (/** @type {any} */ resEvent) => {
+            const resource = resEvent.detail.resource;
+            resource
+              .whenComplete()
+              .then(async () => {
+                log(
+                  "RFedNode",
+                  `SEND arrived as resource (${resource.data?.length} bytes)`,
+                  LogLevel.DEBUG,
+                );
+                await this._handleSend(resource.data);
+              })
+              .catch((/** @type {Error} */ err) =>
+                log(
+                  "RFedNode",
+                  `SEND resource failed: ${String(err).slice(0, 160)}`,
+                  LogLevel.WARNING,
+                ),
+              );
+          });
+        } catch (err) {
+          log(
+            "RFedNode",
+            `publish link accept failed: ${String(err).slice(0, 160)}`,
+            LogLevel.WARNING,
+          );
+        }
+      },
+    );
     this.rns.transport.bindLocalDestination(publishDest);
     this._publishDest = publishDest;
 

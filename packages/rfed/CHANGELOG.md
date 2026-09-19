@@ -11,6 +11,14 @@
   instead of silently returning an empty result, so callers can re-identify
   on a fresh link.
 
+### Added
+- Link + Resource support for channel publishes, matching the reference
+  node. `rfed.channel.publish` now accepts link requests: payloads at or
+  under the link MDU (431 B) still arrive as a single fire-and-forget DATA
+  packet, and anything larger is sent by `RFedClient` as a Resource over a
+  link and ingested identically. Previously an oversized publish was
+  fragmented into packets the node silently dropped.
+
 ## [0.8.1] - 2026-09-19
 
 ## [0.8.0] - 2026-09-19
