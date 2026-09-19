@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/rfed",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "rfed (Reticulum Federation) for reticulum-js — federated pub/sub channels, blobs, and node/client sync over Reticulum",
   "keywords": [
     "reticulum",
@@ -40,7 +40,7 @@
     "preversion": "npm run types"
   },
   "dependencies": {
-    "@reticulum/core": "^0.8.1",
-    "@reticulum/lxmf": "^0.8.1"
+    "@reticulum/core": "^0.8.2",
+    "@reticulum/lxmf": "^0.8.2"
   }
 }

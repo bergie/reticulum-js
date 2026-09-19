@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.8.2] - 2026-09-19
 ### Changed
 - `RFedNode`'s `/rfed/pull` handler now answers an unidentified caller with
   the bare msgpack integer `0xF0` (`ERROR_NO_IDENTITY`) and a malformed

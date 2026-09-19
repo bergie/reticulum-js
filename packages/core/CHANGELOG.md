@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.8.2] - 2026-09-19
 ### Changed
 - `Destination.knownDestinations` entries are now named `KnownDestination`
   objects (`{ timestamp, packetHash, publicKey, appData }`) instead of
