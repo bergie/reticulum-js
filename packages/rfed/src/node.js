@@ -114,6 +114,15 @@ const NOTIFY_REGISTER_PATH = "/rfed/notify/register";
 const NOTIFY_UNREGISTER_PATH = "/rfed/notify/unregister";
 const NOTIFY_CLEAR_PATH = "/rfed/notify/clear";
 
+/**
+ * `/rfed/pull` error codes, matching the reference rfed's pull behavior.
+ * PULL authenticates by link identity, so an unidentified caller must get an
+ * explicit refusal instead of silence or an empty page.
+ */
+const PULL_ERROR_NO_IDENTITY = 0xf0;
+/** Malformed pull payload — reference code 0xF4. */
+const PULL_ERROR_INVALID_DATA = 0xf4;
+
 /** rfed protocol version advertised in the `rfed.node` announce app_data. */
 const PROTOCOL_VERSION = 1;
 /** Default `/rfed/pull` page size (SPEC §2: 25). */
@@ -894,14 +903,20 @@ export class RFedNode {
    * `/rfed/pull` — drains one page of the caller's deferred queue for the
    * requested channel. Caller is authenticated by the identified link.
    *
+   * An unidentified caller gets `ERROR_NO_IDENTITY` (0xF0) and a malformed
+   * payload gets `ERROR_INVALID_DATA` (0xF4) — bare msgpack integers, exactly
+   * as the reference rfed emits them. Never answer silence or a fabricated
+   * empty page: the client distinguishes refusal from success by msgpack
+   * type.
+   *
    * @param {any} data - `bin(16)` channel hash.
    * @param {Identity|null} caller
-   * @returns {Promise<[Array<[Uint8Array, Uint8Array]>, boolean]>}
+   * @returns {Promise<[Array<[Uint8Array, Uint8Array]>, boolean]|number>}
    */
   async _handlePull(data, caller) {
-    if (!caller) return [[], false];
+    if (!caller) return PULL_ERROR_NO_IDENTITY;
     const channelHash = this._decodeChannelHash(data);
-    if (!channelHash) return [[], false];
+    if (!channelHash) return PULL_ERROR_INVALID_DATA;
 
     const page = this.deferred.drainChannelBatch(
       caller.identityHash,

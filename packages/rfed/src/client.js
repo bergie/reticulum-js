@@ -431,9 +431,16 @@ export class RFedClient {
    * the channel hash. The response is `[[[channel_hash, blob], …],
    * more_pending]`; repeat while `morePending` is true to drain the queue.
    *
+   * A numeric response is a peer error code: `0xF0` ERROR_NO_IDENTITY
+   * (the node could not authenticate the link — the identify raced the
+   * request), `0xF4` ERROR_INVALID_DATA. Throws so the caller can
+   * re-identify on a fresh link instead of mistaking the refusal for an
+   * empty queue.
+   *
    * @param {Uint8Array} nodeHash
    * @param {string} channelName
    * @returns {Promise<{ items: Array<{ channelHash: Uint8Array, blob: Uint8Array }>, morePending: boolean }>}
+   * @throws {Error} When the node answers with a pull error code.
    */
   async pull(nodeHash, channelName) {
     const { channelHash } = await this._channel(channelName);
@@ -449,6 +456,9 @@ export class RFedClient {
     await link.identify(this.identity);
     const response = await link.request(PULL_PATH, channelHash);
 
+    if (typeof response === "number" && response >= 0xf0) {
+      throw new Error(`rfed pull error code 0x${response.toString(16)}`);
+    }
     if (!Array.isArray(response) || response.length < 2) {
       return { items: [], morePending: false };
     }

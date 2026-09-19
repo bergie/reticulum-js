@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `RFedNode`'s `/rfed/pull` handler now answers an unidentified caller with
+  the bare msgpack integer `0xF0` (`ERROR_NO_IDENTITY`) and a malformed
+  payload with `0xF4` (`ERROR_INVALID_DATA`), matching the reference rfed.
+  Previously both returned an empty page `([], false)` — a client could not
+  distinguish refusal from an empty deferred queue.
+- `RFedClient.pull()` now throws on a numeric (≥ `0xF0`) node response
+  instead of silently returning an empty result, so callers can re-identify
+  on a fresh link.
 
 ## [0.8.1] - 2026-09-19
 

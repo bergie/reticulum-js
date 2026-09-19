@@ -350,6 +350,49 @@ describe("RFedNode — deferred delivery", () => {
       false,
     );
   });
+
+  // The reference rfed answers an unidentified /rfed/pull caller with the
+  // bare msgpack integer 0xF0 (ERROR_NO_IDENTITY) and a malformed payload
+  // with 0xF4 (ERROR_INVALID_DATA). Zero bytes / empty pages are never a
+  // valid answer — the client distinguishes refusal from success by msgpack
+  // type.
+  test("pull: unidentified caller gets ERROR_NO_IDENTITY (0xF0), never an empty page", async () => {
+    const { node } = await fixture();
+    const channel = await deriveChannel("public.pullerr");
+
+    const response = await node._handlePull(channel.channelHash, null);
+    assert.strictEqual(response, 0xf0);
+    // The error must encode as the bare msgpack integer [0xcc, 0xf0] the
+    // reference emits.
+    const encoded = MicroMsgPack.encode(response);
+    assert.deepStrictEqual(Array.from(encoded), [0xcc, 0xf0]);
+  });
+
+  test("pull: malformed payload gets ERROR_INVALID_DATA (0xF4), never an empty page", async () => {
+    const { node } = await fixture();
+    const caller = await Identity.generate();
+
+    // Not a bin(16) channel hash — garbage of the wrong length.
+    const response = await node._handlePull(rnd(8), caller);
+    assert.strictEqual(response, 0xf4);
+    const encoded = MicroMsgPack.encode(response);
+    assert.deepStrictEqual(Array.from(encoded), [0xcc, 0xf4]);
+  });
+
+  test("pull: client throws on a node error code instead of seeing an empty queue", async () => {
+    const { node, nodeHash, client } = await fixture();
+
+    // Make the node refuse every pull — same shape the reference emits when
+    // the identify races the request, so the full client → link → msgpack
+    // → handler → response path is exercised on the wire.
+    node._handlePull = async () => 0xf0;
+
+    await client.subscribe(nodeHash, "public.refused");
+    await assert.rejects(
+      () => client.pull(nodeHash, "public.refused"),
+      /rfed pull error code 0xf0/,
+    );
+  });
 });
 
 describe("RFedNode — stamp enforcement", () => {
