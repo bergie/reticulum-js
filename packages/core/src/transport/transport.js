@@ -322,14 +322,6 @@ export class TransportCore extends EventTarget {
       `Processing packet type ${getEnumName(PacketType, packet.packetType)} (ctx ${getEnumName(ContextType, packet.contextByte)}) for ${toHex(packet.destinationHash)}`,
     );
 
-    // Force a dump if it's a LINKREQUEST so we can see why it's not triggering
-    if (packet.packetType === PacketType.LINKREQUEST) {
-      log(
-        "Transport",
-        `[!] CRITICAL: Received Type 2 request for ${toHex(packet.destinationHash)}`,
-      );
-    }
-
     // Destination hash hex, reused by several branches below.
     const destHex = toHex(packet.destinationHash);
 
@@ -377,9 +369,8 @@ export class TransportCore extends EventTarget {
       return;
     }
 
-    // 2. CHECK IF THIS PACKET IS FOR US
-
-    // 3. If it's for a known local destination, route it there
+    // 2. Check whether the packet is for us: a registered local destination
+    // or an active link receives it locally.
     if (this.localDestinations.has(destHex)) {
       log("Transport", `Packet to local destination ${destHex}`);
       const destination = this.localDestinations.get(destHex);
@@ -387,7 +378,7 @@ export class TransportCore extends EventTarget {
       return; // STOP! Success.
     }
 
-    // 4. If it's for an active link, route it there
+    // 3. If it's for an active link, route it there
     if (this.activeLinks.has(destHex)) {
       log("Transport", `Packet to LINK ${destHex}`);
       const link = this.activeLinks.get(destHex);
@@ -395,13 +386,18 @@ export class TransportCore extends EventTarget {
       return; // STOP! Success.
     }
 
-    // 5. IF WE REACH HERE: It's not for us.
-    // If you are acting as a router/node, you'd forward it.
-    // But since you are a bot, JUST DROP IT.
-    log("ROUTER", `Packet for ${destHex} is not for us. Dropping.`);
+    // 4. Not addressed to us and no announce/proof/path-request handler
+    // claimed it. This node is a leaf — it has no transport-node forwarding
+    // path table for third parties — so the packet is dropped.
+    log(
+      "ROUTER",
+      `Packet for ${destHex} is not for us. Dropping.`,
+      LogLevel.DEBUG,
+    );
     log(
       "ROUTER",
       `Registered local destinations: ${Array.from(this.localDestinations.keys()).join(", ")}`,
+      LogLevel.DEBUG,
     );
   }
 
@@ -486,11 +482,7 @@ export class TransportCore extends EventTarget {
     // signature is otherwise valid. (In practice this requires a 2^128 hash
     // collision, so it should never fire — but the defense is non-optional.)
     const existing = Destination.knownDestinations.get(destHex);
-    if (
-      existing &&
-      existing[2] &&
-      !bytesEqual(existing[2], identity.publicKey)
-    ) {
+    if (existing && !bytesEqual(existing.publicKey, identity.publicKey)) {
       log(
         "Transport",
         `CRITICAL: public-key collision for ${destHex} — rejecting announce`,

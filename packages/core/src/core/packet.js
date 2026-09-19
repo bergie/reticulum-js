@@ -137,30 +137,24 @@ export class Packet {
 
   /**
    * Returns the canonical bytes used to compute the packet hash
-   * (flags byte followed by the destination/context/payload portion).
+   * (flags byte followed by the destination/context/payload portion),
+   * matching `RNS.Packet.get_hashable_part` and microReticulum's
+   * `Packet::get_hashable_part`.
+   *
+   * The masked flags byte (low nibble) is prefixed to the raw packet with the
+   * flags and hops bytes skipped — and, for HEADER_2, the 16-byte transport_id
+   * as well (it is rewritten per hop, so it must not participate in the hash):
+   *   HEADER_1: (flags & 0x0F) ‖ raw[2:]
+   *   HEADER_2: (flags & 0x0F) ‖ raw[18:]
+   *
    * @returns {Uint8Array<ArrayBuffer>}
    */
   getHashablePart() {
     if (!this.raw || this.raw.length === 0) {
       this.raw = this.serialize();
     }
-    // 1. Get flags byte and mask it (0x0F)
     const flags = this.raw[0] & 0x0f;
-
-    // 2. Determine offset based on header_type
-    // HEADER_2 (Type 2) is 32 bytes (16 dest + 16 transport)
-    // HEADER_1 (Type 1) is 16 bytes (16 dest)
-    // Note: The indexing logic depends on your framing.
-    // In Python, it looks like it assumes a specific starting point.
-
-    let sliceOffset;
-    if (this.headerType === HeaderType.HEADER_2) {
-      sliceOffset = 18;
-    } else {
-      // HEADER_1: 2 bytes (flags/hops) + 16 bytes dest = 18?
-      // Your Python snippet uses [2:], let's follow that.
-      sliceOffset = 2;
-    }
+    const sliceOffset = this.headerType === HeaderType.HEADER_2 ? 18 : 2;
 
     const payloadPart = this.raw.slice(sliceOffset);
 
@@ -272,7 +266,7 @@ export class Packet {
     const flags = data[0];
     const hops = data[1];
 
-    // Bitwise extraction matching Python logic
+    // Bit-field extraction from the flags byte (§2).
     const isHeader2 = (flags & 0x40) !== 0;
     const headerType = isHeader2 ? HeaderType.HEADER_2 : HeaderType.HEADER_1;
     const contextFlag = (flags & 0x20) !== 0;

@@ -1,6 +1,24 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `Destination.knownDestinations` entries are now named `KnownDestination`
+  objects (`{ timestamp, packetHash, publicKey, appData }`) instead of
+  positional array tuples — matching microReticulum's
+  `Persistence::IdentityEntry` structure. `Destination.remember` /
+  `Destination.recall`, the transport announce handler and the `Persistor`
+  were adapted. Persisted identity records now encode as the 4-element
+  msgpack array `[timestamp, packet_hash, public_key, app_data]` (the
+  microReticulum `IdentityEntry` codec form); a trailing fifth element in
+  previously-written records is ignored on load.
+- Removed leftover conversational/debug comments and logging (a
+  LINKREQUEST "CRITICAL dump" log, an announce payload-size debug log,
+  "you are a bot" routing comments) and documented the packet-hash slicing
+  (`getHashablePart`) against the spec instead.
+- An announce payload that is too small to be a valid body (now a thrown
+  error instead of a logged warning), and `Destination.remember` now compares
+  cached fields by value (the previous reference comparison of `appData`
+  always reported a change).
 
 ## [0.8.1] - 2026-09-19
 

@@ -9,6 +9,16 @@ import { Identity } from "../../src/core/identity.js";
 import { ContextType, DestType, PacketType } from "../../src/core/packet.js";
 import { bytesEqual } from "../../src/utils/encoding.js";
 
+/** Minimal knownDestinations entry for map-membership tests. */
+function identityEntry() {
+  return {
+    timestamp: Date.now() / 1000,
+    packetHash: new Uint8Array(16),
+    publicKey: new Uint8Array(64),
+    appData: null,
+  };
+}
+
 test("Destination SINGLE/PLAIN/GROUP hash computation", async () => {
   const identity = await Identity.generate();
 
@@ -244,8 +254,8 @@ test("Destination.cleanKnownRatchets drops expired and unknown-destination entri
   const keepHash = "11".repeat(16);
   const expiredHash = "22".repeat(16);
   const unknownHash = "33".repeat(16);
-  knownDestinations.set(keepHash, true);
-  knownDestinations.set(expiredHash, true);
+  knownDestinations.set(keepHash, identityEntry());
+  knownDestinations.set(expiredHash, identityEntry());
   knownRatchets.set(keepHash, {
     ratchet: new Uint8Array(32),
     received: Date.now(),

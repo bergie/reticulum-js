@@ -10,9 +10,9 @@
  * purely additive and selective.
  *
  * Values are msgpack-encoded `Uint8Array`; the {@link StorageAdapter} backend
- * stores them opaquely. The `known_destinations` tuple layout matches Python
- * (`[time, packet_hash, public_key, app_data, 0]`, `RNS/Identity.py:107`) so a
- * persisted blob is interchangeable.
+ * stores them opaquely. Each identity record encodes as the 4-element msgpack
+ * array `[timestamp, packet_hash, public_key, app_data]` — the same layout as
+ * microReticulum's `Persistence::IdentityEntry` codec.
  */
 
 import { Destination } from "../core/destination.js";
@@ -34,31 +34,38 @@ function toU8(v) {
 // --- (de)serializers: core owns msgpack; the adapter stores opaque bytes ------
 
 /**
- * Encodes a `knownDestinations` entry `[time, packetHash, publicKey, appData, flag]`.
- * @param {any[]} entry
+ * Encodes a {@link KnownDestination} as the 4-element msgpack array
+ * `[timestamp, packetHash, publicKey, appData]`.
+ * @param {import("../core/destination.js").KnownDestination} entry
  * @returns {Uint8Array}
  */
 function encodeIdentityEntry(entry) {
   return MicroMsgPack.encode([
-    entry[0],
-    toU8(entry[1]),
-    toU8(entry[2]),
-    entry[3] ? toU8(entry[3]) : null,
-    entry[4] ?? 0,
+    entry.timestamp,
+    toU8(entry.packetHash),
+    toU8(entry.publicKey),
+    entry.appData ? toU8(entry.appData) : null,
   ]);
 }
 
 /**
  * @param {Uint8Array} bytes
- * @returns {any[]} `[time, packetHash, publicKey, appData|null, flag]`
- * @throws when the bytes do not decode to a 5-tuple (so {@link Persistor#load}
- *   can skip corrupt records).
+ * @returns {import("../core/destination.js").KnownDestination}
+ * @throws when the bytes do not decode to at least a 4-element array (so
+ *   {@link Persistor#load} can skip corrupt records). A trailing fifth
+ *   element — Python's per-entry last-use timestamp, which this port never
+ *   tracked — is ignored if present.
  */
 function decodeIdentityEntry(bytes) {
   const e = MicroMsgPack.decode(bytes);
   if (!Array.isArray(e) || e.length < 4)
-    throw new Error("identity entry is not a tuple");
-  return [e[0], toU8(e[1]), toU8(e[2]), e[3] ? toU8(e[3]) : null, e[4] ?? 0];
+    throw new Error("identity entry is not a record array");
+  return {
+    timestamp: typeof e[0] === "number" ? e[0] : 0,
+    packetHash: toU8(e[1]),
+    publicKey: toU8(e[2]),
+    appData: e[3] ? toU8(e[3]) : null,
+  };
 }
 
 /**
@@ -167,7 +174,7 @@ function decodeRoute(bytes) {
  * @typedef {Object} PersistorOptions
  * @property {import("./storage.js").StorageAdapter|null} [adapter] Backend, or
  *   null to disable persistence (all methods become no-ops).
- * @property {Map<string, any[]>} [knownDestinations] Defaults to
+ * @property {Map<string, import("../core/destination.js").KnownDestination>} [knownDestinations] Defaults to
  *   `Destination.knownDestinations`.
  * @property {Map<string, {ratchet: Uint8Array, received: number}>} [knownRatchets] Defaults to
  *   `Destination.knownRatchets`.
@@ -315,13 +322,12 @@ export class Persistor {
       packetHash = await Identity.fullHash(publicKey);
     }
     const appData = announce.appData ?? announce.identity?.appData ?? null;
-    this.knownDestinations.set(hex, [
-      Date.now() / 1000,
-      toU8(packetHash),
-      toU8(publicKey),
-      appData ? toU8(appData) : null,
-      0,
-    ]);
+    this.knownDestinations.set(hex, {
+      timestamp: Date.now() / 1000,
+      packetHash: toU8(packetHash),
+      publicKey: toU8(publicKey),
+      appData: appData ? toU8(appData) : null,
+    });
     if (announce.ratchet && announce.ratchet.length > 0) {
       const copy = toU8(announce.ratchet);
       const existing = this.knownRatchets.get(hex);

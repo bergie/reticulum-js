@@ -118,14 +118,39 @@ export function createAnnounceRandomHash(randomBytes, timestampSec) {
 }
 
 /**
+ * Value-equality for optional app_data blobs (both null, or equal bytes).
+ *
+ * @param {Uint8Array|null} a
+ * @param {Uint8Array|null} b
+ * @returns {boolean}
+ */
+function appDataEquals(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return bytesEqual(a, b);
+}
+
+/**
+ * An identity learned from a validated announce, cached in
+ * `Destination.knownDestinations` (the JS analog of microReticulum's
+ * `Persistence::IdentityEntry`).
+ *
+ * @typedef {Object} KnownDestination
+ * @property {number} timestamp Unix seconds of the last validated announce.
+ * @property {Uint8Array} packetHash Hash of the last validated announce packet.
+ * @property {Uint8Array} publicKey The 64-byte public key (X25519 ‖ Ed25519).
+ * @property {Uint8Array|null} appData App-specific announce metadata, if any.
+ */
+
+/**
  * Represents a Reticulum destination — an addressable endpoint that can
  * announce, receive packets, encrypt/decrypt, and establish Links.
  * @extends EventTarget
  */
 export class Destination extends EventTarget {
   /**
-   * Storage for known destinations.
-   * @type {Map<string, any[]>}
+   * Storage for known destinations, keyed by hex destination hash.
+   * @type {Map<string, KnownDestination>}
    */
   static knownDestinations = new Map();
 
@@ -471,7 +496,6 @@ export class Destination extends EventTarget {
     }
 
     if (!payload) {
-      // Verify this in your code:
       if (this.nameHash.length !== 10) {
         throw new Error("nameHash must be 10 bytes");
       }
@@ -536,7 +560,14 @@ export class Destination extends EventTarget {
       }
     }
 
-    // 7. Broadcast the Packet
+    // Wire-format invariant: a ratchet-less, app_data-less announce body is
+    // pub(64) + name_hash(10) + random_hash(10) + signature(64) = 148 bytes.
+    if (payload.length < 148) {
+      throw new Error(
+        `Announce payload too small (${payload.length} bytes); check the body construction`,
+      );
+    }
+
     const announcePacket = new Packet({
       packetType: PacketType.ANNOUNCE,
       destinationType: this.type,
@@ -546,20 +577,6 @@ export class Destination extends EventTarget {
       contextByte,
       payload: /** @type {Uint8Array} */ (payload),
     });
-
-    // DEBUG: Validate payload size
-    log(
-      "Destination",
-      `Announce Payload Size: ${payload.length} bytes`,
-      LogLevel.DEBUG,
-    );
-    if (payload.length < 148) {
-      log(
-        "Destination",
-        "[!] Announce payload too small! Check your concatenation.",
-        LogLevel.ERROR,
-      );
-    }
 
     // If this fire was scheduled by the periodic loop and its cadence has
     // since been restarted or stopped, drop the straggler before it goes on
@@ -935,13 +952,11 @@ export class Destination extends EventTarget {
   }
 
   /**
-   * Gets the salt for key derivation.
+   * Gets the salt for key derivation: the destination hash itself.
    * @returns {Uint8Array}
    */
   getSalt() {
-    // Force conversion to a clean Uint8Array
-    const salt = this.destinationHash ?? new Uint8Array(16);
-    return new Uint8Array(salt.buffer, salt.byteOffset, salt.byteLength);
+    return this.destinationHash ?? new Uint8Array(16);
   }
 
   /**
@@ -1185,11 +1200,13 @@ export class Destination extends EventTarget {
   }
 
   /**
-   * Remember a destination.
+   * Remember a destination — caches or refreshes a {@link KnownDestination}
+   * entry (the JS analog of microReticulum's `Persistence::IdentityEntry`
+   * cache).
    * @param {Uint8Array} packetHash
    * @param {Uint8Array} destinationHash
    * @param {Uint8Array} publicKey
-   * @param {any} appData
+   * @param {Uint8Array|null} appData
    */
   static async remember(
     packetHash,
@@ -1198,31 +1215,40 @@ export class Destination extends EventTarget {
     appData = null,
   ) {
     const key = toHex(destinationHash);
-    const entry = Destination.knownDestinations.get(key);
-    if (entry) {
-      log("Destination", `Updating destination ${key}`);
-      if (toHex(entry[1]) !== toHex(packetHash)) {
-        log("Destination", `  - packetHash changed to ${toHex(packetHash)}`);
+    const existing = Destination.knownDestinations.get(key);
+    if (existing) {
+      log("Destination", `Updating destination ${key}`, LogLevel.DEBUG);
+      if (!bytesEqual(existing.packetHash, packetHash)) {
+        log(
+          "Destination",
+          `  - packetHash changed to ${toHex(packetHash)}`,
+          LogLevel.DEBUG,
+        );
       }
-      if (toHex(entry[2]) !== toHex(publicKey)) {
-        log("Destination", `  - publicKey changed to ${toHex(publicKey)}`);
+      if (!bytesEqual(existing.publicKey, publicKey)) {
+        log(
+          "Destination",
+          `  - publicKey changed to ${toHex(publicKey)}`,
+          LogLevel.DEBUG,
+        );
       }
-      if (entry[3] !== appData) {
-        log("Destination", `  - appData changed to ${appData}`);
+      if (!appDataEquals(existing.appData, appData)) {
+        log("Destination", `  - appData changed`, LogLevel.DEBUG);
       }
-      entry[0] = Date.now() / 1000; // time.time() in seconds
-      entry[1] = packetHash;
-      entry[2] = publicKey;
-      entry[3] = appData;
-    } else {
-      log("Destination", `Saving new destination ${key}`);
-      Destination.knownDestinations.set(key, [
-        Date.now() / 1000,
+      Destination.knownDestinations.set(key, {
+        timestamp: Date.now() / 1000,
         packetHash,
         publicKey,
         appData,
-        0,
-      ]);
+      });
+    } else {
+      log("Destination", `Saving new destination ${key}`, LogLevel.DEBUG);
+      Destination.knownDestinations.set(key, {
+        timestamp: Date.now() / 1000,
+        packetHash,
+        publicKey,
+        appData,
+      });
     }
   }
 
@@ -1234,28 +1260,24 @@ export class Destination extends EventTarget {
    */
   static async recall(targetHash, fromIdentityHash = false) {
     if (fromIdentityHash) {
-      for (const [_key, entry] of Destination.knownDestinations.entries()) {
-        const publicKey = entry[2];
-        const identity = await Identity.fromPublicKey(publicKey);
-        const identityHash = await Identity.truncatedHash(identity.publicKey);
-        log(
-          "Destination",
-          `Comparing ${toHex(targetHash)} vs calculated ${toHex(identityHash)}`,
-          LogLevel.DEBUG,
-        );
+      for (const entry of Destination.knownDestinations.values()) {
+        const identity = await Identity.fromPublicKey(entry.publicKey);
 
-        if (toHex(targetHash) === toHex(identityHash)) {
-          identity.appData = entry[3];
+        if (bytesEqual(targetHash, identity.identityHash)) {
+          identity.appData = entry.appData
+            ? new Uint8Array(entry.appData)
+            : new Uint8Array();
           return identity;
         }
       }
       return null;
     } else {
-      const key = toHex(targetHash);
-      const entry = Destination.knownDestinations.get(key);
+      const entry = Destination.knownDestinations.get(toHex(targetHash));
       if (entry) {
-        const identity = await Identity.fromPublicKey(entry[2]);
-        identity.appData = entry[3];
+        const identity = await Identity.fromPublicKey(entry.publicKey);
+        identity.appData = entry.appData
+          ? new Uint8Array(entry.appData)
+          : new Uint8Array();
         return identity;
       }
       return null;
@@ -1310,7 +1332,7 @@ export class Destination extends EventTarget {
    *
    * @param {Map<string, {ratchet: Uint8Array, received: number}>} [knownRatchets]
    *   Defaults to `Destination.knownRatchets`.
-   * @param {Map<string, any>} [knownDestinations] Defaults to
+   * @param {Map<string, KnownDestination>} [knownDestinations] Defaults to
    *   `Destination.knownDestinations`.
    * @returns {number} the number of entries removed.
    */

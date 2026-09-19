@@ -2,6 +2,7 @@
 node_modules/
 /Reticulum/
 /Reticulum-rust/
+/microReticulum/
 /RFed/
 /LXMF-rust/
 /LXMF/

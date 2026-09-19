@@ -50,7 +50,7 @@ The `@reticulum/core` package (`packages/core`) may only depend on the standard 
 
 In addition to the global boundaries:
 
-- ✅ **Always**: compare implementation with how the Python reference implementation works and adapt to be compatible with it
+- ✅ **Always**: compare implementation behavior with how the Python reference implementation works and adapt to be compatible with it
 - ✅ **Always**: use the logging helper from `packages/core/src/utils/log.js` instead of `console.log` (and `.warn/.error`)
 - ✅ **Always**: document major changes in the per-package `CHANGELOG.md` (Unreleased segment)
 - 🚫 **Never**: update the root-level `CHANGELOG.md` — that is done as part of the release process

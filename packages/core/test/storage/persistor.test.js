@@ -29,9 +29,9 @@ function freshSurface() {
   };
 }
 
-/** Builds an in-memory known_destinations entry tuple (Python layout). */
+/** Builds an in-memory knownDestinations entry. */
 function identityEntry(packetHash, publicKey, appData = null) {
-  return [Date.now() / 1000, packetHash, publicKey, appData, 0];
+  return { timestamp: Date.now() / 1000, packetHash, publicKey, appData };
 }
 
 describe("Persistor — enabled detection", () => {
@@ -105,13 +105,10 @@ describe("Persistor — communicate-with gating", () => {
 
     // A known-destination entry is required: cleanKnownRatchets (run on load)
     // drops ratchets whose destination is no longer known.
-    s.knownDestinations.set(toHex(dest), [
-      Date.now() / 1000,
-      fromHex("99".repeat(16)),
-      fromHex("21".repeat(64)),
-      null,
-      0,
-    ]);
+    s.knownDestinations.set(
+      toHex(dest),
+      identityEntry(fromHex("99".repeat(16)), fromHex("21".repeat(64))),
+    );
     s.knownRatchets.set(toHex(dest), { ratchet, received: Date.now() });
     p.markContacted(dest);
     await p.flush();
@@ -139,20 +136,14 @@ describe("Persistor — communicate-with gating", () => {
     const forgottenDest = fromHex("dd".repeat(16));
     const expiredDest = fromHex("ee".repeat(16));
 
-    s.knownDestinations.set(toHex(knownDest), [
-      Date.now() / 1000,
-      fromHex("00".repeat(16)),
-      fromHex("21".repeat(64)),
-      null,
-      0,
-    ]);
-    s.knownDestinations.set(toHex(expiredDest), [
-      Date.now() / 1000,
-      fromHex("00".repeat(16)),
-      fromHex("22".repeat(64)),
-      null,
-      0,
-    ]);
+    s.knownDestinations.set(
+      toHex(knownDest),
+      identityEntry(fromHex("00".repeat(16)), fromHex("21".repeat(64))),
+    );
+    s.knownDestinations.set(
+      toHex(expiredDest),
+      identityEntry(fromHex("00".repeat(16)), fromHex("22".repeat(64))),
+    );
     s.knownRatchets.set(toHex(knownDest), {
       ratchet: fromHex("01".repeat(32)),
       received: Date.now(),
@@ -274,9 +265,15 @@ describe("Persistor — explicit store (favorited contacts)", () => {
     await p2.load();
     const entry = s2.knownDestinations.get(toHex(dest));
     assert.ok(entry);
-    assert.ok(bytesEqual(entry[2], identity.publicKey), "public key preserved");
     assert.ok(
-      bytesEqual(entry[3], new TextEncoder().encode("Alice")),
+      bytesEqual(entry.publicKey, identity.publicKey),
+      "public key preserved",
+    );
+    assert.ok(
+      bytesEqual(
+        /** @type {Uint8Array} */ (entry.appData),
+        new TextEncoder().encode("Alice"),
+      ),
       "app_data preserved",
     );
     const ratchetEntry = s2.knownRatchets.get(toHex(dest));
@@ -326,7 +323,7 @@ describe("Persistor — hydrate-on-startup", () => {
 
     assert.ok(read.persistedDestinations.has(toHex(dest)));
     const entry = s2.knownDestinations.get(toHex(dest));
-    assert.ok(entry && bytesEqual(entry[2], identity.publicKey));
+    assert.ok(entry && bytesEqual(entry.publicKey, identity.publicKey));
   });
 
   test("load() skips a corrupt record without throwing", async () => {

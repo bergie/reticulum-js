@@ -251,13 +251,12 @@ describe("FileStorageAdapter — Persistor integration", () => {
       });
       const dest = fromHex("ee".repeat(16));
       const publicKey = fromHex("21".repeat(64));
-      knownDestinations.set(toHex(dest), [
-        Date.now() / 1000,
-        fromHex("99".repeat(16)),
+      knownDestinations.set(toHex(dest), {
+        timestamp: Date.now() / 1000,
+        packetHash: fromHex("99".repeat(16)),
         publicKey,
-        null,
-        0,
-      ]);
+        appData: null,
+      });
       p1.markContacted(dest);
       await p1.flush();
 
@@ -273,7 +272,7 @@ describe("FileStorageAdapter — Persistor integration", () => {
 
       const entry = knownDestinations2.get(toHex(dest));
       assert.ok(entry, "peer hydrated after restart");
-      assert.ok(bytesEqual(entry[2], publicKey), "public key preserved");
+      assert.ok(bytesEqual(entry.publicKey, publicKey), "public key preserved");
       assert.ok(
         p2.persistedDestinations.has(toHex(dest)),
         "persisted set rebuilt",

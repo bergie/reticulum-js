@@ -69,7 +69,7 @@ test("TransportCore ingests a valid announce and dispatches an `announce` event"
 
   const entry = Destination.knownDestinations.get(toHex(destinationHash));
   assert.ok(entry, "announce should have been cached in knownDestinations");
-  assert.ok(bytesEqual(entry[2], identity.publicKey));
+  assert.ok(bytesEqual(entry.publicKey, identity.publicKey));
 });
 
 test("TransportCore drops an announce with a tampered signature", async () => {
