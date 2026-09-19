@@ -13,7 +13,7 @@ This repository is an npm-workspaces monorepo: a browser-safe **core** package p
 | [`@reticulum/core`](packages/core/README.md) | The core: Reticulum engine, Identity, LXMF, Links, Resources, Channels, and the browser-safe client interfaces (HTTP, WebSocket, WebRTC) | none (zero-dependency, browser-safe) |
 | [`@reticulum/node`](packages/node/README.md) | Node.js interfaces (TCP, AutoInterface, LocalClient/shared-instance, HTTP POST server) and the interface registry | Node builtins only |
 | [`@reticulum/lxmf`](packages/lxmf/README.md) | Lightweight Extensible Message format implementation | core (browser-safe) |
-| [`@reticulum/rfed`](packages/rfex/README.md) | Reticulum Federation implementation | core, lxmf (browser-safe) |
+| [`@reticulum/rfed`](packages/rfed/README.md) | Reticulum Federation implementation | core, lxmf (browser-safe) |
 | [`@reticulum/webrtc-node`](packages/webrtc-node/README.md) | `createPeerConnection` factory backed by werift, for the core's WebRTC transport on Node | `werift` |
 | [`@reticulum/websocket-server-node`](packages/websocket-server-node/README.md) | Inbound WebSocket **server** interface, backed by ws | `ws` |
 
