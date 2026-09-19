@@ -10,7 +10,7 @@
 # Usage:
 #   scripts/jsr-dryrun.sh                 # dry-run every package
 #   scripts/jsr-dryrun.sh core            # dry-run one package
-#                                            (core|node|webrtc-node|websocket-server-node)
+#                                            (core|lxmf|rfed|node|webrtc-node|websocket-server-node)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,12 +30,12 @@ grep -qxF "$NEGLINE" "$GITIGNORE" || printf '\n%s\n' "$NEGLINE" >> "$GITIGNORE"
 
 packages=("$@")
 if [ "${#packages[@]}" -eq 0 ]; then
-  packages=(core node webrtc-node websocket-server-node)
+  packages=(core lxmf rfed node webrtc-node websocket-server-node)
 fi
 
 for p in "${packages[@]}"; do
   if [ ! -f "$ROOT/packages/$p/jsr.json" ]; then
-    echo "::error::Unknown package '$p' (expected one of: core node webrtc-node websocket-server-node)" >&2
+    echo "::error::Unknown package '$p' (expected one of: core lxmf rfed node webrtc-node websocket-server-node)" >&2
     exit 1
   fi
   echo "=== @reticulum/$p ==="

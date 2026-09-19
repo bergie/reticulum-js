@@ -40,7 +40,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** Preferred package order in the compiled output (dependency/layering order). */
-const PACKAGE_ORDER = ["core", "node", "webrtc-node", "websocket-server-node"];
+const PACKAGE_ORDER = [
+  "core",
+  "lxmf",
+  "rfed",
+  "node",
+  "webrtc-node",
+  "websocket-server-node",
+];
 
 /**
  * Compiled category order — breaking changes first for visibility, then Keep a

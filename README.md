@@ -4,7 +4,7 @@
 
 **reticulum-js** is a dependency-free JavaScript implementation of the [Reticulum Network System](https://reticulum.network/). Reticulum is a mesh networking stack designed for both local and wide-area networking. Reticulum applications can talk with each other over multiple different interfaces, ranging from TCP connections to LoRa radio. This allows building offline-first collaborative software that can work even when Internet infrastructure is compromised.
 
-This repository is an npm-workspaces monorepo: a browser-safe **core** package plus small **companion** packages that add Node-only or external-dependency interfaces.
+This repository is an npm-workspaces monorepo: a browser-safe **core** package plus small **companion** packages that add Node-only or external-dependency interfaces. Related Reticulum sub-protocol implementations like LXMF and RFed have their own packages.
 
 ## Packages
 
@@ -12,10 +12,12 @@ This repository is an npm-workspaces monorepo: a browser-safe **core** package p
 | --- | --- | --- |
 | [`@reticulum/core`](packages/core/README.md) | The core: Reticulum engine, Identity, LXMF, Links, Resources, Channels, and the browser-safe client interfaces (HTTP, WebSocket, WebRTC) | none (zero-dependency, browser-safe) |
 | [`@reticulum/node`](packages/node/README.md) | Node.js interfaces (TCP, AutoInterface, LocalClient/shared-instance, HTTP POST server) and the interface registry | Node builtins only |
+| [`@reticulum/lxmf`](packages/lxmf/README.md) | Lightweight Extensible Message format implementation | core (browser-safe) |
+| [`@reticulum/rfed`](packages/rfex/README.md) | Reticulum Federation implementation | core, lxmf (browser-safe) |
 | [`@reticulum/webrtc-node`](packages/webrtc-node/README.md) | `createPeerConnection` factory backed by werift, for the core's WebRTC transport on Node | `werift` |
 | [`@reticulum/websocket-server-node`](packages/websocket-server-node/README.md) | Inbound WebSocket **server** interface, backed by ws | `ws` |
 
-Start with [`@reticulum/core`](packages/core/README.md) — the companions just add interfaces the browser-safe core can't ship.
+Start with [`@reticulum/core`](packages/core/README.md) — the companions just add interfaces the browser-safe core can't ship or that add subprotocol support.
 
 ## Design principles
 

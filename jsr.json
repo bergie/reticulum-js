@@ -1,6 +1,8 @@
 {
   "workspace": [
     "packages/core",
+    "packages/lxmf",
+    "packages/rfed",
     "packages/node",
     "packages/webrtc-node",
     "packages/websocket-server-node"
