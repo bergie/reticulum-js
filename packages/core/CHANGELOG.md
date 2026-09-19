@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-19
+
 ## [0.8.0] - 2026-09-19
 ### Changed
 - **LXMF and rfed moved to their own packages** (work doc #35). The

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-19
+
 ## [0.8.0] - 2026-09-19
 ### Removed
 - **core**: **Breaking:** the `@reticulum/core/src/lxmf/*` and `@reticulum/core/src/rfed/*`
