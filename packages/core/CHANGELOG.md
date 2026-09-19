@@ -20,6 +20,16 @@
   cached fields by value (the previous reference comparison of `appData`
   always reported a change).
 
+### Fixed
+- Ingress-control frequency sampling (`receivedAnnounce`,
+  `receivedPathRequest`, `sentAnnounce`, `sentPathRequest` and the
+  frequency windows they feed) now uses a high-resolution epoch clock
+  (`performance.timeOrigin + performance.now()`, the equivalent of Python's
+  `time.time()`). `Date.now()`'s 1 ms resolution made genuine
+  sub-millisecond bursts read as a zero-span window, leaving PR/announce
+  floods undetected by the burst latch (visible as flaky tests on fast
+  runtimes such as Bun).
+
 ## [0.8.1] - 2026-09-19
 
 ## [0.8.0] - 2026-09-19

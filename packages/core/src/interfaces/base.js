@@ -184,6 +184,21 @@ function reconnectSchemaProperties() {
  */
 
 /**
+ * High-resolution wall-clock seconds — the JavaScript equivalent of the
+ * Python reference's `time.time()` used for its `*_freq_deque` sampling.
+ * Plain `Date.now()` only has 1 ms resolution, which makes a genuine
+ * sub-millisecond burst (all samples in the same millisecond) read as a
+ * zero-span window and go undetected; `performance.timeOrigin +
+ * performance.now()` provides sub-millisecond precision in the same
+ * epoch-seconds domain.
+ *
+ * @returns {number} Epoch seconds.
+ */
+function nowSec() {
+  return (performance.timeOrigin + performance.now()) / 1000;
+}
+
+/**
  * Computes the arrival frequency (Hz) over a rolling timestamp window:
  *
  *   - fewer than `minSample + 1` samples → 0
@@ -200,7 +215,7 @@ function frequencyOverWindow(deque, minSample, decaySeconds) {
   const n = deque.length;
   if (!(n > minSample)) return 0;
   const oldest = deque[0];
-  const span = Date.now() / 1000 - oldest;
+  const span = nowSec() - oldest;
   if (span > decaySeconds) deque.shift();
   if (span <= 0) return 0;
   return n / span;
@@ -611,7 +626,7 @@ export class Interface extends EventTarget {
    * @param {boolean} [fromSpawned] Internal: true when called on a parent.
    */
   receivedAnnounce(fromSpawned = false) {
-    this.iaFreqDeque.push(Date.now() / 1000);
+    this.iaFreqDeque.push(nowSec());
     if (this.iaFreqDeque.length > Interface.FREQ_SAMPLES) {
       this.iaFreqDeque.shift();
     }
@@ -628,7 +643,7 @@ export class Interface extends EventTarget {
    * @param {boolean} [fromSpawned] Internal: true when called on a parent.
    */
   sentAnnounce(fromSpawned = false) {
-    this.oaFreqDeque.push(Date.now() / 1000);
+    this.oaFreqDeque.push(nowSec());
     if (this.oaFreqDeque.length > Interface.FREQ_SAMPLES) {
       this.oaFreqDeque.shift();
     }
@@ -643,7 +658,7 @@ export class Interface extends EventTarget {
    * @param {boolean} [fromSpawned] Internal: true when called on a parent.
    */
   receivedPathRequest(fromSpawned = false) {
-    this.ipFreqDeque.push(Date.now() / 1000);
+    this.ipFreqDeque.push(nowSec());
     if (this.ipFreqDeque.length > Interface.FREQ_SAMPLES) {
       this.ipFreqDeque.shift();
     }
@@ -658,7 +673,7 @@ export class Interface extends EventTarget {
    * @param {boolean} [fromSpawned] Internal: true when called on a parent.
    */
   sentPathRequest(fromSpawned = false) {
-    this.opFreqDeque.push(Date.now() / 1000);
+    this.opFreqDeque.push(nowSec());
     if (this.opFreqDeque.length > Interface.FREQ_SAMPLES) {
       this.opFreqDeque.shift();
     }
