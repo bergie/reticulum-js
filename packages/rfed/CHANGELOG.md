@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-09-19
 ### Added
 - Initial release of `@reticulum/rfed` — rfed (Reticulum Federation) for
   reticulum-js, carved out of `@reticulum/core` (work doc #35). Same modules,

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-09-19
 ### Changed
 - **LXMF and rfed moved to their own packages** (work doc #35). The
   `src/lxmf/` and `src/rfed/` trees — messaging, propagation nodes, paper

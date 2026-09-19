@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-19
+### Removed
+- **core**: **Breaking:** the `@reticulum/core/src/lxmf/*` and `@reticulum/core/src/rfed/*`
+  subpath exports are gone — use `@reticulum/lxmf` / `@reticulum/rfed`.
+### Added
+- **lxmf**: Initial release of `@reticulum/lxmf` — LXMF (Lightweight Extensible Message
+  Format) messaging for reticulum-js, carved out of `@reticulum/core` (work
+  doc #35). Same modules, same wire format, same public symbols as the former
+  `@reticulum/core/src/lxmf/` subpaths: `LXMRouter`, `LXMessage`,
+  `MessageStore`, `PropagationNode`, `LXMPeer`, paper messaging, announce-data
+  helpers, and the `LXStamper` namespace.
+- **lxmf**: Depends on `@reticulum/core`. Import from the package root:
+  `import { LXMRouter, LXMessage } from "@reticulum/lxmf";`
+  The generic PoW stamp primitives now live in
+  `@reticulum/core`'s `utils/stamper.js`; the LXMF-specific validators
+  (peering keys, propagation-node stamps) stay here.
+- **rfed**: Initial release of `@reticulum/rfed` — rfed (Reticulum Federation) for
+  reticulum-js, carved out of `@reticulum/core` (work doc #35). Same modules,
+  same wire format, same public symbols as the former
+  `@reticulum/core/src/rfed/` subpaths: `RFedNode`, `RFedClient`, `BlobStore`,
+  `FedSync`, channel/stamp/notify/subscription helpers, and the
+  `RFedConstants` namespace. Wire-compatible with the Rust `rfed` reference
+  (protocol version 1).
+- **rfed**: Depends on `@reticulum/lxmf` and `@reticulum/core`. Import from the package
+  root: `import { RFedNode } from "@reticulum/rfed";`. The shared PoW stamp
+  primitives now live in `@reticulum/core`'s `utils/stamper.js`.
+### Changed
+- **core**: **LXMF and rfed moved to their own packages** (work doc #35). The
+  `src/lxmf/` and `src/rfed/` trees — messaging, propagation nodes, paper
+  messaging, and the rfed federation stack — now live in `@reticulum/lxmf`
+  and `@reticulum/rfed` (workspace packages depending on `@reticulum/core`).
+  Import them by package name:
+  `import { LXMRouter } from "@reticulum/lxmf";`
+  `import { RFedNode } from "@reticulum/rfed";`
+- **core**: The generic LXMF-style proof-of-work stamp primitives (`stampWorkblock`,
+  `stampValue`, `stampValid`, `generateStamp`, the `WORKBLOCK_EXPAND_ROUNDS*`
+  constants) moved to `src/utils/stamper.js` — they are shared by LXMF, rfed,
+  and interface discovery at different work factors. Interface discovery now
+  imports them from there; `@reticulum/lxmf` re-exports the full `LXStamper`
+  namespace (including the LXMF-specific peering/propagation validators).
+- **core**: `LinkStatus` is now exported from the package root (alongside `Link`) so
+  dependent packages don't need a deep `src/transport/link.js` import.
+### Fixed
+- **lxmf**: **The same inbound message is now dispatched exactly once, no matter how many paths deliver it (Python `LXMRouter.lxmf_delivery`'s `has_message` check).** A sender retry, or the same message arriving over a link *and* again as an opportunistic packet *and* once more via a propagation-node sync (Sideband's auto outbox stores a copy whenever the direct delivery proof is lost or slow), dispatched a `message` event per arrival — so every handler ran N times and a single command produced several identical replies. Matching the Python reference (`locally_delivered_transient_ids` keyed by `LXMessage.hash` before the delivery callback fires, `has_message` to query it), `_dispatchMessage` — the single chokepoint behind link, opportunistic, propagation-sync, embedded-node local-delivery and paper-URI ingestion — now drops any message whose id was already delivered, recording each delivered id in a bounded in-memory cache (`locallyDeliveredMessageIds`, oldest-evicted past 4096 entries; Python persists its equivalent and prunes it after `MESSAGE_EXPIRY * 6` in the jobs loop). The new public `hasMessage(messageId)` mirrors Python `has_message`. Because propagation-node clients deduplicate inbound by message hash, a duplicate copy is still acked to the node so it is purged (`syncFromPropagationNode` counts it under `duplicates`, marks the transient id processed and includes it in the ack list — Python `message_get_response` acks every fetched message, duplicates included, and records `locally_processed` before attempting delivery). The transport still emits the opportunistic PROOF on decrypt before the dedup check, exactly like Python `delivery_packet`, so a retrying sender still sees its proof and stops retransmitting. Covered by `test/dedup.test.js`: a repeated link delivery dispatches once, a link + opportunistic cross-path pair dispatches once, distinct messages dispatch separately, and a synced copy of an already-delivered message is not re-dispatched but is acked and counted as a duplicate
+
 ## [0.7.2] - 2026-09-10
 ### Fixed
 - **core**: **Zombie links: an initiator-side link whose peer vanished no longer stays ACTIVE forever.** The link watchdog's keepalive branch reset `lastInboundTime` after *sending* a ping, but liveness is measured from that very clock (`now >= lastInboundTime + staleTime`) — so a link that died without a LINKCLOSE (connection drop, interface loss, rnsd restart, peer going out of range) kept "sending" keepalives into the void, each one resetting its own staleness timer, and never tore down. Every subsequent `LXMRouter.send()` reused the cached `directLinks` entry (status still ACTIVE), silently encrypted the message to the dead link session, and reported success — messages vanished until the process was restarted (the "everything works after a restart, then the peer goes away for a while and LXMF stops arriving" pattern). Matching the Python reference (`Link.watchdog`: liveness counts only *inbound* traffic via `last_inbound`/`last_proof`; `send_keepalive` → `had_outbound(is_keepalive=True)` touches only `last_keepalive`), sending a keepalive no longer refreshes liveness, and a new `lastKeepaliveTime` field gates the ping cadence (Python `last_keepalive`) so a missing pong cannot cause a per-tick ping storm. A dead initiator link now tears down after `staleTime` (2 × the RTT-adapted keepalive interval), sending a LINKCLOSE on the way out exactly like the Python reference (`Link.STALE` → `__teardown_packet()` → CLOSED with TIMEOUT) so a still-reachable peer (asymmetric path loss) tears its own side down at once instead of waiting out its own staleness window; the LXMF router evicts it on `statuschange`, and the next send establishes a fresh link. Covered by three watchdog assertions: a severed peer tears the link down despite keepalive sends (with the LINKCLOSE on the wire), and a healthy link survives on ping/pong round trips

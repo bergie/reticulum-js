@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/rfed",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "license": "EUPL-1.2",
   "exports": {
     ".": "./src/index.js"
