@@ -1,6 +1,6 @@
 /**
  * @module @reticulum/rfed
- * @description rfed (Reticulum Federation) — public barrel.
+ * @description rfed (Reticulum Federation)
  *
  * Wire-compatible with the Rust `rfed` reference (protocol version 1).
  *

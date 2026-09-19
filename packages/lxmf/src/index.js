@@ -1,6 +1,6 @@
 /**
  * @module @reticulum/lxmf
- * @description LXMF (Lightweight Extensible Message Format) — public barrel.
+ * @description LXMF (Lightweight Extensible Message Format)
  *
  * Asynchronous, store-and-forward messaging primitives: one-to-one messages,
  * the router, paper/QR messaging, and the propagation-node server.
