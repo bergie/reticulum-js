@@ -526,13 +526,19 @@ export class HttpPostServerInterface extends Interface {
     let tooLarge = false;
     try {
       for await (const chunk of req) {
+        if (tooLarge) {
+          // Keep draining (and discarding) the remainder so the client sees
+          // the response: Bun's node:http server drops an early response when
+          // the request body is left unconsumed.
+          continue;
+        }
         body += chunk;
-        // Unauthenticated flood defense: cap the body BEFORE any auth or
-        // JSON.parse. Without this a single anonymous oversized POST can OOM
-        // the process by string-concatenating the entire body into memory.
+        // Unauthenticated flood defense: cap the buffered body BEFORE any
+        // auth or JSON.parse. Chunks past the cap are drained without being
+        // accumulated so a single anonymous oversized POST cannot OOM the
+        // process by string-concatenating the entire body into memory.
         if (body.length > this.maxRequestBodyBytes) {
           tooLarge = true;
-          break;
         }
       }
     } catch (_e) {
@@ -540,12 +546,7 @@ export class HttpPostServerInterface extends Interface {
       return;
     }
     if (tooLarge) {
-      // Stop reading the attacker's stream and reject.
-      try {
-        req.destroy();
-      } catch (_e) {
-        // already closed
-      }
+      // Reject the oversized request.
       if (!res.headersSent) {
         res.writeHead(413, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "Request body too large" }));

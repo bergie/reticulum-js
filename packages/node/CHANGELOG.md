@@ -1,6 +1,21 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The `@reticulum/node` test suite now also runs under **Bun** (`npm run test:bun` in
+  `packages/node`, included in the root `npm run test:bun`). Two Bun runtime
+  incompatibilities were worked around:
+  - `HttpPostServerInterface` now **drains (and discards) the remainder of an
+    oversized request body before responding `413`** instead of destroying the
+    request mid-stream: Bun's `node:http` server silently drops the response
+    when the request body is left unconsumed (clients see a bogus `200`). The
+    memory-protection goal is unchanged — bytes past the cap are never
+    accumulated.
+  - `LocalClientInterface` tests no longer rely on
+    `server.removeAllListeners("connection")` removing the callback passed to
+    `net.createServer()`, which Bun does not honor (the original listener kept
+    consuming socket data); the adopting server registers its handler via
+    `server.on()` so it can be swapped portably.
 
 ## [0.8.2] - 2026-09-19
 

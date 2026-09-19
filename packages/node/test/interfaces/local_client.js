@@ -49,7 +49,11 @@ function makePacket(text) {
  */
 function startAdoptingServer(handlers = {}) {
   return new Promise((resolve) => {
-    const server = net.createServer((socket) => {
+    // Register via server.on() rather than the net.createServer() callback:
+    // Bun does not removeAllListeners() the callback passed to
+    // net.createServer(), and the test below swaps the connection listener.
+    const server = net.createServer();
+    server.on("connection", (socket) => {
       const iface = new LocalClientInterface({
         socket,
         name: "server-side",
