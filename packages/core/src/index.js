@@ -6,7 +6,7 @@
 
 /* @ts-self-types="../types/src/index.d.ts" */
 
-export { Allow, Destination } from "./core/destination.js";
+export { Allow, Destination, Direction } from "./core/destination.js";
 // --- 2. Cryptography & Identity ---
 // Everything needed to create, load, and sign data as an RNS node.
 export { Identity } from "./core/identity.js";
@@ -103,7 +103,7 @@ export {
   THRESHOLD_UNKNOWN as DISCOVERY_THRESHOLD_UNKNOWN,
   WORKBLOCK_EXPAND_ROUNDS as DISCOVERY_WORKBLOCK_EXPAND_ROUNDS,
 } from "./transport/discovery.js";
-export { Link, LinkStatus } from "./transport/link.js";
+export { Link, LinkStatus, ResourceResponse } from "./transport/link.js";
 export {
   base64ToBytes,
   base64UrlToBytes,

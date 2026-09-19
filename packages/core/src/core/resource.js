@@ -112,9 +112,18 @@ export class Resource extends EventTarget {
   /** Receiver request window during a transfer. */
   window = Resource.WINDOW;
 
+  /** Max encodable metadata size: 3-byte length prefix limits it to 16 MiB-1. */
+  static METADATA_MAX_SIZE = 0xffffff;
+
   /**
    * @param {Object} options
    * @param {Uint8Array|undefined} [options.data] - Sender-side payload.
+   * @param {any} [options.metadata] - Sender-side response metadata (§10.4
+   *   `x` flag). Encoded as msgpack and prepended to the payload as
+   *   `3-byte BE size ‖ packed metadata` before hashing/compression, matching
+   *   the reference implementation's file-with-metadata transfers. Receivers
+   *   expose the decoded value as {@link Resource.metadata} and strip it from
+   *   {@link Resource.data}.
    * @param {import("../transport/link.js").Link|undefined} [options.link]
    * @param {boolean} [options.autoCompress=true]
    * @param {Uint8Array} [options.originalHash]
@@ -126,6 +135,32 @@ export class Resource extends EventTarget {
   constructor(options = {}) {
     super();
     this.data = options.data;
+    /**
+     * Response metadata: the decoded value on the receiver (after assembly),
+     * or the caller-supplied value on the sender.
+     * @type {any}
+     */
+    this.metadata = undefined;
+    this.hasMetadata = false;
+    /**
+     * Sender-side `3-byte BE size ‖ msgpack(metadata)` prefix (§10.4). The
+     * prefix is part of the hashed/compressed/encrypted blob on the wire.
+     * @type {Uint8Array|undefined}
+     */
+    this.metadataPrefix = undefined;
+    if (options.metadata !== undefined && options.metadata !== null) {
+      const packed = MicroMsgPack.encode(options.metadata);
+      if (packed.length > Resource.METADATA_MAX_SIZE) {
+        throw new Error("Resource metadata size exceeded");
+      }
+      const prefix = new Uint8Array(3);
+      prefix[0] = packed.length >> 16;
+      prefix[1] = (packed.length >> 8) & 0xff;
+      prefix[2] = packed.length & 0xff;
+      this.metadataPrefix = concatBytes(prefix, packed);
+      this.hasMetadata = true;
+      this.metadata = options.metadata;
+    }
     /** @type {import("../transport/link.js").Link} */
     this.link = /** @type {import("../transport/link.js").Link} */ (
       options.link
@@ -155,7 +190,6 @@ export class Resource extends EventTarget {
     this.expectedProof = undefined;
     this.compressed = false;
     this.encrypted = false;
-    this.hasMetadata = false;
     this.split = false;
     this.segmentIndex = 1;
     this.totalSegments = 1;
@@ -213,7 +247,12 @@ export class Resource extends EventTarget {
     if (!(this.data instanceof Uint8Array)) {
       throw new TypeError("Resource sender data must be a Uint8Array");
     }
-    const plaintext = this.data;
+    // §10.4 `x` flag: the metadata prefix is part of the hashed/compressed/
+    // encrypted blob on the wire — integrity material, compression and the
+    // proof all cover `prefix ‖ payload` as one plaintext.
+    const plaintext = this.metadataPrefix
+      ? concatBytes(this.metadataPrefix, this.data)
+      : this.data;
     this.uncompressedSize = plaintext.length; // d: original uncompressed size
 
     // §10.2 step 2 — optional bz2 compression (only if a module was injected).
@@ -798,6 +837,8 @@ export class Resource extends EventTarget {
       }
 
       // §10.8 step 5: SHA-256(plaintext ‖ r) over the prefix-stripped body.
+      // When the `x` flag is set the plaintext still includes the metadata
+      // prefix at this point — the integrity hash covers the whole blob.
       const recomputed = await Identity.fullHash(
         concatBytes(plaintext, /** @type {Uint8Array} */ (this.randomHash)),
       );
@@ -808,13 +849,41 @@ export class Resource extends EventTarget {
         return;
       }
 
+      // The proof covers the FULL plaintext (metadata prefix included),
+      // so it must be emitted before the prefix is stripped below.
       this.data = plaintext;
-      this.status = ResourceStatus.COMPLETE;
       await this._sendProof();
+
+      // §10.4 `x` flag: strip `3-byte BE size ‖ msgpack(metadata)` and expose
+      // the decoded value alongside the payload.
+      if (this.hasMetadata) {
+        try {
+          const metadataSize =
+            (plaintext[0] << 16) | (plaintext[1] << 8) | plaintext[2];
+          if (3 + metadataSize > plaintext.length) {
+            throw new Error(`metadata size ${metadataSize} exceeds plaintext`);
+          }
+          // Strip first so the payload stays usable even if the metadata
+          // bytes fail to decode, then decode defensively.
+          this.data = plaintext.subarray(3 + metadataSize);
+          this.metadata = MicroMsgPack.decode(
+            plaintext.subarray(3, 3 + metadataSize),
+          );
+        } catch (err) {
+          log(
+            "Resource",
+            `Could not parse resource metadata: ${err}`,
+            LogLevel.WARNING,
+          );
+          this.metadata = undefined;
+        }
+      }
+
+      this.status = ResourceStatus.COMPLETE;
       log("Resource", "Incoming resource COMPLETE", LogLevel.DEBUG);
       this.dispatchEvent(
         new CustomEvent("complete", {
-          detail: { resource: this, data: plaintext },
+          detail: { resource: this, data: this.data },
         }),
       );
     } catch (err) {

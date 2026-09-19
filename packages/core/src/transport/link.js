@@ -103,6 +103,30 @@ export async function linkIdFromLrPacket(packet) {
 }
 
 /**
+ * A response marker for §11 request handlers: answer with a Resource that
+ * carries the raw payload bytes plus separate response metadata (§10.4 `x`
+ * flag). This is the JS form of the reference implementation's
+ * file-with-metadata response, where the reply payload and its metadata
+ * travel as one Resource transfer.
+ *
+ * The payload is transferred via the §10 Resource pipeline (even when it
+ * would fit a single packet), optionally bz2-compressed, and the metadata is
+ * delivered to the requester through the `onMetadata` option of
+ * {@link Link.request}.
+ */
+export class ResourceResponse {
+  /**
+   * @param {Uint8Array} data - Raw response payload bytes.
+   * @param {any} [metadata] - msgpack-encodable response metadata (max
+   *   16 MiB-1 packed).
+   */
+  constructor(data, metadata) {
+    this.data = data;
+    this.metadata = metadata;
+  }
+}
+
+/**
  * An ephemeral encrypted channel between two destinations.
  *
  * A Link is established through a LINKREQUEST/LRPROOF handshake which derives
@@ -210,7 +234,7 @@ export class Link extends EventTarget {
    * Initiator-side pending REQUESTs keyed by hex(request_id)
    * (PROTOCOL-SPEC.md §11.5). Each entry resolves/rejects its returned Promise
    * when the matching RESPONSE arrives or the timeout fires.
-   * @type {Map<string, {resolve: Function, reject: Function, timer: ReturnType<typeof setTimeout>}>}
+   * @type {Map<string, {resolve: Function, reject: Function, onMetadata: ((metadata: any) => void)|undefined, timer: ReturnType<typeof setTimeout>}>}
    */
   pendingRequests = new Map();
 
@@ -1320,6 +1344,11 @@ export class Link extends EventTarget {
    * @param {object} [options]
    * @param {number} [options.timeout] - Response timeout in ms (defaults to
    *   `rtt * TRAFFIC_TIMEOUT_FACTOR + RESPONSE_MAX_GRACE_TIME * 1.125`).
+   * @param {(metadata: any) => void} [options.onMetadata] - Called with the
+   *   decoded response metadata when the responder answers with a
+   *   metadata-carrying Resource (§10.4 `x` flag). Invoked before the
+   *   returned Promise resolves, so callers observe it as soon as the
+   *   response is available.
    * @returns {Promise<any>} The decoded RESPONSE value.
    */
   async request(path, data = null, options = {}) {
@@ -1347,6 +1376,7 @@ export class Link extends EventTarget {
         requestIdHex,
         path,
         timeout,
+        options.onMetadata,
       );
       const { Resource } = await import("../core/resource.js");
       const resource = new Resource({
@@ -1377,6 +1407,7 @@ export class Link extends EventTarget {
       requestIdHex,
       path,
       timeout,
+      options.onMetadata,
     );
     await this.transport.sendPacket(outbound);
     return responsePromise;
@@ -1389,14 +1420,16 @@ export class Link extends EventTarget {
    * @param {string} requestIdHex
    * @param {string} path
    * @param {number} timeoutMs
+   * @param {(metadata: any) => void} [onMetadata]
    * @returns {Promise<any>}
    * @private
    */
-  _registerPendingRequest(requestIdHex, path, timeoutMs) {
+  _registerPendingRequest(requestIdHex, path, timeoutMs, onMetadata) {
     return new Promise((resolve, reject) => {
       const entry = {
         resolve,
         reject,
+        onMetadata,
         timer: setTimeout(() => {
           this.pendingRequests.delete(requestIdHex);
           reject(
@@ -1556,6 +1589,24 @@ export class Link extends EventTarget {
     // A generator returning null/undefined suppresses the response.
     if (response === null || response === undefined) return;
 
+    // File-with-metadata responses (§10.4 `x` flag) always use the Resource
+    // pipeline — even when small — matching how the reference
+    // implementation transfers file-with-metadata replies.
+    if (response instanceof ResourceResponse) {
+      const { Resource } = await import("../core/resource.js");
+      const resource = new Resource({
+        data: response.data,
+        metadata: response.metadata,
+        link: this,
+        isResponse: true,
+        requestId,
+        bz2: this.bz2,
+        autoCompress: handler.autoCompress,
+      });
+      await resource.advertise();
+      return;
+    }
+
     await this._sendResponse(response, requestId, handler.autoCompress);
   }
 
@@ -1634,13 +1685,51 @@ export class Link extends EventTarget {
 
   /**
    * Initiator: a §11.2 RESPONSE whose body arrived via a §10 Resource
-   * transfer. The assembled `resource.data` is the same `[request_id,
-   * response]` msgpack envelope.
+   * transfer.
+   *
+   * Two response shapes exist on the wire:
+   *
+   * 1. Envelope form: the assembled `resource.data` is the msgpack envelope
+   *    `[request_id, response]`. Used by oversized non-file responses on
+   *    both sides.
+   * 2. File-with-metadata form (§10.4 `x` flag): the raw payload bytes ride
+   *    `resource.data` with no envelope, the request id travels in the
+   *    advertisement `q` field, and the decoded metadata is attached to the
+   *    Resource. rngit's `/git/fetch` bundle responses use this shape.
+   *
    * @param {import("../core/resource.js").Resource} resource
    * @returns {Promise<void>}
    * @private
    */
   async _handleResourceResponse(resource) {
+    if (resource.hasMetadata) {
+      const requestId = /** @type {Uint8Array} */ (resource.requestId);
+      if (!requestId || requestId.length !== 16) {
+        log(
+          "Link",
+          "Dropping metadata RESPONSE without request_id",
+          LogLevel.WARNING,
+        );
+        return;
+      }
+      const entry = this.pendingRequests.get(toHex(requestId));
+      if (!entry) {
+        log(
+          "Link",
+          `RESPONSE for unknown REQUEST ${toHex(requestId)}; dropping`,
+          LogLevel.DEBUG,
+        );
+        return;
+      }
+      clearTimeout(entry.timer);
+      this.pendingRequests.delete(toHex(requestId));
+      // Deliver metadata before resolving so callers relying on the
+      // `onMetadata` hook observe it as soon as `await request()` returns.
+      if (entry.onMetadata) entry.onMetadata(resource.metadata);
+      entry.resolve(resource.data);
+      return;
+    }
+
     let decoded;
     try {
       decoded = MicroMsgPack.decode(/** @type {Uint8Array} */ (resource.data));

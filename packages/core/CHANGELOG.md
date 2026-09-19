@@ -1,6 +1,18 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Resource responses with metadata (§10.4 `x` flag), matching Python
+  reference implementation: the sender option `metadata` on `Resource`
+  prepends a `3-byte BE size ‖ msgpack(metadata)` prefix to the
+  hashed/compressed/encrypted blob, and the receiver exposes the decoded
+  value as `Resource.metadata` and strips it from `Resource.data` after the
+  proof handshake. Needed for rngit `/git/fetch` bundle responses.
+- `ResourceResponse` — a §11 request-handler response marker that always
+  answers via the Resource pipeline with response metadata
+- `Link.request()` option `onMetadata(metadata)` — delivers the decoded
+  metadata of metadata-carrying resource responses to the caller
+- `Direction` is now re-exported from the package root.
 
 ## [0.8.2] - 2026-09-19
 ### Changed
