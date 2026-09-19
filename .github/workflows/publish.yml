@@ -73,6 +73,12 @@ jobs:
       - name: Publish @reticulum/core to JSR
         working-directory: packages/core
         run: npx -y jsr publish --allow-dirty
+      - name: Publish @reticulum/lxmf to JSR
+        working-directory: packages/lxmf
+        run: npx -y jsr publish --allow-dirty
+      - name: Publish @reticulum/rfed to JSR
+        working-directory: packages/rfed
+        run: npx -y jsr publish --allow-dirty
       - name: Publish @reticulum/node to JSR
         working-directory: packages/node
         run: npx -y jsr publish --allow-dirty
