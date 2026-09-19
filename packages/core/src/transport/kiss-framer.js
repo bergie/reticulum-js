@@ -4,14 +4,14 @@
  *
  * Used by serial-style interfaces (RNode, AX.25/TTY modems) and, optionally,
  * by stream interfaces that want KISS framing instead of HDLC (e.g.
- * KISS-over-TCP for Python-reference parity). Mirrors the `KISS` class in the
- * Python reference `RNS/Interfaces/TCPInterface.py` and the read loop in
- * `RNS/Interfaces/KISSInterface.py`. See `PROTOCOL-SPEC.md` §8.1.
+ * KISS-over-TCP, for parity with the Python reference). See
+ * `PROTOCOL-SPEC.md` §8.1.
  *
  * A KISS data frame is `FEND | CMD_DATA(port) | escaped(payload) | FEND`. The
  * command byte's high nibble is the port; we strip it (`byte & 0x0F`) so any
  * port's data frame is treated as `CMD_DATA`, exactly like the Python
- * reference ("we only support one HDLC port for now"). Non-data command frames
+ * reference (which supports only one data port for now). Non-data command
+ * frames
  * (radio config, flow control, etc.) are collected but never emitted, so the
  * same unframer can sit on an RNode serial link later without special-casing.
  */
@@ -30,10 +30,10 @@ const CMD_UNKNOWN = 0xfe;
 /**
  * Escapes data using KISS byte-stuffing.
  *
- * Matches the Python reference `KISS.escape` precedence: `0xDB` is escaped
- * first (`0xDB 0xDD`), then `0xC0` (`0xDB 0xDC`). Escaping `FESC` first is
- * essential — the `FEND` escape sequence `0xDB 0xDC` contains a `0xDB`, so a
- * naive `FEND`-first pass would double-escape it.
+ * Escape precedence: `FESC` (0xDB) is escaped first (`0xDB 0xDD`), then
+ * `FEND` (0xC0) (`0xDB 0xDC`). Escaping `FESC` first is essential — the
+ * `FEND` escape sequence `0xDB 0xDC` contains a `0xDB`, so a naive
+ * `FEND`-first pass would double-escape it.
  * @param {Uint8Array} data
  * @returns {Uint8Array}
  */
@@ -109,7 +109,7 @@ export function kissFrame(rawPacket) {
  * `FEND | CMD_DATA | escaped(payload) | FEND`. When `sealRaw` is provided
  * (an interface's {@link import("../interfaces/base.js").Interface#_sealRaw}),
  * the serialised bytes are IFAC-sealed before framing — the byte-level
- * chokepoint that mirrors `RNS.Transport.transmit`.
+ * equivalent of the transport transmit hook.
  * @param {((raw: Uint8Array) => Promise<Uint8Array>) | null} [sealRaw] -
  *   Optional async IFAC seal hook.
  * @returns {TransformStream}
@@ -133,18 +133,17 @@ export function createKissFramerStream(sealRaw = null) {
 /**
  * Creates a TransformStream for KISS un-framing (Bytes -> Packets).
  *
- * Implements the Python reference `KISSInterface.readLoop` state machine byte
- * for byte: it scans for `FEND` boundaries, reads the command byte (port
- * nibble stripped), and accumulates unescaped data only for `CMD_DATA`
- * frames. Non-data frames are silently consumed. Frames exceeding `maxMtu`
- * are discarded (defence against a malicious/malformed peer), matching the
- * Python `len(data_buffer) < self.HW_MTU` guard.
+ * A byte-oriented state machine: it scans for `FEND` boundaries, reads the
+ * command byte (port nibble stripped), and accumulates unescaped data only
+ * for `CMD_DATA` frames. Non-data frames are silently consumed. Frames
+ * exceeding `maxMtu` are discarded (defence against a malicious/malformed
+ * peer), matching the reference implementations' hardware-MTU guard.
  *
  * When `openRaw` is provided (an interface's
  * {@link import("../interfaces/base.js").Interface#_openRaw}), each unframed
  * frame is IFAC-verified/unsealed before deserialisation, and frames that
  * fail verification (or violate the flag-presence rules) are silently
- * dropped — the byte-level chokepoint that mirrors `RNS.Transport.inbound`.
+ * dropped — the byte-level equivalent of the transport inbound hook.
  * @param {typeof import('../core/packet.js').Packet} packetClass
  * @param {((raw: Uint8Array) => Promise<Uint8Array | null>) | null} [openRaw]
  *   - Optional async IFAC open hook; return `null` to drop the frame.

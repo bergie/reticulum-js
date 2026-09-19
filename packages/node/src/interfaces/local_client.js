@@ -4,8 +4,8 @@
  *
  * Connects a local Reticulum program to a running shared instance (daemon) —
  * either a Python `rnsd` or our own `LocalServerInterface` — over a fast
- * loopback socket. Mirrors the Python reference `RNS.Interfaces.LocalInterface.
- * LocalClientInterface`.
+ * loopback socket. Wire-compatible with the Python reference's
+ * LocalClientInterface.
  *
  * The shared-instance socket carries standard HDLC-framed RNS packets (FLAG
  * `0x7E` / ESC `0x7D`), byte-for-byte identical to TCP/RNode interfaces — there
@@ -44,8 +44,8 @@ import {
 import { LogLevel, log } from "@reticulum/core/src/utils/log.js";
 
 /**
- * Resolves the Reticulum configuration directory, mirroring
- * `RNS.Reticulum.__init__` configdir resolution: explicit argument, then
+ * Resolves the Reticulum configuration directory, matching the Python
+ * reference's configdir resolution: explicit argument, then
  * `/etc/reticulum` (if present), then `~/.config/reticulum` (if present), then
  * `~/.reticulum` as the final fallback.
  *
@@ -84,8 +84,8 @@ export function asBool(value) {
 }
 
 /**
- * Coerces a configobj string value to an integer, matching
- * `configobj.Section.as_int` (Python `int(value, 10)`).
+ * Coerces a config-file string value to an integer (base 10, like the
+ * Python reference's config parsing).
  * @param {string} value
  * @returns {number}
  */
@@ -156,8 +156,8 @@ export function loadConfig(options = {}) {
 }
 
 /**
- * The default shared-instance TCP port, matching the Python reference
- * `RNS.Reticulum.local_interface_port` default of `37428`.
+ * The default shared-instance TCP port (37428), matching the Python
+ * reference.
  */
 export const DEFAULT_SHARED_INSTANCE_PORT = 37428;
 
@@ -189,13 +189,14 @@ export function supportsAbstractAfUnix() {
 }
 
 /**
- * Resolves how to reach the local shared instance, mirroring the Python
- * reference `__start_local_interface` / `__apply_config` transport resolution.
+ * Resolves how to reach the local shared instance, matching the Python
+ * reference's shared-instance transport resolution.
  *
  * Defaults (`share_instance = Yes`, port `37428`) match the Python reference
  * constructor defaults; config values override them. On platforms without the
  * abstract AF_UNIX namespace (macOS, Windows) the transport is always `tcp`
- * regardless of `shared_instance_type`, exactly as Python forces it.
+ * regardless of `shared_instance_type`, exactly as the Python reference forces
+ * it.
  * @param {{ configDir?: string }} [options]
  * @returns {SharedInstanceEndpoint}
  */
@@ -219,7 +220,8 @@ export function getSharedInstanceEndpoint(options = {}) {
       ? String(r.shared_instance_type).trim().toLowerCase()
       : undefined;
 
-  // Transport resolution mirrors Python: abstract AF_UNIX is only available on
+  // Transport resolution matches the Python reference: abstract AF_UNIX is
+  // only available on
   // Linux/Android; an explicit `shared_instance_type = tcp` forces TCP even
   // there; everywhere else (incl. macOS/Windows) it's TCP.
   /** @type {("tcp" | "unix")} */
@@ -245,28 +247,27 @@ export function getSharedInstanceEndpoint(options = {}) {
 }
 
 /**
- * Reconnect backoff for a shared-instance client, matching the Python reference
- * `LocalClientInterface.RECONNECT_WAIT` (8s).
+ * Reconnect backoff for a shared-instance client (8 s, matching the Python
+ * reference).
  */
 const RECONNECT_WAIT_SECONDS = 8;
 
 /**
- * The HDLC flag byte (Python `RNS.Interfaces.HDLC.FLAG`, 0x7E). A keepalive
+ * The HDLC flag byte (0x7E). A keepalive
  * frame is an *empty* HDLC frame — two flag bytes back to back, exactly what
- * the Python reference's `LocalClientInterface.send_keepalive` writes.
+ * the Python reference writes for its shared-instance keepalives.
  */
 const HDLC_FLAG = 0x7e;
 
 /**
- * Default spacing between shared-instance keepalive frames. Mirrors the
- * cadence of the Python reference's `phy_keepalive` sends, which are driven by
- * the transport jobs loop (`Transport.interface_jobs_interval` = 5 s).
+ * Default spacing between shared-instance keepalive frames, matching the
+ * Python reference's physical-keepalive cadence (5 s).
  */
 const KEEPALIVE_INTERVAL_MS = 5000;
 
 /**
- * Initial keepalive probe delay, in milliseconds. Mirrors the Python reference
- * `TCP_PROBE_AFTER` (5s) applied to the shared-instance TCP socket.
+ * Initial keepalive probe delay, in milliseconds (5 s, matching the Python
+ * reference).
  */
 const PROBE_AFTER_MS = 5000;
 
@@ -288,7 +289,7 @@ const PROBE_AFTER_MS = 5000;
  * @property {number} [reconnectWait] - Seconds between attempts. Defaults to 8.
  * @property {number} [keepaliveIntervalMs] - Spacing between shared-instance
  *   keepalive frames, in milliseconds. Defaults to 5000, matching the Python
- *   reference's `phy_keepalive` cadence. `0` disables keepalives (an
+ *   reference's keepalive cadence. `0` disables keepalives (an
  *   Android-hosted shared instance will then pause downstream traffic to this
  *   client whenever it has been silent for 12 seconds — see {@link
  *   LocalClientInterface#sendKeepalive}).
@@ -322,15 +323,14 @@ export class LocalClientInterface extends Interface {
       title: "Local Shared Instance Client",
       description:
         "Connects to a locally running shared Reticulum instance (e.g. rnsd) " +
-        "over a loopback socket and shares its interfaces. Mirrors the Python " +
-        "reference LocalClientInterface.",
+        "over a loopback socket and shares its interfaces. Wire-compatible " +
+        "with the Python reference LocalClientInterface.",
       properties: {
         ...base.properties,
         host: {
           type: "string",
           default: "127.0.0.1",
-          description:
-            "Shared instance TCP host (Python config key: implicit 127.0.0.1).",
+          description: "Shared instance TCP host.",
         },
         port: {
           type: "integer",
@@ -338,16 +338,14 @@ export class LocalClientInterface extends Interface {
           maximum: 65535,
           default: 37428,
           examples: [37428, 4242],
-          description:
-            "Shared instance TCP port (Python config key: " +
-            "shared_instance_port; defaults to 37428).",
+          description: "Shared instance TCP port (defaults to 37428).",
         },
         socketPath: {
           type: "string",
           description:
             "Optional Unix domain socket / named pipe path. When set, the " +
-            "interface connects over UDS instead of TCP (Python AF_UNIX " +
-            "abstract socket on Linux).",
+            "interface connects over UDS instead of TCP (matching the Python " +
+            "reference's AF_UNIX abstract socket on Linux).",
         },
         ...reconnectSchemaProperties(),
       },
@@ -363,8 +361,8 @@ export class LocalClientInterface extends Interface {
    * or `null` if `share_instance` is disabled in the config or the endpoint is
    * not currently reachable.
    *
-   * Mirrors the client side of the Python reference
-   * `Reticulum.__start_local_interface`. This is a factory only: it discovers
+   * Wire-compatible with the client half of the Python reference's
+   * shared-instance startup. This is a factory only: it discovers
    * and connects, but does **not** attach the interface to any transport —
    * the caller wires it, e.g. `rns.addInterface(iface, true)`.
    *
@@ -449,8 +447,8 @@ export class LocalClientInterface extends Interface {
 
   /**
    * `true` when this interface is the initiator that connected out to a shared
-   * instance (i.e. this program is *using* a daemon, not being one). Mirrors
-   * the Python reference `LocalClientInterface.is_connected_to_shared_instance`.
+   * instance (i.e. this program is *using* a daemon, not being one), matching
+   * the Python reference.
    * @type {boolean}
    */
   isConnectedToSharedInstance = false;
@@ -490,8 +488,8 @@ export class LocalClientInterface extends Interface {
     /** @type {string|null} */
     this.ifacNetkey = options.passphrase || null;
     /**
-     * Nominal bitrate. Matches `RNS.Interfaces.LocalInterface` (1 Gbit/s) in
-     * the Python reference — the shared-instance Unix/TCP socket is a
+     * Nominal bitrate (1 Gbit/s), matching the Python reference — the
+     * shared-instance Unix/TCP socket is a
      * very-high-bandwidth local hop.
      * @type {number}
      */
@@ -522,16 +520,15 @@ export class LocalClientInterface extends Interface {
   }
 
   /**
-   * Sends an empty HDLC frame over the shared-instance socket, mirroring the
-   * Python reference `LocalClientInterface.send_keepalive` (`phy_keepalive`,
-   * driven by the 5-second transport jobs loop).
+   * Sends an empty HDLC frame over the shared-instance socket, matching the
+   * Python reference's shared-instance keepalive.
    *
    * Why this is non-optional: a shared instance hosted on **Android** (Termux,
    * Sideband's daemon) treats every local client as a potentially-sleeping
    * Android app: after `CLIENT_SLEEP_PAUSE_TIMEOUT` (12 s) without inbound
    * traffic from the client, the daemon **silently drops all downstream
-   * packets** addressed to it (`LocalInterface.process_outgoing` under
-   * `pause_on_client_sleep`) — announces, path responses, link requests and
+   * packets** addressed to it (the reference daemon's client-sleep pause)
+   * — announces, path responses, link requests and
    * messages all vanish while the client looks perfectly connected. Python
    * clients keep that window permanently refreshed with an empty HDLC frame
    * every 5 s; we do the same. The frame is harmless to every receiver — the

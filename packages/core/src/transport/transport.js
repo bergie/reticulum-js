@@ -3,8 +3,9 @@
  * @description Central packet router for a Reticulum node.
  *
  * Routes packets emitted by Interfaces, maintains path and announce tables,
- * and drives Link/Channel establishment. Mirrors the `Transport` class in the
- * Python reference `RNS/Transport.py`.
+ * and drives Link/Channel establishment. microReticulum's `Transport` covers
+ * the same responsibilities for embedded targets and is a useful behavioral
+ * cross-reference.
  */
 
 /* @ts-self-types="../../types/src/transport/transport.d.ts" */
@@ -28,20 +29,19 @@ import { aspectNameHash } from "./discovery.js";
 import { PathState, RoutingTable } from "./router.js";
 
 /**
- * Network MTU in bytes — mirrors `RNS.Reticulum.MTU` (protocol-fixed). Kept
- * locally to avoid a transport↔reticulum import cycle; the canonical static
- * lives on {@link import("../core/reticulum.js").Reticulum}.
+ * Network MTU in bytes (protocol-fixed). Kept locally to avoid a
+ * transport↔reticulum import cycle; the canonical static lives on
+ * {@link import("../core/reticulum.js").Reticulum}.
  */
 const MTU = 500;
 /**
- * Base per-hop timeout in seconds — mirrors `RNS.Reticulum.DEFAULT_PER_HOP_TIMEOUT`
- * (protocol-fixed). See {@link MTU} note on why it's mirrored here.
+ * Base per-hop timeout in seconds (protocol-fixed). See {@link MTU} note on
+ * why it's mirrored here.
  */
 const DEFAULT_PER_HOP_TIMEOUT = 6;
 /**
- * Minimum acceptable interface bitrate in bits/s — mirrors
- * `RNS.Reticulum.MINIMUM_BITRATE` (protocol-fixed). See {@link MTU} note on
- * why it's mirrored here.
+ * Minimum acceptable interface bitrate in bits/s (protocol-fixed). See
+ * {@link MTU} note on why it's mirrored here.
  */
 const MINIMUM_BITRATE = 5;
 
@@ -89,21 +89,21 @@ export class TransportCore extends EventTarget {
 
     // §7.2.2: path-request dedup tags (unique_tag = dest_hash || tag). An
     // insertion-ordered Set gives O(1) has/add plus FIFO eviction of the
-    // oldest entry — the Python reference semantics of a 32,000-entry tag
-    // memory (`Transport.max_pr_tags`) without its O(n) list scans.
+    // oldest entry — the bounded tag-memory semantics of the reference
+    // implementations (32,000 entries) without their O(n) list scans.
     /** @type {Set<string>} */
     this.discoveryPrTags = new Set();
     /** @type {number} */
     this.maxPrTags = 32000;
 
     // §Transport.packet_hashlist: inbound packet-hash dedup ring (two-set
-    // double-buffered, culled at hashlistMaxsize/2, mirroring Python). A leaf
+    // double-buffered, culled at hashlistMaxsize/2). A leaf
     // keeps a small ring; announces are exempt (their random_blob replay
     // protection lives in the RoutingTable). In-memory only for now (#16
     // stretch — persisting it has marginal value across a restart). Entries
-    // are full packet-hash hex strings; at the Python-scale max of one
-    // million that is a real (but bounded) memory footprint — the reference
-    // accepts the same trade with 32-byte hash entries.
+    // are full packet-hash hex strings; at the reference-scale max of one
+    // million that is a real (but bounded) memory footprint — both reference
+    // implementations accept the same trade.
     /** @type {Set<string>} */
     this.packetHashlist = new Set();
     /** @type {Set<string>} */
@@ -111,18 +111,17 @@ export class TransportCore extends EventTarget {
     this.hashlistMaxsize = 1_000_000;
 
     // §Path requests: timestamp (seconds) of the last `path?` request this
-    // node sent per destination (Python `Transport.path_requests`). Feeds the
+    // node sent per destination. Feeds the
     // PATH_REQUEST_MI minimum-interval gate for automated re-requests in
     // {@link requestPathAuto}. Entries older than PATH_REQUEST_GATE_TIMEOUT
     // are culled by the sweep.
     /** @type {Map<string, number>} */
     this.pathRequests = new Map();
 
-    // §In-flight path requests (RNS 1.5.0, Python `Transport.inflight_path_requests`):
-    // destinations with a `path?` request *outstanding and unanswered*. Set
-    // by {@link requestPath}, cleared on a matching announce
-    // (Transport.py:2387) or when we answer a PR ourselves for a local dest
-    // (Transport.py:3508), culled at PATH_REQUEST_GATE_TIMEOUT. This is the
+    // §In-flight path requests (RNS 1.5.0): destinations with a `path?`
+    // request *outstanding and unanswered*. Set by {@link requestPath},
+    // cleared on a matching announce or when we answer a PR ourselves for a
+    // local dest, culled at PATH_REQUEST_GATE_TIMEOUT. This is the
     // held-announce waiting-request exemption (an announce for a dest we
     // asked about must never be delayed past its freshness window) — kept
     // *separate* from {@link pathRequests} so the egress MI gate (which only
@@ -131,9 +130,10 @@ export class TransportCore extends EventTarget {
     /** @type {Map<string, number>} */
     this.inflightPathRequests = new Map();
 
-    // Lazily-started sweep (Python's interface jobs / table culling in
-    // Transport.jobs): drains held announces one per interval and culls stale
-    // path-request entries. Only runs while there is something to do.
+    // Lazily-started sweep (the counterpart of the reference implementations'
+    // interface jobs / table culling): drains held announces one per interval
+    // and culls stale path-request entries. Only runs while there is
+    // something to do.
     /** @type {ReturnType<typeof setInterval>|null} */
     this._sweepTimer = null;
   }
@@ -193,9 +193,10 @@ export class TransportCore extends EventTarget {
       iface.attachTransport(this);
     }
 
-    // Keep interfaces ordered by bitrate (Python `Transport.prioritize_interfaces`,
-    // invoked on transport start + the per-interface jobs loop). JS has no jobs
-    // loop, so we re-sort eagerly on every add/remove — same steady state.
+    // Keep interfaces ordered by bitrate (see {@link prioritizeInterfaces};
+    // the reference implementations re-sort on transport start and from their
+    // jobs loops). JS has no jobs loop, so we re-sort eagerly on every
+    // add/remove — same steady state.
     this.prioritizeInterfaces();
 
     log("Transport", `[+] Transport bound to interface: ${iface.name}`);
@@ -218,22 +219,20 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Re-sorts the interface set by nominal bitrate, highest first, mirroring
-   * the Python reference's `Transport.prioritize_interfaces()`
-   * (`Transport.interfaces.sort(key=lambda i: i.bitrate, reverse=True)`,
-   * wrapped in try/except).
+   * Re-sorts the interface set by nominal bitrate, highest first (matching
+   * `Transport::prioritize_interfaces` in microReticulum).
    *
    * Because outbound routing is path-table driven (a packet goes out the
    * interface its path was learned through), this sort does **not** change
-   * *which* interface carries a given routed packet — same as Python. It
-   * governs **iteration order**: PLAIN/GROUP broadcasts and any "first
-   * available" walk now visit higher-bitrate interfaces first. The genuine
-   * per-bitrate behaviours (link timeouts, announce rate limiting) build on
-   * this and are tracked as Phase 2 of work doc #20.
+   * *which* interface carries a given routed packet. It governs **iteration
+   * order**: PLAIN/GROUP broadcasts and any "first available" walk now visit
+   * higher-bitrate interfaces first. The genuine per-bitrate behaviours
+   * (link timeouts, announce rate limiting) build on this and are tracked as
+   * Phase 2 of work doc #20.
    *
    * Interfaces with a missing/non-numeric/zero bitrate sort last instead of
-   * raising (Python's comparator would throw mid-sort and be swallowed by
-   * its try/except, leaving the list unsorted; we degrade more gracefully).
+   * aborting the sort, so a single misbehaving interface cannot leave the
+   * whole set unsorted.
    */
   prioritizeInterfaces() {
     try {
@@ -246,7 +245,7 @@ export class TransportCore extends EventTarget {
           typeof b?.bitrate === "number" && b.bitrate > 0
             ? b.bitrate
             : -Infinity;
-        return bb - ba; // descending, matching `reverse=True`
+        return bb - ba; // descending, highest bitrate first
       });
       this.interfaces = new Set(ranked);
     } catch (/** @type {any} */ e) {
@@ -311,9 +310,9 @@ export class TransportCore extends EventTarget {
    * @private
    */
   async _routeIncomingPacket(packet, receivingInterface) {
-    // §2.4 / Transport.py inbound (~l.1462): every transit hop — including the
-    // hop to us — increments the hop counter. Announces read this as the
-    // distance-to-us when populating the path table.
+    // §2.4: every transit hop — including the hop to us — increments the hop
+    // counter. Announces read this as the distance-to-us when populating the
+    // path table.
     packet.hops = (packet.hops ?? 0) + 1;
 
     // 1. Log arrival
@@ -438,25 +437,25 @@ export class TransportCore extends EventTarget {
       packet.payload,
     );
     if (!result) {
-      // Python counts a protocol violation for an invalid announce signature
-      // (the blackholed case is transport-mode, #23 — not handled here yet).
-      // validateAnnounce collapses body-too-short / bad-signature / hash-mismatch
-      // into `null`; all three are malformed/spoofed inbound traffic.
+      // An invalid announce signature counts as a protocol violation on the
+      // receiving interface (the blackholed case is transport-mode, #23 —
+      // not handled here yet). validateAnnounce collapses body-too-short /
+      // bad-signature / hash-mismatch into `null`; all three are
+      // malformed/spoofed inbound traffic.
       return receivingInterface?.protocolViolation?.(
         `Invalid announce signature for ${destHex}`,
       );
     }
 
-    // Ingress-control tracking (Python Transport.inbound): every
-    // signature-valid announce counts toward the receiving interface's
-    // announce-frequency window, whether or not the path table accepts it.
-    // Interfaces not deriving from the base class (ad-hoc test doubles)
-    // simply have no ingress control.
+    // §Ingress control: every signature-valid announce counts toward the
+    // receiving interface's announce-frequency window, whether or not the
+    // path table accepts it. Interfaces not deriving from the base class
+    // (ad-hoc test doubles) simply have no ingress control.
     receivingInterface?.receivedAnnounce?.();
 
-    // §Ingress control (Python Transport.inbound): while an announce burst is
-    // latched, announces for *unknown* destinations are held on the receiving
-    // interface for delayed release instead of processed now. Known
+    // §Ingress control: while an announce burst is latched, announces for
+    // *unknown* destinations are held on the receiving interface for delayed
+    // release instead of processed now. Known
     // destinations pass (their re-announce cadence is governed by the
     // random_blob/path-table rules), as do destinations we have an
     // outstanding `path?` request for — the announce we asked to hear about
@@ -506,9 +505,7 @@ export class TransportCore extends EventTarget {
     // §7 path-table population: remember how to reach this destination. The
     // next hop is the transport node that rebroadcast the announce (its id
     // sits in the HEADER_2 transportId slot), or the destination itself when
-    // the announce reached us directly (HEADER_1, 1 hop). Transport.py inbound
-    // (~l.1716/1741) derives `received_from` the same way and stores it as the
-    // path entry's next_hop.
+    // the announce reached us directly (HEADER_1, 1 hop).
     const nextHop = packet.transportId ?? packet.destinationHash;
     const added = this.routingTable.addOrUpdateRoute(packet.destinationHash, {
       nextHop,
@@ -524,9 +521,8 @@ export class TransportCore extends EventTarget {
       );
     }
 
-    // §In-flight path requests (RNS 1.5.0, Transport.py:2387): a validated
-    // announce for this destination resolves any outstanding PR we sent —
-    // pop it so a later announce for the same dest is no longer exempt from
+    // §In-flight path requests (RNS 1.5.0): a validated announce for this
+    // destination resolves any outstanding PR we sent — pop it so a later announce for the same dest is no longer exempt from
     // the held-announce hold (and so the in-flight table doesn't grow
     // unbounded between sweeps).
     this.inflightPathRequests.delete(destHex);
@@ -621,15 +617,14 @@ export class TransportCore extends EventTarget {
 
   /**
    * Minimum interval in seconds between *automated* path re-requests for the
-   * same destination (Python `Transport.PATH_REQUEST_MI`). User-initiated
-   * {@link requestPath} calls are not gated — matching the reference, where
-   * the discipline lives in the jobs-loop rediscovery paths.
+   * same destination. User-initiated {@link requestPath} calls are not gated
+   * — the reference implementations apply the same discipline only in their
+   * automated rediscovery paths.
    */
   static PATH_REQUEST_MI = 20;
   /**
-   * Seconds after which a `path?`-request timestamp is forgotten (Python
-   * `Transport.PATH_REQUEST_GATE_TIMEOUT`). Bounds the waiting-request
-   * exemption window for held announces.
+   * Seconds after which a `path?`-request timestamp is forgotten. Bounds the
+   * waiting-request exemption window for held announces.
    */
   static PATH_REQUEST_GATE_TIMEOUT = 120;
 
@@ -641,9 +636,9 @@ export class TransportCore extends EventTarget {
    * tag is drawn per request so re-requests for the same destination aren't
    * suppressed as duplicates.
    *
-   * Not rate-limited per se (Python `request_path` isn't either); automated
-   * callers should use {@link requestPathAuto}, which enforces the
-   * `PATH_REQUEST_MI` minimum interval per destination.
+   * Not rate-limited per se; automated callers should use
+   * {@link requestPathAuto}, which enforces the `PATH_REQUEST_MI` minimum
+   * interval per destination.
    *
    * @param {Uint8Array} destinationHash - 16-byte destination to discover.
    */
@@ -669,9 +664,8 @@ export class TransportCore extends EventTarget {
       `Requesting path to ${toHex(destinationHash)}`,
       LogLevel.DEBUG,
     );
-    // §Egress tracking (Python marks outbound PRs `is_outbound_pr`; transmit
-    // then calls `interface.sent_path_request()`): each interface this PR
-    // leaves on records a sample for outgoing-PR frequency statistics.
+    // §Egress tracking: each interface this PR leaves on records a sample for
+    // outgoing-PR frequency statistics.
     for (const iface of this.interfaces) {
       iface.sentPathRequest?.();
     }
@@ -688,9 +682,9 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Automated path (re-)request with the reference's discipline (Python
-   * jobs-loop rediscovery): skipped entirely while a usable path is already
-   * known, and rate-limited to one request per {@link TransportCore.PATH_REQUEST_MI}
+   * Automated path (re-)request with the reference implementations' rediscovery
+   * discipline: skipped entirely while a usable path is already known, and
+   * rate-limited to one request per {@link TransportCore.PATH_REQUEST_MI}
    * seconds per destination. Use for machine-triggered re-discovery (link
    * failures, delivery retries); user-initiated discovery uses
    * {@link requestPath} directly.
@@ -702,8 +696,8 @@ export class TransportCore extends EventTarget {
     if (!destinationHash || destinationHash.length !== 16) return false;
     // Skip while a *usable* path is known. A route marked UNRESPONSIVE by a
     // failed proof/link attempt is not usable: request a fresh path so the
-    // response announce rebuilds the route (Python's jobs-loop rediscovery
-    // and LXMF's "link was never activated, retrying path request").
+    // response announce rebuilds the route (the reference's rediscovery
+    // discipline and LXMF's "link was never activated, retrying path request").
     if (
       this.hasPath(destinationHash) &&
       !this.pathIsUnresponsive(destinationHash)
@@ -750,8 +744,9 @@ export class TransportCore extends EventTarget {
     let oversizedTag = false;
     if (data.length > 32) {
       // requesting_transport_instance = data[16:32]  (ignored on a leaf)
-      // Python takes the whole trailing run as the tag, then truncates to 16;
-      // an oversized raw tag is a protocol violation.
+      // The Python reference takes the whole trailing run as the tag, then
+      // truncates to 16; an oversized raw tag counts as a protocol violation
+      // on the receiving interface.
       if (data.length - 32 > 16) oversizedTag = true;
       tagBytes = data.slice(32, 48);
     } else if (data.length > 16) {
@@ -771,10 +766,9 @@ export class TransportCore extends EventTarget {
       return receivingInterface?.protocolViolation?.("Tagless path request");
     }
 
-    // Ingress-control tracking (Python Transport.inbound): every PR with a
-    // parseable tag counts toward the receiving interface's PR-frequency
-    // window — including duplicates, so retransmission floods are visible
-    // to the burst detector.
+    // §Ingress control: every PR with a parseable tag counts toward the
+    // receiving interface's PR-frequency window — including duplicates, so
+    // retransmission floods are visible to the burst detector.
     receivingInterface?.receivedPathRequest?.();
 
     // §7.2.2 dedup on unique_tag = target || tag.
@@ -790,11 +784,10 @@ export class TransportCore extends EventTarget {
       this.discoveryPrTags.delete(oldest);
     }
 
-    // Ingress burst control (Python demotes these to the lowest-priority
-    // bounded TC_INGRESS_LIMITED queue, dropping on overflow; we process
-    // inbound inline, so the equivalent is a silent drop). A latched burst
-    // burns the tag too — matching Python's tag consumption order — but
-    // client retries draw fresh random tags and are unaffected.
+    // §Ingress burst control (the reference demotes these to a lowest-priority
+    // bounded ingress queue, dropping on overflow; we process inbound inline,
+    // so the equivalent is a silent drop). A latched burst burns the tag too,
+    // but client retries draw fresh random tags and are unaffected.
     if (receivingInterface?.shouldIngressLimitPr?.()) {
       receivingInterface.prBurstDrops += 1;
       log(
@@ -824,8 +817,7 @@ export class TransportCore extends EventTarget {
    * @param {import("../interfaces/base.js").Interface|null} sourceInterface
    */
   broadcast(packet, sourceInterface = null) {
-    // §Egress tracking (Python transmit calls `interface.sent_announce()` for
-    // ANNOUNCE packets): the outgoing-announce frequency feeds the rnstatus
+    // §Egress tracking: the outgoing-announce frequency feeds the rnstatus
     // stats surface and, later, the announce-rate-table work (#31 step 6).
     if (packet.packetType === PacketType.ANNOUNCE) {
       for (const iface of this.interfaces) {
@@ -847,7 +839,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Sends a packet toward its destination (Transport.py outbound, ~l.1092).
+   * Sends a packet toward its destination (§Transport.outbound).
    *
    * For routable destination types (SINGLE / LINK) with a known path, the
    * packet is sent on the interface the path was learned through. When the
@@ -871,9 +863,9 @@ export class TransportCore extends EventTarget {
    *   or `null` for any other packet (link DATA, announces, …).
    */
   async sendPacket(packet, linkId = null) {
-    // §RNS 1.5.0 (Packet.send): a packet whose hop count has already reached
-    // PATHFINDER_M (128) is invalid and must not be sent. Matches the receive-
-    // side guard in Packet.deserialize.
+    // §RNS 1.5.0: a packet whose hop count has already reached PATHFINDER_M
+    // (128) is invalid and must not be sent. Matches the receive-side guard
+    // in Packet.deserialize.
     if ((packet.hops ?? 0) >= PATHFINDER_M) {
       log(
         "Transport",
@@ -909,11 +901,10 @@ export class TransportCore extends EventTarget {
     // §7 path-health: a route marked UNRESPONSIVE by a failed proof/link
     // attempt is a confirmed-dead path — routing more packets into it just
     // blackholes them while `hasPath()` stays true, so nothing ever
-    // re-solicits. Expire it (the leaf counterpart of Python
-    // `Transport.expire_path`, which the reference calls from its jobs-loop
-    // link check and LXMF calls after failed delivery attempts) so this send
-    // degrades to the leaf broadcast below and a fresh `path?` request or
-    // announce can rebuild the route.
+    // re-solicits. Expire it (the leaf counterpart of the reference's
+    // `expire_path`, which its jobs-loop link check and LXMF invoke after
+    // failed delivery attempts) so this send degrades to the leaf broadcast
+    // below and a fresh `path?` request or announce can rebuild the route.
     if (route && route.state === PathState.UNRESPONSIVE) {
       log(
         "Transport",
@@ -925,10 +916,10 @@ export class TransportCore extends EventTarget {
     }
 
     if (route) {
-      // §Transport.outbound (~l.1126): send on the interface the path was
-      // learned through, injecting transport headers when >1 hop away. A
-      // hydrated (#16) path entry carries no live interface reference, so fall
-      // back to the default interface until a fresh announce re-associates it.
+      // §Transport.outbound: send on the interface the path was learned
+      // through, injecting transport headers when >1 hop away. A hydrated
+      // (#16) path entry carries no live interface reference, so fall back to
+      // the default interface until a fresh announce re-associates it.
       const iface = route.interface ?? this.defaultInterface;
       if (route.hops > 1 && packet.headerType === HeaderType.HEADER_1) {
         const injected = new Packet({
@@ -979,8 +970,8 @@ export class TransportCore extends EventTarget {
           this.markPathUnresponsive(r.destinationHash);
         },
       });
-      // §Bitrate-adaptive timeout (RNS.Packet.timeout = get_first_hop_timeout):
-      // a slow next hop gets a proportionally longer proof wait.
+      // §Bitrate-adaptive timeout: a slow next hop gets a proportionally
+      // longer proof wait.
       receipt.startTimeout(this.firstHopTimeout(packet.destinationHash) * 1000);
       PacketReceipt.track(receipt);
       return receipt;
@@ -1004,7 +995,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Whether a path is currently known for the destination (Transport.has_path).
+   * Whether a path is currently known for the destination.
    * @param {Uint8Array} destinationHash
    * @returns {boolean}
    */
@@ -1013,8 +1004,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * The hop count to the destination, or `null` if no path is known
-   * (Transport.hops_to).
+   * The hop count to the destination, or `null` if no path is known.
    * @param {Uint8Array} destinationHash
    * @returns {number|null}
    */
@@ -1024,8 +1014,8 @@ export class TransportCore extends EventTarget {
 
   /**
    * The 16-byte address of the next transport hop toward the destination, or
-   * `null` if no path is known (Transport.next_hop). This is the value placed
-   * into HEADER_2 when sending.
+   * `null` if no path is known. This is the value placed into HEADER_2 when
+   * sending.
    * @param {Uint8Array} destinationHash
    * @returns {Uint8Array|null}
    */
@@ -1034,17 +1024,15 @@ export class TransportCore extends EventTarget {
   }
 
   // -----------------------------------------------------------------------
-  // Bitrate-adaptive timeouts (RNS.Transport.first_hop_timeout /
-  // extra_link_proof_timeout) + path-health state (mark_path_*).
+  // Bitrate-adaptive timeouts + path-health state.
   // -----------------------------------------------------------------------
 
   /**
    * The bitrate-adaptive proof timeout for a single hop toward the
-   * destination, in seconds (`Transport.first_hop_timeout`).
+   * destination, in seconds.
    * `MTU * (8 / next_hop_bitrate) + DEFAULT_PER_HOP_TIMEOUT`, falling back to
    * `DEFAULT_PER_HOP_TIMEOUT` when the route or its interface bitrate is
-   * unknown. Used as the proof-wait timeout for an outbound DATA packet
-   * (Python `Packet.timeout = get_first_hop_timeout(...)`).
+   * unknown. Used as the proof-wait timeout for an outbound DATA packet.
    * @param {Uint8Array} destinationHash
    * @returns {number} seconds
    */
@@ -1058,8 +1046,8 @@ export class TransportCore extends EventTarget {
   /**
    * The link-establishment timeout for a destination, in seconds. Combines
    * {@link firstHopTimeout} with a per-hop term: `first_hop_timeout +
-   * DEFAULT_PER_HOP_TIMEOUT * max(1, hops)` (`Link.__init__` ~l.282-283), so a
-   * slow or multi-hop path gets a proportionally longer handshake wait.
+   * DEFAULT_PER_HOP_TIMEOUT * max(1, hops)`, so a slow or multi-hop path gets
+   * a proportionally longer handshake wait.
    * @param {Uint8Array} destinationHash
    * @returns {number} seconds
    */
@@ -1073,8 +1061,8 @@ export class TransportCore extends EventTarget {
 
   /**
    * Extra slack (seconds) to allow for a link proof transiting a given
-   * interface (`Transport.extra_link_proof_timeout`):
-   * `(8 / bitrate) * MTU`. Returns 0 when the interface bitrate is unknown.
+   * interface: `(8 / bitrate) * MTU`. Returns 0 when the interface bitrate is
+   * unknown.
    * @param {import("../interfaces/base.js").Interface|null} iface
    * @returns {number}
    */
@@ -1085,16 +1073,15 @@ export class TransportCore extends EventTarget {
 
   /**
    * The bitrate of the slowest currently-online interface, in bits/s, or
-   * `null` when no online interface reports a usable bitrate
-   * (`Transport.lowest_interface_bitrate`).
+   * `null` when no online interface reports a usable bitrate.
    *
-   * The Python reference caches this in the transport jobs loop
-   * (`prioritize_interfaces`); JS has no jobs loop on the leaf path, so this
-   * is computed on read by iterating the live interface set — cheap (the
-   * set is walked by {@link prioritizeInterfaces} already) and never stale.
-   * Add/remove and online transitions are already reflected through
-   * `addInterface` / `removeInterface` / the `closed` event wiring, so no
-   * extra listeners are needed.
+   * The reference implementations cache this from their transport jobs loop;
+   * JS has no jobs loop on the leaf path, so this is computed on read by
+   * iterating the live interface set — cheap (the set is walked by
+   * {@link prioritizeInterfaces} already) and never stale. Add/remove and
+   * online transitions are already reflected through `addInterface` /
+   * `removeInterface` / the `closed` event wiring, so no extra listeners are
+   * needed.
    * @returns {number|null}
    */
   get lowestInterfaceBitrate() {
@@ -1114,7 +1101,7 @@ export class TransportCore extends EventTarget {
 
   /**
    * A full round trip for an MTU on the slowest currently-online interface,
-   * plus per-hop grace (`Transport.medium_path_timeout`):
+   * plus per-hop grace:
    * `2 * (MTU * 8 / max(lowest_bitrate, MINIMUM_BITRATE)) +
    * DEFAULT_PER_HOP_TIMEOUT`, or `0` when no online interface bitrate is known.
    *
@@ -1131,8 +1118,8 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Marks the path to a destination responsive — a proof/link just succeeded
-   * (`Transport.mark_path_responsive`). No-op if no route is known.
+   * Marks the path to a destination responsive — a proof/link just succeeded.
+   * No-op if no route is known.
    * @param {Uint8Array} destinationHash
    * @returns {boolean}
    */
@@ -1141,9 +1128,9 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Marks the path to a destination unresponsive — a proof/link timed out
-   * (`Transport.mark_path_unresponsive`). Subsequent announce ingestion will
-   * try an alternative path via the `path_is_unresponsive` gate.
+   * Marks the path to a destination unresponsive — a proof/link timed out.
+   * Subsequent announce ingestion will try an alternative path via the
+   * `pathIsUnresponsive` gate.
    * @param {Uint8Array} destinationHash
    * @returns {boolean}
    */
@@ -1152,7 +1139,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Resets the path state to unknown (`Transport.mark_path_unknown_state`).
+   * Resets the path state to unknown.
    * @param {Uint8Array} destinationHash
    * @returns {boolean}
    */
@@ -1161,8 +1148,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Whether the path was marked unresponsive by a failed attempt
-   * (`Transport.path_is_unresponsive`).
+   * Whether the path was marked unresponsive by a failed attempt.
    * @param {Uint8Array} destinationHash
    * @returns {boolean}
    */
@@ -1171,8 +1157,7 @@ export class TransportCore extends EventTarget {
   }
 
   /**
-   * Forgets the path to a destination (`Transport.expire_path`), e.g. on link
-   * teardown.
+   * Forgets the path to a destination, e.g. on link teardown.
    * @param {Uint8Array} destinationHash
    * @returns {boolean}
    */
@@ -1182,9 +1167,7 @@ export class TransportCore extends EventTarget {
 
   /**
    * Rewrites the hop count of a known path, used by link path-rebalancing at
-   * the terminus (`Transport.py` ~l.2276-2310:
-   * `path_entry[IDX_PT_HOPS] = packet.hops`). Leaves the next hop, interface
-   * and liveness state untouched.
+   * the terminus. Leaves the next hop, interface and liveness state untouched.
    * @param {Uint8Array} destinationHash
    * @param {number} hops
    * @returns {boolean}
@@ -1199,9 +1182,6 @@ export class TransportCore extends EventTarget {
    * Convenience wrapper around the standard EventTarget API that filters
    * announces by destination aspect. Only emits callbacks for announces
    * matching the given `app.aspect`.
-   *
-   * Similar to Python Reticulum's `Transport.register_announce_handler`
-   * with an `aspect_filter`.
    *
    * @param {string} app - App name (e.g., "rfed")
    * @param {string} aspect - Aspect string (e.g., "node")
@@ -1236,8 +1216,7 @@ export class TransportCore extends EventTarget {
 
   /**
    * Returns true when an inbound non-announce packet is a duplicate we've
-   * already seen (Transport.packet_filter / packet_hashlist, two-set dedup
-   * ring). Bypasses contexts that legitimately recur or are dedup'd elsewhere
+   * already seen (§Transport.packet_filter, two-set dedup ring). Bypasses contexts that legitimately recur or are dedup'd elsewhere
    * (KEEPALIVE, the RESOURCE / RESOURCE_REQ / RESOURCE_PRF / CACHE_REQUEST /
    * CHANNEL flows). A fresh hash is remembered, and the ring rotates (prev ←
    * current) once {@link packetHashlist} exceeds {@link hashlistMaxsize}/2.
@@ -1249,14 +1228,13 @@ export class TransportCore extends EventTarget {
    * One round of the maintenance sweep: releases **one** held announce per
    * interface (the interface itself enforces the release interval and
    * quiet-frequency gate) and re-injects it into the normal inbound pipeline
-   * — where, per Python re-entry through `Transport.inbound`, the hop count
-   * increments again and a re-latched burst simply re-holds it. Also culls
-   * `path?`-request timestamps older than
+   * — the hop count increments again on re-entry, and a re-latched burst
+   * simply re-holds it. Also culls `path?`-request timestamps older than
    * {@link TransportCore.PATH_REQUEST_GATE_TIMEOUT}.
    *
    * Exposed as a method so embedders and tests can drive it deterministically;
-   * {@link _ensureSweep} schedules it on a 5 s interval (Python
-   * `interface_jobs_interval`).
+   * {@link _ensureSweep} schedules it on a 5 s interval (the reference
+   * implementations' interface-jobs cadence).
    * @private
    */
   async _sweepTick() {
@@ -1281,7 +1259,7 @@ export class TransportCore extends EventTarget {
       }
     }
 
-    // Cull stale path-request timestamps (Python jobs table culling).
+    // Cull stale path-request timestamps (jobs-table culling).
     const now = Date.now() / 1000;
     for (const [destHex, t] of this.pathRequests) {
       if (now > t + TransportCore.PATH_REQUEST_GATE_TIMEOUT) {
@@ -1289,7 +1267,7 @@ export class TransportCore extends EventTarget {
       }
     }
 
-    // Cull stale in-flight path requests (RNS 1.5.0, Transport.jobs).
+    // Cull stale in-flight path requests (RNS 1.5.0).
     for (const [destHex, t] of this.inflightPathRequests) {
       if (now > t + TransportCore.PATH_REQUEST_GATE_TIMEOUT) {
         this.inflightPathRequests.delete(destHex);
@@ -1319,9 +1297,8 @@ export class TransportCore extends EventTarget {
    * Lazily starts the 5 s maintenance sweep ({@link _sweepTick}) while there
    * is held-announce draining or path-request bookkeeping to do; the tick
    * stops the timer again once idle. The timer is detached (`unref`) where
-   * the platform supports it — mirroring Python, whose transport jobs and
-   * release threads are daemons that never keep the process alive on their
-   * own.
+   * the platform supports it — the reference implementations run these jobs
+   * as daemons that never keep the process alive on their own.
    * @private
    */
   _ensureSweep() {

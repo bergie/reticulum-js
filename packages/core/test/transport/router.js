@@ -68,7 +68,7 @@ describe("RoutingTable.addOrUpdateRoute — acceptance rules", () => {
   });
 
   test("a longer path with a newer emission still replaces (Python parity)", () => {
-    // Transport.py: a longer path overrides when emitted more recently than the
+    // matching the Python reference: a longer path overrides when emitted more recently than the
     // stored timebase — recency wins over hop count for live topology changes.
     const table = new RoutingTable();
     const hash = dest();

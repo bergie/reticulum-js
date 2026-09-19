@@ -1,15 +1,14 @@
 /**
  * @module @reticulum/core/src/utils/log.js
  * @description Logging utilities for the Reticulum Network System: log levels,
- * threshold control, and the `log()` emitter. Log levels and names are
- * aligned with the Python RNS reference (`RNS.LOG_*` in `RNS/__init__.py`).
+ * threshold control, and the `log()` emitter. Log levels and names follow
+ * RNS conventions (the familiar `LOG_*` levels).
  */
 
 /**
- * Log levels, aligned with the Python RNS reference
- * (`RNS.LOG_*` in `RNS/__init__.py`).
+ * Log levels, following RNS conventions (the familiar `LOG_*` levels).
  *
- * Names, ordering and numeric values match Python so that
+ * Names, ordering and numeric values match the Python reference so that
  * `RETICULUM_LOG_LEVEL` / `setLogLevel` accept familiar names
  * (`ERROR`, `NOTICE`, `DEBUG`, …) and behave as Reticulum users expect.
  *
@@ -34,7 +33,7 @@ export const LogLevel = {
 /** Environment variable consulted at module load for the initial threshold. */
 export const LOG_LEVEL_ENV = "RETICULUM_LOG_LEVEL";
 
-/** Default threshold when nothing else is configured (Python: `LOG_NOTICE`). */
+/** Default threshold when nothing else is configured. */
 const DEFAULT_LOG_LEVEL = LogLevel.NOTICE;
 
 const LEVEL_BY_NAME = new Map(
@@ -70,9 +69,8 @@ function readEnv(name) {
 
 /**
  * Parses a log level from a name (case-insensitive, e.g. `"DEBUG"`) or a
- * number (Python's numeric scheme). Out-of-range numbers are clamped to
- * `[CRITICAL, EXTREME]`, matching Python's constructor behaviour. Unknown
- * names fall back to `fallback`.
+ * number. Out-of-range numbers are clamped to `[CRITICAL, EXTREME]`.
+ * Unknown names fall back to `fallback`.
  * @param {string | number | undefined} value - name, number, or empty.
  * @param {number} [fallback] - {@link LogLevel} used when `value` is
  *   missing or unrecognised. Defaults to {@link LogLevel.NOTICE}.

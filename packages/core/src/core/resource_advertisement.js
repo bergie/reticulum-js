@@ -32,10 +32,10 @@ export const ResourceFlag = {
  * Represents a RESOURCE_ADV — the advertisement that opens a Resource transfer.
  *
  * The wire form is a single msgpack map (PROTOCOL-SPEC.md §10.4). The byte
- * fields (`h`, `r`, `o`, `m`, `q`) MUST be msgpack `bin` (Python `bytes`), not
+ * fields (`h`, `r`, `o`, `m`, `q`) MUST be msgpack `bin`, not
  * arrays — encoding them via `Array.from(...)` produces a msgpack array and
- * silently breaks Python interop. Keys are emitted in upstream's order so the
- * packed bytes match Python `umsgpack.packb` output for vector testing.
+ * silently breaks Python interop. Keys are emitted in a fixed order so the
+ * packed bytes are deterministic.
  *
  * Note that `r` is the 4-byte integrity/hashmap salt (`get_random_hash()[:4]`),
  * NOT the leading wire prefix that the receiver strips (§10.2 step 3 / §10.8).
@@ -101,8 +101,8 @@ export class ResourceAdvertisement {
    * @returns {Uint8Array}
    */
   pack() {
-    // Key order matches `RNS/Resource.py` ResourceAdvertisement so packed
-    // bytes are comparable against Python vectors. Byte fields are passed as
+    // Fixed key order keeps the packed bytes deterministic and comparable
+    // against Python interop vectors. Byte fields are passed as
     // Uint8Array directly so MicroMsgPack emits `bin` (not an array).
     /** @type {Record<string, any>} */
     const dict = {

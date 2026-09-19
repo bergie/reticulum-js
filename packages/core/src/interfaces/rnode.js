@@ -9,10 +9,9 @@
  * validate handshake, flow control, and the radio-stats parsers — without any
  * I/O of its own. It is browser-safe: a concrete backend (Node.js serial,
  * Web Serial, Web Bluetooth, …) subclasses it and supplies a raw byte stream
- * via the {@link RNodeInterface#_openTransport} hook.
- *
- * Mirrors the Python reference `RNS.Interfaces.RNodeInterface` (serial path)
- * and its `KISS` command class. See work doc #6.
+ * via the {@link RNodeInterface#_openTransport} hook. The command set,
+ * handshake, and flow-control behavior follow the RNode firmware KISS
+ * protocol. See work doc #6.
  */
 
 /* @ts-self-types="../../types/src/interfaces/rnode.d.ts" */
@@ -23,10 +22,9 @@ import { LogLevel, log } from "../utils/log.js";
 import { Interface, reconnectSchemaProperties } from "./base.js";
 
 // ---------------------------------------------------------------------------
-// KISS command constants — a direct port of the Python reference `KISS` class
-// (`RNS/Interfaces/RNodeInterface.py`). The RNode firmware speaks bare command
-// bytes (no TNC port nibble), so unlike the generic KISS framer we do NOT mask
-// the command byte here.
+// KISS command constants (the RNode firmware KISS protocol). The RNode
+// firmware speaks bare command bytes (no TNC port nibble), so unlike the
+// generic KISS framer we do NOT mask the command byte here.
 // ---------------------------------------------------------------------------
 
 /** Frame End / Begin. */
@@ -88,11 +86,11 @@ const ERROR_MODEM_TIMEOUT = 0x06;
 const PLATFORM_ESP32 = 0x80;
 const PLATFORM_NRF52 = 0x70;
 
-/** RSSI offset applied to raw radio RSSI readings, matching the Python ref. */
+/** RSSI offset applied to raw radio RSSI readings. */
 const RSSI_OFFSET = 157;
 
 /**
- * Framebuffer geometry (Python `FB_*` constants). The RNode display is 64×64
+ * Framebuffer geometry. The RNode display is 64×64
  * pixels at 1 bit per pixel: `displayImage` writes it one 8-byte line at a
  * time, and `readFramebuffer` reads back the full 512-byte image.
  */
@@ -109,14 +107,14 @@ const FB_SIZE_BYTES = 512;
  * (CMD_FB_READ) the host writes via `displayImage`.
  */
 const DISPLAY_READ_SIZE = 1024;
-/** Maximum encoded length of an ID callsign beacon, in bytes (Python parity). */
+/** Maximum encoded length of an ID callsign beacon, in bytes. */
 const CALLSIGN_MAX_LEN = 32;
-/** Default display-read poll interval, in seconds (Python `DISPLAY_READ_INTERVAL`). */
+/** Default display-read poll interval, in seconds. */
 const DISPLAY_READ_INTERVAL = 1.0;
 
 /**
  * The full KISS command byte table, exported for backends, tests, and tooling
- * (e.g. a future `rnodeconf`-equivalent). Mirrors the Python `KISS` class.
+ * (e.g. a future `rnodeconf`-equivalent).
  */
 export const KISS = Object.freeze({
   FEND,
@@ -214,32 +212,29 @@ export const KISS = Object.freeze({
  *   been transmitting (percent); `channelLoadShort`/`channelLoadLong` are the
  *   share of time the channel was occupied by anyone (percent). `rssi` is the
  *   last received packet's RSSI; `currentRssi` is the live carrier-sense
- *   reading. Mirrors the Python reference `r_*` fields.
+ *   reading.
  */
 
 /**
  * @typedef {Object} RNodeBaseOptions
- * @property {number} frequency - Centre frequency in Hz (Python: frequency).
- * @property {number} bandwidth - LoRa bandwidth in Hz (Python: bandwidth).
- * @property {number} txPower - TX power in dBm (Python: txpower).
- * @property {number} spreadingFactor - LoRa spreading factor 5–12 (Python:
- *   spreadingfactor).
- * @property {number} codingRate - LoRa coding rate 5–8 (Python: codingrate).
+ * @property {number} frequency - Centre frequency in Hz.
+ * @property {number} bandwidth - LoRa bandwidth in Hz.
+ * @property {number} txPower - TX power in dBm.
+ * @property {number} spreadingFactor - LoRa spreading factor 5–12.
+ * @property {number} codingRate - LoRa coding rate 5–8.
  * @property {boolean} [flowControl] - Gate outbound packets on the radio's
- *   CMD_READY signal (one in flight at a time). Defaults to `false` (Python:
- *   flow_control).
+ *   CMD_READY signal (one in flight at a time). Defaults to `false`.
  * @property {number} [airtimeLimitShort] - Optional short-term airtime limit,
- *   0–100 percent (Python: airtime_limit_short).
+ *   0–100 percent.
  * @property {number} [airtimeLimitLong] - Optional long-term airtime limit,
- *   0–100 percent (Python: airtime_limit_long).
+ *   0–100 percent.
  * @property {number} [idInterval] - Optional ID beacon interval in seconds.
  *   When set together with `idCallsign`, the interface transmits the callsign
  *   as a raw KISS data frame that often after its first outbound packet, then
  *   again `idInterval` seconds after each subsequent first transmission in a
- *   quiet window (Python: id_interval).
+ *   quiet window.
  * @property {string | Uint8Array | number[]} [idCallsign] - Optional ID
- *   callsign to beacon. Strings are UTF-8 encoded; max 32 encoded bytes
- *   (Python: id_callsign).
+ *   callsign to beacon. Strings are UTF-8 encoded; max 32 encoded bytes.
  * @property {number} [ifacSize] - Optional IFAC size in bytes. Defaults to 0.
  * @property {string} [networkName] - Shared IFAC network name
  *   (`ifac_netname`); both endpoints must match.
@@ -247,18 +242,15 @@ export const KISS = Object.freeze({
  *   both endpoints must match.
  * @property {string} [name] - Human-readable interface name.
  * @property {number} [detectTimeout] - Seconds to wait for the detect
- *   handshake. Defaults to 5 (Python TCP/BLE detect timeout) — the serial path
- *   is near-instant.
+ *   handshake. Defaults to 5 — the serial path is near-instant.
  * @property {number} [validateTimeout] - Seconds to wait for the post-config
- *   radio-state echo. Defaults to 2 (Python `validateRadioState` sleep).
+ *   radio-state echo. Defaults to 2.
  * @property {number} [postOpenDelayMs] - Milliseconds to wait between opening
  *   the transport and probing the device, giving the firmware time to settle
- *   after the port opens. Defaults to 2000 (Python `sleep(2.0)` in
- *   `configure_device`).
+ *   after the port opens. Defaults to 2000.
  * @property {boolean} [autoReconnect] - Reconnect after the port drops.
  *   Defaults to `true`.
- * @property {number} [reconnectWait] - Seconds between attempts (default 5,
- *   matching `RNodeInterface.RECONNECT_WAIT`).
+ * @property {number} [reconnectWait] - Seconds between attempts (default 5).
  * @property {number|null} [maxReconnectTries] - Attempt cap, or `null` for
  *   unlimited. Defaults to unlimited.
  * @property {number} [connectTimeout] - Per-attempt open timeout in seconds.
@@ -296,8 +288,7 @@ export class RNodeInterface extends Interface {
       description:
         "Transport-agnostic base for LoRa RNode interfaces. Implements the " +
         "full KISS/RNode protocol; a concrete backend supplies the byte " +
-        "transport. Mirrors the Python reference RNodeInterface radio " +
-        "parameters.",
+        "transport.",
       properties: {
         ...base.properties,
         frequency: {
@@ -305,59 +296,54 @@ export class RNodeInterface extends Interface {
           minimum: 137000000,
           maximum: 3000000000,
           examples: [868000000],
-          description: "Centre frequency in Hz (Python config key: frequency).",
+          description: "Centre frequency in Hz.",
         },
         bandwidth: {
           type: "integer",
           minimum: 7800,
           maximum: 1625000,
           examples: [125000],
-          description: "LoRa bandwidth in Hz (Python config key: bandwidth).",
+          description: "LoRa bandwidth in Hz.",
         },
         txPower: {
           type: "integer",
           minimum: 0,
           maximum: 37,
           examples: [17],
-          description: "TX power in dBm (Python config key: txpower).",
+          description: "TX power in dBm.",
         },
         spreadingFactor: {
           type: "integer",
           minimum: 5,
           maximum: 12,
           examples: [7, 8, 12],
-          description:
-            "LoRa spreading factor (Python config key: spreadingfactor).",
+          description: "LoRa spreading factor.",
         },
         codingRate: {
           type: "integer",
           minimum: 5,
           maximum: 8,
           examples: [5, 6, 8],
-          description: "LoRa coding rate (Python config key: codingrate).",
+          description: "LoRa coding rate.",
         },
         flowControl: {
           type: "boolean",
           default: false,
           description:
             "Gate outbound packets on the radio CMD_READY signal so only one " +
-            "is in flight at a time (Python config key: flow_control).",
+            "is in flight at a time.",
         },
         airtimeLimitShort: {
           type: "number",
           minimum: 0,
           maximum: 100,
-          description:
-            "Optional short-term airtime limit, percent (Python config key: " +
-            "airtime_limit_short).",
+          description: "Optional short-term airtime limit, percent.",
         },
         airtimeLimitLong: {
           type: "number",
           minimum: 0,
           maximum: 100,
-          description:
-            "Optional long-term airtime limit, percent (Python config key: " +
-            "airtime_limit_long).",
+          description: "Optional long-term airtime limit, percent.",
         },
         idInterval: {
           type: "number",
@@ -365,29 +351,24 @@ export class RNodeInterface extends Interface {
           description:
             "Optional ID beacon interval in seconds. When set with idCallsign, " +
             "the interface transmits the callsign this often after its first " +
-            "outbound packet (Python config key: id_interval).",
+            "outbound packet.",
         },
         idCallsign: {
           type: "string",
           description:
-            "Optional ID callsign to beacon (UTF-8; max 32 encoded bytes). " +
-            "Python config key: id_callsign.",
+            "Optional ID callsign to beacon (UTF-8; max 32 encoded bytes).",
         },
         detectTimeout: {
           type: "number",
           minimum: 0,
           default: 5,
-          description:
-            "Seconds to wait for the detect handshake response (Python " +
-            "TCP/BLE detect timeout).",
+          description: "Seconds to wait for the detect handshake response.",
         },
         validateTimeout: {
           type: "number",
           minimum: 0,
           default: 2,
-          description:
-            "Seconds to wait for the post-config radio-state echo (Python " +
-            "validateRadioState sleep).",
+          description: "Seconds to wait for the post-config radio-state echo.",
         },
         ...reconnectSchemaProperties(),
       },
@@ -402,42 +383,42 @@ export class RNodeInterface extends Interface {
     };
   }
 
-  /** Hardware MTU for the LoRa path, matching the Python `HW_MTU = 508`. */
+  /** Hardware MTU for the LoRa path (508 bytes). */
   static HW_MTU = 508;
-  /** Default IFAC size, matching the Python `DEFAULT_IFAC_SIZE = 8`. */
+  /** Default IFAC size in bytes. */
   static DEFAULT_IFAC_SIZE = 8;
   /** Minimum supported frequency in Hz. */
   static FREQ_MIN = 137000000;
   /** Maximum supported frequency in Hz. */
   static FREQ_MAX = 3000000000;
-  /** RSSI offset applied to raw radio RSSI readings, matching the Python ref. */
+  /** RSSI offset applied to raw radio RSSI readings. */
   static RSSI_OFFSET = 157;
   /** Minimum required firmware major version. */
   static REQUIRED_FW_VER_MAJ = 1;
   /** Minimum required firmware minor version. */
   static REQUIRED_FW_VER_MIN = 52;
-  /** Framebuffer width in pixels (Python `FB_PIXEL_WIDTH`). */
+  /** Framebuffer width in pixels. */
   static FB_PIXEL_WIDTH = FB_PIXEL_WIDTH;
-  /** Framebuffer bits per pixel (Python `FB_BITS_PER_PIXEL`). */
+  /** Framebuffer bits per pixel. */
   static FB_BITS_PER_PIXEL = FB_BITS_PER_PIXEL;
-  /** Pixels packed per framebuffer byte (Python `FB_PIXELS_PER_BYTE`). */
+  /** Pixels packed per framebuffer byte. */
   static FB_PIXELS_PER_BYTE = FB_PIXELS_PER_BYTE;
-  /** Bytes per framebuffer line (Python `FB_BYTES_PER_LINE`). */
+  /** Bytes per framebuffer line. */
   static FB_BYTES_PER_LINE = FB_BYTES_PER_LINE;
   /** Full framebuffer size in bytes. */
   static FB_SIZE_BYTES = FB_SIZE_BYTES;
-  /** Display snapshot size in bytes (CMD_DISP_READ, Python parity). */
+  /** Display snapshot size in bytes (CMD_DISP_READ). */
   static DISPLAY_READ_SIZE = DISPLAY_READ_SIZE;
-  /** Default display-read poll interval in seconds (Python parity). */
+  /** Default display-read poll interval in seconds. */
   static DISPLAY_READ_INTERVAL = DISPLAY_READ_INTERVAL;
-  /** Maximum encoded ID callsign beacon length in bytes (Python parity). */
+  /** Maximum encoded ID callsign beacon length in bytes. */
   static CALLSIGN_MAX_LEN = CALLSIGN_MAX_LEN;
 
   /**
    * Creates an RNode interface.
    *
-   * Validates the radio configuration (throwing on invalid values, matching
-   * the Python reference constructor) but performs **no** I/O — call
+   * Validates the radio configuration (throwing on invalid values) but
+   * performs **no** I/O — call
    * {@link RNodeInterface#connect} to open the transport and bring the radio
    * up. Subclasses must implement {@link RNodeInterface#_openTransport}.
    * @param {RNodeBaseOptions} options
@@ -470,8 +451,8 @@ export class RNodeInterface extends Interface {
     this.idInterval =
       options.idInterval === undefined ? null : options.idInterval;
     this.idCallsign = encodeCallsign(options.idCallsign);
-    // The beacon fires only when both an interval and a callsign are configured
-    // (Python: `should_id = id_interval and id_callsign`).
+    // The beacon fires only when both an interval and a callsign are
+    // configured.
     this.shouldId = this.idCallsign !== null && this.idInterval !== null;
     this.detectTimeout =
       options.detectTimeout === undefined ? 5 : options.detectTimeout;
@@ -486,12 +467,12 @@ export class RNodeInterface extends Interface {
     this.initiator = true;
     /**
      * Nominal bitrate. Starts at 0 and is computed from the echoed LoRa
-     * parameters once the radio reports them (Python parity).
+     * parameters once the radio reports them.
      * @type {number}
      */
     this.bitrate = 0;
 
-    // Bytes transferred (Python `rxb`/`txb`).
+    // Bytes transferred.
     this.rxb = 0;
     this.txb = 0;
 
@@ -500,7 +481,7 @@ export class RNodeInterface extends Interface {
 
     this._validateConfig();
 
-    // Radio state echoed back by the firmware (Python `r_*` fields).
+    // Radio state echoed back by the firmware.
     /** @type {number | null} */ this.rFrequency = null;
     /** @type {number | null} */ this.rBandwidth = null;
     /** @type {number | null} */ this.rTxPower = null;
@@ -516,8 +497,7 @@ export class RNodeInterface extends Interface {
     this.rRandom = null;
     this.rSymbolTimeMs = null;
     this.rSymbolRate = null;
-    // §CMD_STAT_CHTM telemetry (Python `r_airtime_*` / `r_channel_load_*` /
-    // `r_current_rssi` / `r_noise_floor` / `r_interference`). Airtime is the
+    // §CMD_STAT_CHTM telemetry. Airtime is the
     // share of time the radio itself has been transmitting; channel load is
     // the share of time the channel was occupied (by us, peers, or noise).
     // Both are reported as percent in short/long windows.
@@ -528,7 +508,7 @@ export class RNodeInterface extends Interface {
     this.rCurrentRssi = null;
     this.rNoiseFloor = null;
     this.rInterference = null;
-    // §CMD_STAT_PHYPRM (Python `r_preamble_*` / `r_csma_*`).
+    // §CMD_STAT_PHYPRM.
     this.rPreambleSymbols = null;
     this.rPreambleTimeMs = null;
     this.rCsmaSlotTimeMs = null;
@@ -536,17 +516,15 @@ export class RNodeInterface extends Interface {
     this.rCsmaCwBand = null;
     this.rCsmaCwMin = null;
     this.rCsmaCwMax = null;
-    // Echoed configured airtime limits (Python `r_st_alock` / `r_lt_alock`),
-    // percent.
+    // Echoed configured airtime limits, percent.
     this.rStAlock = null;
     this.rLtAlock = null;
     this.rBatteryState = 0;
     this.rBatteryPercent = 0;
     this.rTemperature = null;
 
-    // Display snapshot (Python `r_disp`/`r_disp_readtime`/`r_disp_latency`),
-    // returned by CMD_DISP_READ as a 1024-byte image. Separate from the
-    // host-writable framebuffer (CMD_FB_READ).
+    // Display snapshot, returned by CMD_DISP_READ as a 1024-byte image.
+    // Separate from the host-writable framebuffer (CMD_FB_READ).
     /** @type {Uint8Array | null} */ this.rDisp = null;
     /** @type {number | null} */ this.rDispReadTime = null;
     /** @type {number | null} */ this.rDispLatency = null;
@@ -568,18 +546,17 @@ export class RNodeInterface extends Interface {
     this.firmwareOk = false;
     /** @type {{error: number, description: string}[]} */ this.hwErrors = [];
 
-    // Flow control / outbound queue (Python `interface_ready`/`packet_queue`).
+    // Flow control / outbound queue.
     this.interfaceReady = false;
     /**
      * Outbound queue. Each entry is the already-serialized raw RNS payload plus
      * a flag distinguishing ordinary packets from the raw id-callsign beacon
-     * (which, like Python, is framed as a CMD_DATA payload without being a real
-     * Packet).
+     * (which is framed as a CMD_DATA payload without being a real Packet).
      * @type {{ raw: Uint8Array, isBeacon: boolean }[]}
      */
     this._packetQueue = [];
 
-    // ID callsign beacon (Python `first_tx`/`should_id`). The beacon arms on the
+    // ID callsign beacon. The beacon arms on the
     // first ordinary outbound transmission and fires `idInterval` seconds later;
     // transmitting the beacon itself clears the timestamp so it re-arms only on
     // the next ordinary packet.
@@ -616,7 +593,6 @@ export class RNodeInterface extends Interface {
 
   /**
    * Validates the radio configuration, throwing on any out-of-range value.
-   * Matches the Python reference constructor checks.
    * @private
    */
   _validateConfig() {
@@ -717,8 +693,8 @@ export class RNodeInterface extends Interface {
    *
    * On a first-attempt failure with auto-reconnect enabled, the promise rejects
    * (so the caller knows) but the reconnect loop keeps retrying in the
-   * background — matching the Python reference, which spawns a reconnect thread
-   * on the first failure.
+   * background — matching the Python reference, which keeps retrying after the
+   * first failure.
    * @returns {Promise<void>}
    */
   async connect() {
@@ -830,7 +806,7 @@ export class RNodeInterface extends Interface {
   }
 
   // -----------------------------------------------------------------------
-  // Handshake: detect → initRadio → validate (Python `configure_device`)
+  // Handshake: detect → initRadio → validate
   // -----------------------------------------------------------------------
 
   /**
@@ -842,20 +818,19 @@ export class RNodeInterface extends Interface {
   async _configureDevice() {
     this._resetRadioState();
     this._startReadLoop();
-    // Mirrors the Python `sleep(2.0)` before kicking off detection, giving the
-    // firmware a moment after the port opens.
+    // Give the firmware a moment to settle after the port opens before kicking
+    // off detection.
     if (this.postOpenDelayMs > 0) await sleep(this.postOpenDelayMs);
 
     this.detect();
     // Re-send the detect probe periodically while waiting for a response.
-    // Python sends it once and (for serial) only waits 0.2s, but ESP32-based
-    // boards (Heltec, T-Beam, ...) reset when the host opens the serial port
-    // (DTR/RTS glitch through the auto-reset circuit) and can boot slower than
-    // the post-open delay, so the one-shot probe can hit a booting device and
-    // be lost. rnodeconf — the reference tool for this situation — sleeps 2.5s
-    // before probing (`device_probe`). Re-probing is idempotent on the wire
-    // (the firmware just answers each query) and catches the device whenever
-    // it becomes ready, without diverging from the Python protocol.
+    // The Python reference sends it once and (for serial) waits only 0.2 s,
+    // but ESP32-based boards (Heltec, T-Beam, ...) reset when the host opens
+    // the serial port (DTR/RTS glitch through the auto-reset circuit) and can
+    // boot slower than the post-open delay, so a one-shot probe can hit a
+    // booting device and be lost. Re-probing is idempotent on the wire (the
+    // firmware just answers each query) and catches the device whenever it
+    // becomes ready, without changing the on-wire protocol.
     const detected = await this._waitFor(
       () => this.detected,
       this.detectTimeout * 1000,
@@ -866,14 +841,14 @@ export class RNodeInterface extends Interface {
       throw new Error(`Could not detect RNode device for ${this.name}`);
     }
     // Display capability is known once the platform echoes back (ESP32 and
-    // NRF52 boards carry a screen); other platforms stay headless. Mirrors the
-    // Python `self.display = True` gate.
+    // NRF52 boards carry a screen); other platforms stay headless.
     this.display =
       this.platform === PLATFORM_ESP32 || this.platform === PLATFORM_NRF52;
     // The firmware version is reported asynchronously (in response to the
     // CMD_FW_VERSION probe sent by `detect()`). Wait for it, then validate; if
-    // the device never reports a version, warn and proceed (Python only aborts
-    // when a *too-old* version is reported, not when none is).
+    // the device never reports a version, warn and proceed (the Python
+    // reference only aborts when a *too-old* version is reported, not when
+    // none is).
     const gotFw = await this._waitFor(
       () => this.fwVersionReceived,
       this.detectTimeout * 1000,
@@ -903,8 +878,8 @@ export class RNodeInterface extends Interface {
   }
 
   /**
-   * Sends the detect + firmware/platform/MCU query sequence, matching the
-   * Python `detect()` byte-for-byte (four frames sharing FEND boundaries).
+   * Sends the detect + firmware/platform/MCU query sequence (four frames
+   * sharing FEND boundaries).
    */
   detect() {
     const frame = new Uint8Array([
@@ -925,17 +900,16 @@ export class RNodeInterface extends Interface {
     this._rawWrite(frame);
   }
 
-  /** Sends the host-leave command (Python `leave()`). */
+  /** Sends the host-leave command. */
   leave() {
     this._sendCommand(CMD_LEAVE, [0xff]);
   }
 
   /**
    * Forces a hardware reset of the RNode. Sends CMD_RESET with the 0xF8 reset
-   * code, then waits for the device to reboot (Python `hard_reset`, which
-   * sleeps 2.25s). A rebooting ESP32 reports CMD_RESET 0xF8 once it is back,
-   * which the read loop treats as a connection loss (→ reconnect). No-op before
-   * connect.
+   * code, then waits for the device to reboot. A rebooting ESP32 reports
+   * CMD_RESET 0xF8 once it is back, which the read loop treats as a connection
+   * loss (→ reconnect). No-op before connect.
    * @returns {Promise<void>}
    */
   async hardReset() {
@@ -944,8 +918,7 @@ export class RNodeInterface extends Interface {
   }
 
   /**
-   * Applies the configured radio parameters and powers the radio on. Mirrors
-   * the Python `initRadio()` ordering.
+   * Applies the configured radio parameters and powers the radio on.
    * @private
    */
   _initRadio() {
@@ -997,7 +970,7 @@ export class RNodeInterface extends Interface {
   }
 
   /**
-   * Sets the radio power state (on/off). Mirrors Python `setRadioState`.
+   * Sets the radio power state (on/off).
    * @param {number} state - RADIO_STATE_ON / RADIO_STATE_OFF.
    * @private
    */
@@ -1006,16 +979,14 @@ export class RNodeInterface extends Interface {
   }
 
   // -----------------------------------------------------------------------
-  // Framebuffer / display (Python `enable_external_framebuffer`,
-  // `disable_external_framebuffer`, `write_framebuffer`, `display_image`,
-  // `read_framebuffer`). Only devices that report a display (ESP32/NRF52)
+  // Framebuffer / display. Only devices that report a display (ESP32/NRF52)
   // respond; on headless hardware these are no-ops that log a warning.
   // -----------------------------------------------------------------------
 
   /**
    * Enables host control of the on-device display (external framebuffer mode)
-   * so that {@link RNodeInterface#displayImage} output is shown. Mirrors Python
-   * `enable_external_framebuffer`. No-op on headless devices.
+   * so that {@link RNodeInterface#displayImage} output is shown. No-op on
+   * headless devices.
    */
   enableExternalFramebuffer() {
     if (!this._hasDisplay("enableExternalFramebuffer")) return;
@@ -1023,8 +994,8 @@ export class RNodeInterface extends Interface {
   }
 
   /**
-   * Returns control of the display to the device firmware. Mirrors Python
-   * `disable_external_framebuffer`. No-op on headless devices.
+   * Returns control of the display to the device firmware. No-op on headless
+   * devices.
    */
   disableExternalFramebuffer() {
     if (!this._hasDisplay("disableExternalFramebuffer")) return;
@@ -1034,7 +1005,7 @@ export class RNodeInterface extends Interface {
   /**
    * Writes one {@link RNodeInterface.FB_BYTES_PER_LINE}-byte line to the
    * framebuffer at the given line index (0-based). The payload
-   * `[line, ...lineData]` is KISS-escaped, matching Python `write_framebuffer`.
+   * `[line, ...lineData]` is KISS-escaped.
    * @param {number} line
    * @param {Uint8Array | number[]} lineData
    */
@@ -1049,8 +1020,7 @@ export class RNodeInterface extends Interface {
   /**
    * Writes a full image to the framebuffer, one
    * {@link RNodeInterface.FB_BYTES_PER_LINE}-byte line at a time. Trailing
-   * bytes that do not fill a complete line are ignored. Mirrors Python
-   * `display_image`.
+   * bytes that do not fill a complete line are ignored.
    * @param {Uint8Array | number[]} imageData
    * @returns {number} The number of complete lines written.
    */
@@ -1073,8 +1043,7 @@ export class RNodeInterface extends Interface {
    * Requests the current 512-byte framebuffer contents and resolves once the
    * device has echoed them back (or after `timeoutMs`). The image is also kept
    * on {@link RNodeInterface#rFrameBuffer}; the measured round-trip latency is
-   * on {@link RNodeInterface#rFrameBufferLatency}. Mirrors Python
-   * `read_framebuffer`.
+   * on {@link RNodeInterface#rFrameBufferLatency}.
    * @param {number} [timeoutMs=2000]
    * @returns {Promise<Uint8Array | null>} The framebuffer, or null on timeout
    *   or on a headless device.
@@ -1096,7 +1065,7 @@ export class RNodeInterface extends Interface {
    * Requests the current 1024-byte on-device display snapshot and resolves once
    * the device echoes it back (or after `timeoutMs`). The image is kept on
    * {@link RNodeInterface#rDisp}; the round-trip latency is on
-   * {@link RNodeInterface#rDispLatency}. Mirrors Python `read_display`. This is
+   * {@link RNodeInterface#rDispLatency}. This is
    * distinct from {@link RNodeInterface#readFramebuffer} (the host-writable
    * 512-byte framebuffer). No-op on headless devices.
    * @param {number} [timeoutMs=2000]
@@ -1114,8 +1083,8 @@ export class RNodeInterface extends Interface {
 
   /**
    * Begins periodically polling the on-device display, refreshing
-   * {@link RNodeInterface#rDisp} every `intervalSeconds`. Mirrors Python
-   * `start_display_updates`. No-op on headless devices. Call
+   * {@link RNodeInterface#rDisp} every `intervalSeconds`. No-op on headless
+   * devices. Call
    * {@link RNodeInterface#stopDisplayUpdates} to stop.
    * @param {number} [intervalSeconds] - Poll interval in seconds; defaults to
    *   {@link RNodeInterface.DISPLAY_READ_INTERVAL} (1.0).
@@ -1159,7 +1128,8 @@ export class RNodeInterface extends Interface {
 
   /**
    * Validates that the firmware meets the minimum required version. Throws if
-   * it does not (Python panics; we surface a config error instead).
+   * it does not (the Python reference panics here; we surface a config error
+   * instead).
    * @private
    */
   _validateFirmware() {
@@ -1178,8 +1148,8 @@ export class RNodeInterface extends Interface {
 
   /**
    * Waits for the radio to echo back its configured parameters, then compares
-   * them against the requested configuration. Mirrors Python
-   * `validateRadioState` (with a wait instead of a fixed sleep for robustness).
+   * them against the requested configuration (a wait instead of the Python
+   * reference's fixed sleep, for robustness).
    * @returns {Promise<boolean>}
    * @private
    */
@@ -1265,14 +1235,14 @@ export class RNodeInterface extends Interface {
   }
 
   // -----------------------------------------------------------------------
-  // Outbound: framing + flow control (Python `process_outgoing`/`process_queue`)
+  // Outbound: framing + flow control
   // -----------------------------------------------------------------------
 
   /**
    * Sends a packet, honouring flow control. If the radio is online and ready
    * the packet is transmitted immediately (and, with flow control, the next one
-   * is gated on CMD_READY); otherwise it is queued for later. Mirrors the
-   * Python reference `process_outgoing`. Sending a packet also arms the ID
+   * is gated on CMD_READY); otherwise it is queued for later. Sending a packet
+   * also arms the ID
    * beacon timer (see {@link RNodeInterface#_armIdBeacon}).
    * @param {import("../core/packet.js").Packet} packet
    */
@@ -1305,10 +1275,9 @@ export class RNodeInterface extends Interface {
   }
 
   /**
-   * Updates the ID-beacon timestamp around a transmission, matching the Python
-   * `process_outgoing` first_tx logic: an ordinary packet arms the beacon on
-   * its first transmission; the beacon itself clears the timestamp (so it
-   * re-arms only on the next ordinary packet).
+   * Updates the ID-beacon timestamp around a transmission: an ordinary packet
+   * arms the beacon on its first transmission; the beacon itself clears the
+   * timestamp (so it re-arms only on the next ordinary packet).
    * @param {boolean} isBeacon
    * @private
    */
@@ -1323,7 +1292,7 @@ export class RNodeInterface extends Interface {
 
   /**
    * Drains one queued item on CMD_READY (or marks the interface ready when the
-   * queue is empty). Mirrors the Python reference `process_queue`.
+   * queue is empty).
    * @private
    */
   _processQueue() {
@@ -1344,8 +1313,8 @@ export class RNodeInterface extends Interface {
 
   /**
    * Transmits the configured id-callsign beacon as a raw KISS data frame,
-   * honouring flow control exactly like an ordinary packet (Python
-   * `process_outgoing(self.id_callsign)`). No-op unless `idCallsign` is set.
+   * honouring flow control exactly like an ordinary packet. No-op unless
+   * `idCallsign` is set.
    * @private
    */
   _sendIdBeacon() {
@@ -1363,8 +1332,7 @@ export class RNodeInterface extends Interface {
 
   /**
    * Arms the id beacon to fire `idInterval` seconds after the first ordinary
-   * outbound transmission. No-op if beacons are disabled or already armed
-   * (Python only sets `first_tx` when it is `None`).
+   * outbound transmission. No-op if beacons are disabled or already armed.
    * @private
    */
   _armIdBeacon() {
@@ -1411,8 +1379,7 @@ export class RNodeInterface extends Interface {
    * Builds and writes a single KISS command frame: `FEND | command | payload | FEND`.
    * The payload is KISS-escaped only when `escape` is set (frequency/bandwidth/
    * airtime-lock payloads carry bytes that may collide with FEND/FESC; the
-   * single-byte commands and detect/leave do not). Mirrors the per-command
-   * `KISS.escape` usage in the Python reference.
+   * single-byte commands and detect/leave do not).
    * @param {number} command
    * @param {number[]} payload
    * @param {boolean} [escapePayload=false]
@@ -1430,7 +1397,7 @@ export class RNodeInterface extends Interface {
   }
 
   // -----------------------------------------------------------------------
-  // Inbound: the KISS read-loop state machine (Python `readLoop`)
+  // Inbound: the KISS read-loop state machine
   // -----------------------------------------------------------------------
 
   /**
@@ -1513,13 +1480,11 @@ export class RNodeInterface extends Interface {
   /**
    * Feeds a chunk of raw bytes through the KISS state machine, dispatching
    * `packet` events for CMD_DATA frames and updating radio state for every
-   * other command. A byte-for-byte port of the Python reference `readLoop`,
-   * including escape handling, the HW_MTU guard, and the per-command payload
-   * lengths.
+   * other command. Handles KISS escaping, the HW_MTU guard, and per-command
+   * payload lengths.
    *
-   * Throws on `CMD_ERROR` `ERROR_INITRADIO`/`ERROR_TXFAILED` (matching the
-   * Python reference, which raises `IOError` out of the read loop) — the
-   * caller's read loop turns that into a connection loss.
+   * Throws on `CMD_ERROR` `ERROR_INITRADIO`/`ERROR_TXFAILED` — the caller's
+   * read loop turns that into a connection loss.
    * @param {Uint8Array} chunk
    * @private
    */
@@ -1545,9 +1510,8 @@ export class RNodeInterface extends Interface {
         continue;
       }
       if (!this._inFrame) continue;
-      // Python guards the whole byte-processing branch on
-      // `len(data_buffer) < HW_MTU`; once exceeded, further frame bytes are
-      // silently dropped until the next FEND.
+      // Once a frame exceeds HW_MTU, further frame bytes are silently dropped
+      // until the next FEND.
       if (this._dataBuffer.length >= RNodeInterface.HW_MTU) continue;
 
       // The first in-frame byte is the command.
@@ -1654,7 +1618,7 @@ export class RNodeInterface extends Interface {
 
       case CMD_RESET:
         // ESP32 reports a reset with 0xF8; surface it as a connection loss so
-        // the device is reinitialised (Python parity).
+        // the device is reinitialised.
         if (byte === 0xf8 && this.platform === PLATFORM_ESP32 && this.online) {
           throw new Error("ESP32 reset");
         }
@@ -1721,7 +1685,7 @@ export class RNodeInterface extends Interface {
         return;
       case CMD_STAT_CHTM:
         if (buf.length === 11) {
-          // 11-byte channel-time report (Python `CMD_STAT_CHTM`):
+          // 11-byte channel-time report:
           //   [0:2] ats = airtime short   [2:4] atl = airtime long
           //   [4:6] cus = channel load short   [6:8] cul = channel load long
           //   [8]   crs = current rssi   [9] nfl = noise floor
@@ -1794,8 +1758,7 @@ export class RNodeInterface extends Interface {
         return;
       case CMD_FB_READ:
         // The device echoes the full 512-byte framebuffer back as an escaped
-        // payload; capture it once complete and measure the round-trip latency
-        // (Python: `r_framebuffer` / `r_framebuffer_latency`).
+        // payload; capture it once complete and measure the round-trip latency.
         if (buf.length === FB_SIZE_BYTES) {
           this.rFrameBufferLatency =
             Date.now() - (this.rFrameBufferReadTime ?? Date.now());
@@ -1804,8 +1767,7 @@ export class RNodeInterface extends Interface {
         return;
       case CMD_DISP_READ:
         // The device echoes the 1024-byte display snapshot back as an escaped
-        // payload; capture it once complete and measure the round-trip latency
-        // (Python: `r_disp` / `r_disp_latency`).
+        // payload; capture it once complete and measure the round-trip latency.
         if (buf.length === DISPLAY_READ_SIZE) {
           this.rDispLatency = Date.now() - (this.rDispReadTime ?? Date.now());
           this.rDisp = new Uint8Array(buf);
@@ -1817,8 +1779,8 @@ export class RNodeInterface extends Interface {
   }
 
   /**
-   * Handles a CMD_ERROR byte. INITRADIO/TXFAILED abort the read loop (matching
-   * the Python IOError); MEMORY_LOW/MODEM_TIMEOUT are recorded.
+   * Handles a CMD_ERROR byte. INITRADIO/TXFAILED abort the read loop;
+   * MEMORY_LOW/MODEM_TIMEOUT are recorded.
    * @param {number} byte
    * @private
    */
@@ -1852,8 +1814,7 @@ export class RNodeInterface extends Interface {
   }
 
   /**
-   * Dispatches a complete CMD_DATA payload as a `packet` event. Mirrors the
-   * Python reference `process_incoming`.
+   * Dispatches a complete CMD_DATA payload as a `packet` event.
    * @param {number[]} dataBuffer
    * @private
    */
@@ -1904,8 +1865,8 @@ export class RNodeInterface extends Interface {
   }
 
   /**
-   * Resolves a transposed escape byte to its literal value. Matches the Python
-   * reference (TFEND → FEND, TFESC → FESC, anything else passes through).
+   * Resolves a transposed escape byte to its literal value (TFEND → FEND,
+   * TFESC → FESC, anything else passes through).
    * @param {number} byte
    * @returns {number}
    * @private
@@ -1977,7 +1938,7 @@ export class RNodeInterface extends Interface {
   /**
    * Resolves once `predicate` returns true, or after `timeoutMs`. Returns the
    * final predicate value (so callers can distinguish a real hit from a
-   * timeout). Polls at 50ms, mirroring the Python reference's polling waits.
+   * timeout). Polls at 50ms.
    * While waiting, `retry` (if given) is invoked every `retryEveryMs` — used to
    * re-send probes whose response may have been lost (e.g. detect queries sent
    * to a device still booting after a port-open reset).
@@ -2074,8 +2035,7 @@ function sleep(ms) {
 
 /**
  * Encodes an id-callsign option (string | bytes | number[]) to a UTF-8
- * `Uint8Array`, or `null` when none is configured. Mirrors Python
- * `id_callsign.encode("utf-8")`.
+ * `Uint8Array`, or `null` when none is configured.
  * @param {string | Uint8Array | number[] | undefined | null} callsign
  * @returns {Uint8Array | null}
  */

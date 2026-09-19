@@ -1,8 +1,8 @@
 /**
  * @file auto_peer.js
  * @description Per-peer data interface spawned by {@link AutoInterface} for each
- *   discovered peer — the JS port of the Python reference
- *   `RNS/Interfaces/AutoInterface.AutoInterfacePeer`.
+ *   discovered peer — the JS counterpart of the Python reference's
+ *   AutoInterfacePeer.
  *
  * One RNS packet per UDP datagram, **no KISS/HDLC framing** (unlike the
  * TCP/WebSocket interfaces). So this peer serializes/deserializes `Packet`
@@ -146,8 +146,8 @@ export class AutoInterfacePeer extends Interface {
    * it recently, refreshes the peer, deserializes it, and enqueues the packet
    * for the inbound loop to dispatch.
    *
-   * Mirrors Python's `AutoInterfacePeer.process_incoming`. The raw bytes are
-   * hashed for dedup (matching `RNS.Identity.full_hash(data)`) and deserialized
+   * Matching the Python reference's peer inbound handling, the raw bytes are
+   * hashed for dedup (`SHA-256`) and deserialized
    * directly — no KISS unframing.
    * @param {Uint8Array} data
    * @returns {Promise<void>}
@@ -182,7 +182,7 @@ export class AutoInterfacePeer extends Interface {
   /**
    * Serializes an outbound packet and sends it to the peer over the parent's
    * data socket for this interface. No KISS framing — one raw RNS packet per
-   * datagram, matching Python's `process_outgoing`.
+   * datagram, matching the Python reference's peer outbound handling.
    * @param {Packet} packet
    * @returns {Promise<void>}
    * @private

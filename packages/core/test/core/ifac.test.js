@@ -2,7 +2,7 @@
  * @file ifac.test.js
  * @description Tests for IFAC (Interface Authentication Code) derivation,
  *   sealing and verification, with golden values cross-checked against the
- *   Python reference (`RNS/Reticulum.py`, `RNS/Transport.py`).
+ *   Python reference.
  */
 
 import assert from "node:assert/strict";

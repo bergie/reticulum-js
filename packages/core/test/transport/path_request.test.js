@@ -518,8 +518,8 @@ test("the sweep culls in-flight path requests past the gate timeout", async () =
 });
 
 test("a matching announce clears the in-flight path request for that destination", async () => {
-  // RNS 1.5.0: announce receipt pops the destination from inflight_path_requests
-  // (Transport.py:2387), so a later announce for the same dest is no longer
+  // RNS 1.5.0: announce receipt pops the destination from the in-flight
+  // path-request table, so a later announce for the same dest is no longer
   // exempt from the held-announce hold.
   const transport = new TransportCore();
   const iface = new Interface();

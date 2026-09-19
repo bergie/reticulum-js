@@ -35,14 +35,14 @@ import { WebSocketServer } from "ws";
  * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {"raw"|"kiss"} [framing] - Wire framing inherited by spawned client
  *   interfaces. Default `"raw"`.
- * @property {boolean} [ssl] - Terminate TLS so clients connect over `wss://`
- *   (mirrors the Python reference `ssl` config key). Requires both `certFile`
+ * @property {boolean} [ssl] - Terminate TLS so clients connect over `wss://`.
+ *   Requires both `certFile`
  *   and `keyFile`. Browsers in a secure context (HTTPS) cannot open `ws://`, so
  *   a browser-facing server needs this. Default `false`.
  * @property {string} [certFile] - Path to a PEM certificate chain, required when
- *   `ssl` is set (mirrors the Python reference `certfile` config key).
+ *   `ssl` is set.
  * @property {string} [keyFile] - Path to a PEM private key, required when `ssl`
- *   is set (mirrors the Python reference `keyfile` config key).
+ *   is set.
  * @property {string} [name] - Interface name.
  */
 
@@ -96,22 +96,19 @@ export class WebSocketServerInterface extends Interface {
           type: "boolean",
           default: false,
           description:
-            "Terminate TLS so clients connect over wss:// (Python config key: " +
-            "ssl). Requires both certFile and keyFile. Browsers in a secure " +
+            "Terminate TLS so clients connect over wss://. Requires both " +
+            "certFile and keyFile. Browsers in a secure " +
             "context (HTTPS) cannot open ws://, so a browser-facing server " +
             "needs this.",
         },
         certFile: {
           type: "string",
           description:
-            "Path to a PEM certificate chain, required when ssl is set " +
-            "(Python config key: certfile).",
+            "Path to a PEM certificate chain, required when ssl is set.",
         },
         keyFile: {
           type: "string",
-          description:
-            "Path to a PEM private key, required when ssl is set (Python " +
-            "config key: keyfile).",
+          description: "Path to a PEM private key, required when ssl is set.",
         },
       },
       required: ["listenPort"],
@@ -138,11 +135,11 @@ export class WebSocketServerInterface extends Interface {
     this.ifacNetkey = options.passphrase || null;
     /** @type {"raw"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "raw";
-    /** Terminate TLS (`wss://`). Mirrors the Python `use_ssl` flag. */
+    /** Terminate TLS (`wss://`). */
     this.ssl = options.ssl === true;
-    /** Path to a PEM certificate chain. Mirrors the Python `certfile` key. */
+    /** Path to a PEM certificate chain. */
     this.certFile = options.certFile || null;
-    /** Path to a PEM private key. Mirrors the Python `keyfile` key. */
+    /** Path to a PEM private key. */
     this.keyFile = options.keyFile || null;
 
     // Validation mirrors the Python reference WebSocketServerInterface: SSL

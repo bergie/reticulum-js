@@ -32,10 +32,8 @@ import { Interface, reconnectSchemaProperties } from "./base.js";
  * Minimum RNS header size in bytes (`RNS.Reticulum.HEADER_MINSIZE`):
  * `2 + 1 + (TRUNCATED_HASHLENGTH / 8)` = `2 + 1 + 16` = 19.
  *
- * Mirrors the defensive floor every Python reference interface
- * (LocalInterface, TCPInterface, BackboneInterface, WebSocketClientInterface)
- * applies in its read loop before handing a frame to Transport: frames no
- * larger than this are silently dropped.
+ * A defensive floor applied in read loops before handing a frame to the
+ * transport: frames no larger than this are silently dropped.
  */
 const HEADER_MINSIZE = 19;
 
@@ -48,7 +46,7 @@ const HEADER_MINSIZE = 19;
  * @property {number} [port] - Target port. Used to build `ws://host:port` (or
  *   `wss://` when `ssl` is set) when `url` is omitted.
  * @property {boolean} [ssl] - Enable TLS so the dial URL uses the `wss://`
- *   scheme (mirrors the Python reference `ssl` config key). Only consulted
+ *   scheme. Only consulted
  *   when `url` is omitted; an explicit `url` scheme always wins. Browsers in
  *   a secure context (HTTPS) cannot open `ws://`, so a browser app needs this
  *   to reach a TLS-terminating peer. Default `false`.
@@ -137,8 +135,8 @@ export class WebSocketClientInterface extends Interface {
           type: "boolean",
           default: false,
           description:
-            "Enable TLS so the dial URL uses the wss:// scheme (Python config " +
-            "key: ssl). Only consulted when url is omitted; an explicit url " +
+            "Enable TLS so the dial URL uses the wss:// scheme. Only " +
+            "consulted when url is omitted; an explicit url " +
             "scheme always wins. Browsers in a secure context (HTTPS) cannot " +
             "open ws://, so a browser app needs this to reach a " +
             "TLS-terminating peer.",
@@ -174,15 +172,15 @@ export class WebSocketClientInterface extends Interface {
   constructor(options) {
     super();
     this._initReconnectState(options);
-    /** Whether TLS is enabled (`wss://`). Mirrors the Python `use_ssl` flag. */
+    /** Whether TLS is enabled (`wss://`). */
     this.ssl = options.ssl === true;
     if (options.url) {
       this.url = options.url;
     } else {
       const host = options.host || "localhost";
       const port = options.port || 0;
-      // Mirrors the Python reference `_target_uri()`: `wss` when ssl is set,
-      // `ws` otherwise. The standard WebSocket API picks up TLS from the
+      // `wss` when ssl is set, `ws` otherwise. The standard WebSocket API
+      // picks up TLS from the
       // scheme, so nothing else is needed on the client side.
       const scheme = this.ssl ? "wss" : "ws";
       this.url = `${scheme}://${host}:${port}`;
@@ -392,8 +390,8 @@ export class WebSocketClientInterface extends Interface {
             controller.enqueue(bytes);
             return;
           }
-          // raw mode: match the Python reference `_read_loop` and drop
-          // anything no larger than the header minimum (HEADER_MINSIZE).
+          // raw mode: drop anything no larger than the header minimum
+          // (HEADER_MINSIZE).
           try {
             if (bytes.length <= HEADER_MINSIZE) {
               log(

@@ -52,7 +52,7 @@ export { Reticulum } from "./core/reticulum.js";
 // from `storageAdapter`; clients call `rns.persistor.store(hash)` for favorites.
 export { Persistor } from "./storage/persistor.js";
 export { MemoryStorageAdapter, StorageNamespace } from "./storage/storage.js";
-// Web Stream byte-stream adapters over a Channel (RNS/Buffer.py). Importing
+// Web Stream byte-stream adapters over a Channel. Importing
 // this also wires channel.openReadable / openWritable / openDuplex.
 export {
   openDuplex,

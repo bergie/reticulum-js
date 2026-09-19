@@ -57,7 +57,7 @@ See [this rns.recipes thread](https://rns.recipes/forum/showcase/reticulum-in-ja
 
 ## Acknowledgements
 
-Prior art includes [Liam Cottle's rns.js](https://github.com/liamcottle/rns.js) and of course the [Python Reticulum Reference Implementation](https://github.com/markqvist/reticulum) itself. We have also benefited greatly from Salem Data's [Reticulum Wire Specifications](https://salemdata.net/public/reticulum/SPEC.html) work.
+Prior art includes [Liam Cottle's rns.js](https://github.com/liamcottle/rns.js), [microReticulum C++ implementation](https://github.com/attermann/microReticulum/tree/master), and of course the [Python Reticulum Reference Implementation](https://github.com/markqvist/reticulum) itself. We have also benefited greatly from Salem Data's [Reticulum Wire Specifications](https://salemdata.net/public/reticulum/SPEC.html) work.
 
 This project has been built with the assistance of various LLMs, both for conceptual planning and implementation. I acknowledge that AI code is not necessarily ideal, but at the same time, I'm [busy sailing](https://lille-oe.de).
 

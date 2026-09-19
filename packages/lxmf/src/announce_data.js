@@ -2,13 +2,14 @@
  * @file announce_data.js
  * @description `lxmf.delivery` announce `app_data` msgpack format (SPEC §4.3).
  *
- * Current upstream `LXMF/LXMRouter.py::get_announce_app_data` produces a
+ * Current upstream announce app_data is a
  * 3-element msgpack array:
  *
  *   [ display_name(bin8), stamp_cost(int|nil), [SF_COMPRESSION] ]
  *
  * Receivers MUST also tolerate the legacy 2-element, 1-element, and raw
- * UTF-8 string shapes (`LXMF/LXMF.py::display_name_from_app_data`).
+ * UTF-8 string shapes (matching the Python reference's display-name
+ * parsing).
  *
  * Canonical wire bytes for `display_name = "Reticulum5"`, `stamp_cost = nil`:
  *
@@ -84,7 +85,7 @@ export function parseAnnounceAppData(appData) {
     if (coerced) return coerced;
   }
 
-  // Fallback: the "original announce format" (LXMF/LXMF.py:138-139) — raw
+  // Fallback: the "original announce format" (raw
   // UTF-8 bytes that either failed msgpack decoding or decoded to a non-name
   // scalar. A bare display name like "Grace" starts with 0x47, which msgpack
   // silently reads as a fixint (71), so we cannot rely on a thrown error and

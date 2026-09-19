@@ -309,9 +309,8 @@ export class Identity extends EventTarget {
   /**
    * Build an identity from a 64-byte private-key blob.
    *
-   * This is the JavaScript analog of the Python reference's
-   * `Identity.from_bytes` / `load_private_key`: the input is **private key
-   * material only** — the first 32 bytes are the X25519 private key, the last
+   * The input is **private key material only** — the first 32 bytes are the
+   * X25519 private key, the last
    * 32 bytes the Ed25519 private key — and the public keys are derived from
    * them (rather than supplied, as in {@link Identity.fromBytes}, which takes
    * the full 128-byte priv+pub export).
@@ -605,8 +604,8 @@ export class Identity extends EventTarget {
   }
 
   /**
-   * Validates an announce exactly like `RNS/Identity.py::validate_announce`
-   * (SPEC.md §4.5 steps 1-3).
+   * Validates an announce exactly like the Python reference's
+   * `validate_announce` (SPEC.md §4.5 steps 1-3).
    *
    * Parses the announce body — branching on `contextFlag` so a ratchet-bearing
    * announce shifts the signature 32 bytes deeper (§4.5 step 1) — verifies the

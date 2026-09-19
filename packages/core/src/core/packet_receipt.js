@@ -162,7 +162,6 @@ export class PacketReceipt {
    * Starts the proof-wait timeout: on expiry the receipt is removed from the
    * registry and marked failed (firing the `failed` callback, which a
    * transport wires to `markPathUnresponsive`). No-op if already resolved.
-   * Mirrors the `self.timeout` + jobs-loop check on Python's `PacketReceipt`.
    * @param {number} timeoutMs
    */
   startTimeout(timeoutMs) {

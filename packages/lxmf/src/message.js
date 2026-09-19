@@ -224,8 +224,8 @@ export class Message {
    *
    * If the payload carries an optional 5th stamp element (§5.7.1), it is
    * stripped and the first four elements are re-packed before the message_id
-   * and signed_part are computed — exactly matching the upstream Python
-   * `unpack_from_bytes` behaviour, so a stamp never invalidates the signature.
+   * and signed_part are computed — exactly matching the Python reference's
+   * unpack behaviour, so a stamp never invalidates the signature.
    *
    * @param {Uint8Array} wireData
    * @param {Uint8Array} [expectedDestinationHash] - Required for opportunistic delivery.
@@ -525,8 +525,8 @@ export class Message {
   }
 
   /**
-   * Parses an `lxm://` URI back into the raw encrypted paper data
-   * (`LXMRouter.ingest_lxm_uri`). The scheme match is case-insensitive and
+   * Parses an `lxm://` URI back into the raw encrypted paper data.
+   * The scheme match is case-insensitive and
    * any stray `/` characters in the body are tolerated, matching the Python
    * reference's lenient decoding.
    *

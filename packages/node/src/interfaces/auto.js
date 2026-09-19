@@ -1,8 +1,7 @@
 /**
  * @file auto.js
  * @description AutoInterface — zero-config IPv6-multicast LAN/Wi-Fi peering
- *   (Node.js), porting the Python reference
- *   `RNS/Interfaces/AutoInterface.py`.
+ *   (Node.js), wire-compatible with the Python reference AutoInterface.
  *
  * AutoInterface discovers peers on the local link with **IPv6 multicast** and
  * talks to each one over IPv6 unicast UDP via a spawned
@@ -29,8 +28,8 @@
  * no HDLC framing. So both the parent `AutoInterface` (discovery) and the
  * spawned {@link AutoInterfacePeer} (data) bypass the `framer.js` stream
  * machinery and speak raw `dgram` directly. The parent never exposes
- * `readable`/`writable` (matching the Python parent interface, which only
- * spawns peer sub-interfaces).
+ * `readable`/`writable` (matching the Python reference's parent interface,
+ * which only spawns peer sub-interfaces).
  *
  * ## Multicast in Node
  *
@@ -53,24 +52,25 @@ import { AutoInterfacePeer } from "./auto_peer.js";
 
 /**
  * SHA-256 length in bytes: the discovery token is the full hash, and the first
- * `HASHLENGTH // 8` bytes of an inbound datagram are compared against it.
- * Mirrors `RNS.Identity.HASHLENGTH` (256 bits).
+ * `HASHLENGTH // 8` bytes of an inbound datagram are compared against it
+ * (256 bits, matching the reference).
  */
 const HASHLENGTH_BYTES = 32;
 
-/** HW MTU mirrors the Python reference. (Reserved for the Phase 2 data path.) */
+/** HW MTU, matching the Python reference. (Reserved for the Phase 2 data path.) */
 const HW_MTU = 1196;
 
 /**
- * Multi-interface dedup deque bounds, mirroring `AutoInterface.MULTI_IF_DEQUE_*`.
- * A packet seen on more than one adopted interface within the TTL is dropped.
+ * Multi-interface dedup deque bounds, matching the Python reference's
+ * multi-interface dedup. A packet seen on more than one adopted interface
+ * within the TTL is dropped.
  */
 const MULTI_IF_DEQUE_LEN = 48;
 const MULTI_IF_DEQUE_TTL = 0.75;
 
 /**
  * Maps a human-readable discovery scope name to its IPv6 multicast scope nibble,
- * matching `AutoInterface.SCOPE_*` in the Python reference.
+ * matching the Python reference.
  * @enum {string}
  */
 const SCOPE = {
@@ -93,13 +93,13 @@ const MULTICAST_TYPE = {
 
 /**
  * Loopback names that are skipped on every platform, matching the Python
- * `ALL_IGNORE_IFS`. (Loopback is only adoptable when explicitly listed in
+ * reference. (Loopback is only adoptable when explicitly listed in
  * `devices`, for testing — see {@link AutoInterface._isAdoptable}.)
  */
 const ALL_IGNORE_IFS = ["lo0", "lo"];
 /**
  * macOS interfaces skipped unless explicitly allowed, matching the Python
- * `DARWIN_IGNORE_IFS` (AWDL, Low-power WLAN, loopback, the iPhone tether gadget).
+ * reference (AWDL, Low-power WLAN, loopback, the iPhone tether gadget).
  */
 const DARWIN_IGNORE_IFS = ["awdl0", "llw0", "lo0", "en5"];
 
@@ -157,15 +157,13 @@ export async function computeDiscoveryToken(groupId, linkLocalAddr) {
  * @property {string} [name] - Human-readable interface name.
  * @property {string} [groupId] - Peering group id. Nodes with the same group id
  *   discover each other; different groups are isolated. Defaults to
- *   `"reticulum"` (Python config key: group_id).
+ *   `"reticulum"`.
  * @property {"link"|"admin"|"site"|"organisation"|"global"} [discoveryScope] -
- *   IPv6 multicast scope. Defaults to `"link"` (Python config key:
- *   discovery_scope).
+ *   IPv6 multicast scope. Defaults to `"link"`.
  * @property {number} [discoveryPort] - UDP port for multicast discovery.
- *   Defaults to 29716 (Python: DEFAULT_DISCOVERY_PORT). Unicast reverse-peering
- *   uses `discoveryPort + 1`.
- * @property {number} [dataPort] - UDP port for per-peer data. Defaults to 42671
- *   (Python: DEFAULT_DATA_PORT). Reserved for Phase 2.
+ *   Defaults to 29716. Unicast reverse-peering uses `discoveryPort + 1`.
+ * @property {number} [dataPort] - UDP port for per-peer data. Defaults to 42671.
+ *   Reserved for Phase 2.
  * @property {"permanent"|"temporary"} [multicastAddressType] - Whether to use a
  *   permanent or temporary multicast address. Defaults to `"temporary"`.
  * @property {string[]} [devices] - Allow-list of interface names to adopt. When
@@ -178,16 +176,15 @@ export async function computeDiscoveryToken(groupId, linkLocalAddr) {
  * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
  * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {number} [announceInterval] - Seconds between multicast announces.
- *   Defaults to 1.6 (Python: ANNOUNCE_INTERVAL). Overridable for fast tests.
+ *   Defaults to 1.6. Overridable for fast tests.
  * @property {number} [peeringTimeout] - Seconds of silence after which a peer
- *   expires. Defaults to 22 (Python: PEERING_TIMEOUT).
+ *   expires. Defaults to 22.
  * @property {number} [peerJobInterval] - Seconds between lifecycle job ticks.
- *   Defaults to 4 (Python: PEER_JOB_INTERVAL).
+ *   Defaults to 4.
  * @property {number} [multicastEchoTimeout] - Seconds without our own
- *   multicast echo before flagging carrier lost. Defaults to 6.5 (Python:
- *   MCAST_ECHO_TIMEOUT).
+ *   multicast echo before flagging carrier lost. Defaults to 6.5.
  * @property {number} [reversePeeringInterval] - Seconds between reverse-peering
- *   sends to a peer. Defaults to `announceInterval * 3.25` (Python).
+ *   sends to a peer. Defaults to `announceInterval * 3.25`.
  */
 
 /**
@@ -223,7 +220,7 @@ export class AutoInterface extends Interface {
       description:
         "Zero-config IPv6-multicast LAN/Wi-Fi peering. Discovers peers on the " +
         "local link via multicast and (in later phases) talks to each over " +
-        "unicast UDP. Mirrors the Python reference AutoInterface.",
+        "unicast UDP. Wire-compatible with the Python reference AutoInterface.",
       properties: {
         ...base.properties,
         groupId: {
@@ -232,53 +229,45 @@ export class AutoInterface extends Interface {
           examples: ["reticulum", "my-mesh"],
           description:
             "Peering group id. Nodes sharing a group id discover each other; " +
-            "different groups are isolated (Python config key: group_id).",
+            "different groups are isolated.",
         },
         discoveryScope: {
           type: "string",
           enum: ["link", "admin", "site", "organisation", "global"],
           default: "link",
-          description:
-            "IPv6 multicast scope to discover peers in (Python config key: " +
-            "discovery_scope).",
+          description: "IPv6 multicast scope to discover peers in.",
         },
         discoveryPort: {
           type: "integer",
           minimum: 0,
           maximum: 65534,
           default: 29716,
-          description:
-            "UDP port for multicast discovery (Python: DEFAULT_DISCOVERY_PORT).",
+          description: "UDP port for multicast discovery.",
         },
         dataPort: {
           type: "integer",
           minimum: 0,
           maximum: 65535,
           default: 42671,
-          description:
-            "UDP port for per-peer data (Python: DEFAULT_DATA_PORT).",
+          description: "UDP port for per-peer data.",
         },
         multicastAddressType: {
           type: "string",
           enum: ["permanent", "temporary"],
           default: "temporary",
-          description:
-            "Permanent vs. temporary multicast address (Python config key: " +
-            "multicast_address_type).",
+          description: "Permanent vs. temporary multicast address.",
         },
         devices: {
           type: "array",
           items: { type: "string" },
           description:
             "Allow-list of interface names to adopt. When set, only these are " +
-            "used and even ignore-list entries (e.g. lo0) become adoptable " +
-            "(Python config key: devices).",
+            "used and even ignore-list entries (e.g. lo0) become adoptable.",
         },
         ignoredDevices: {
           type: "array",
           items: { type: "string" },
-          description:
-            "Extra interface names to skip (Python config key: ignored_devices).",
+          description: "Extra interface names to skip.",
         },
         configuredBitrate: {
           type: "integer",
@@ -330,15 +319,15 @@ export class AutoInterface extends Interface {
 
     // Timers and timing. ANNOUNCE_INTERVAL is overridable for fast tests.
     this.announceInterval = options.announceInterval ?? 1.6;
-    // Lifecycle timing (peer_jobs), mirroring AutoInterface.* in the Python
-    // reference. All overridable for fast tests.
+    // Lifecycle timing, matching the Python reference's peer-jobs cadence.
+    // All overridable for fast tests.
     this.peeringTimeout = options.peeringTimeout ?? 22.0;
     this.peerJobInterval = options.peerJobInterval ?? 4.0;
     this.multicastEchoTimeout = options.multicastEchoTimeout ?? 6.5;
     this.reversePeeringInterval =
       options.reversePeeringInterval ?? this.announceInterval * 3.25;
 
-    // Discovery state, mirroring the Python reference's instance attributes.
+    // Discovery state.
     /** @type {Record<string, string>} ifname → descope'd link-local address */
     this.adoptedInterfaces = {};
     /** @type {string[]} descope'd link-local addresses of adopted interfaces */
@@ -385,8 +374,7 @@ export class AutoInterface extends Interface {
     /** @type {ReturnType<typeof setInterval> | null} */
     this._peerJobsTimer = null;
 
-    // Carrier-watchdog state, mirroring Python's `timed_out_interfaces` /
-    // `carrier_changed`.
+    // Carrier-watchdog state.
     /** @type {Record<string, boolean>} ifname → carrier-lost flag */
     this.timedOutInterfaces = {};
     /** Set whenever peer/link state changes a way that should reset announce-rate control. */
@@ -401,8 +389,7 @@ export class AutoInterface extends Interface {
   }
 
   /**
-   * Number of spawned peer data interfaces. Mirrors Python's
-   * `len(self.spawned_interfaces)` (the count used for `peer_count`).
+   * Number of spawned peer data interfaces (the peer count).
    */
   get peerCount() {
     return Object.keys(this.spawnedInterfaces).length;
@@ -525,17 +512,16 @@ export class AutoInterface extends Interface {
   }
 
   /**
-   * Decides whether an interface should be adopted, mirroring the Python
+   * Decides whether an interface should be adopted, matching the Python
    * reference's per-interface skip chain.
    *
    * When an allow-list ({@link AutoInterface.allowedInterfaces}, `devices`) is
    * set, **only** those names are adopted, and they bypass the ignore lists
-   * (including loopback) — matching Python's
-   * `if len(allowed) > 0 and not ifname in allowed: skip`, with the same
+   * (including loopback), matching the Python reference, with the same
    * relaxation that lets the single-host loopback smoketest pin `lo0`
-   * explicitly. (Python unconditionally skips `lo0` on Darwin even when
-   * allowed; we relax only that, so production parity holds: loopback is never
-   * adopted without `devices`.)
+   * explicitly. (The Python reference unconditionally skips `lo0` on Darwin
+   * even when allowed; we relax only that, so production parity holds:
+   * loopback is never adopted without `devices`.)
    * @param {string} ifname
    * @returns {boolean}
    */
@@ -609,7 +595,7 @@ export class AutoInterface extends Interface {
     await this._bind(usock, this.unicastDiscoveryPort, scopedLL);
     this.unicastSockets[ifname] = usock;
 
-    // --- Announce loop (multicast only, as in Python) -------------------
+    // --- Announce loop (multicast only, as in the Python reference) ------
     this._startAnnounceLoop(ifname);
   }
 
@@ -671,9 +657,9 @@ export class AutoInterface extends Interface {
   /**
    * Sends a raw RNS packet to a peer on the given interface, from that
    * interface's data socket. The destination is re-scoped with `%ifname` so the
-   * OS routes it out the correct link-local. Mirrors Python's
-   * `AutoInterfacePeer.process_outgoing` send path (Python uses a shared
-   * unbound outbound socket + `addr%ifindex`; we reuse the per-interface bound
+   * OS routes it out the correct link-local. Semantically matches the Python
+   * reference's peer send path (it uses a shared unbound outbound socket +
+   * `addr%ifindex`; we reuse the per-interface bound
    * data socket, which already has the correct source address).
    * @param {string} addr - Descope'd peer link-local address.
    * @param {string} ifname
@@ -705,7 +691,8 @@ export class AutoInterface extends Interface {
   /**
    * Multi-interface dedup check. Returns true (and remembers nothing) if the
    * packet hash was seen within {@link MULTI_IF_DEQUE_TTL}; otherwise remembers
-   * it and returns false. Mirrors Python's `mif_deque`/`mif_deque_times` logic.
+   * it and returns false, matching the Python reference's multi-interface
+   * dedup.
    * @param {Uint8Array} hash - `SHA-256` of the raw datagram bytes.
    * @returns {boolean} `true` if the packet is a recent duplicate.
    */
@@ -722,7 +709,8 @@ export class AutoInterface extends Interface {
 
   // ------------------------------------------------------------------
   // Lifecycle jobs (Phase 3): peer expiry, reverse-peering send,
-  // link-local rebind, multicast-echo watchdog. Mirrors Python's `peer_jobs`.
+  // link-local rebind, multicast-echo watchdog (matching the Python
+  // reference's peer jobs).
   // ------------------------------------------------------------------
 
   /**
@@ -744,10 +732,11 @@ export class AutoInterface extends Interface {
   }
 
   /**
-   * One peer-jobs tick. Expires silent peers (and tears down their spawned
+   * One peer-jobs tick (matching the Python reference's peer jobs). Expires
+   * silent peers (and tears down their spawned
    * interfaces), sends reverse-peering packets to peers due for one, rebinds
    * the per-interface data socket when its link-local address changes, and runs
-   * the multicast-echo carrier watchdog. Mirrors Python's `peer_jobs`.
+   * the multicast-echo carrier watchdog.
    * @returns {Promise<void>}
    * @protected
    */
@@ -790,7 +779,7 @@ export class AutoInterface extends Interface {
   /**
    * Expires one peer: disconnects its spawned interface (which dispatches
    * `"closed"` so an attached transport removes it) and drops the tracking
-   * entries. Mirrors Python's timed-out-peer removal (`detach`/`teardown`).
+   * entries, matching the Python reference's timed-out-peer removal.
    * @param {string} addr
    * @returns {Promise<void>}
    * @private
@@ -813,10 +802,11 @@ export class AutoInterface extends Interface {
    * Sends one reverse-peering packet to a peer: the same discovery token
    * (`SHA-256(group_id || own_link_local)`) unicast to the peer's address on
    * the unicast discovery port, so the peer adds us even if our multicast
-   * announce didn't reach it. Mirrors Python's `reverse_announce`.
+   * announce didn't reach it (the Python reference's reverse announce).
    *
    * Sent from this interface's bound unicast discovery socket, so the source is
-   * our scoped link-local (Python uses a fresh unbound socket; equivalent).
+   * our scoped link-local (the Python reference uses a fresh unbound socket;
+   * equivalent).
    * @param {string} ifname
    * @param {string} peerAddr - Descope'd peer link-local address.
    * @returns {Promise<void>}
@@ -839,10 +829,9 @@ export class AutoInterface extends Interface {
 
   /**
    * Checks whether an adopted interface's link-local address has changed and,
-   * if so, adopts the new one and rebinds its data socket. Mirrors Python's
-   * link-local-change handling (which rebinds `interface_servers`). The
-   * discovery sockets are left on the old address, matching the Python
-   * reference.
+   * if so, adopts the new one and rebinds its data socket, matching the Python
+   * reference. The discovery sockets are left on the old address, also matching
+   * the Python reference.
    * @param {string} ifname
    * @private
    */
@@ -882,8 +871,7 @@ export class AutoInterface extends Interface {
 
   /**
    * Rebinds an interface's data socket to a (new) link-local address: closes
-   * the old socket and opens a fresh one. Mirrors Python's restart of
-   * `interface_servers[ifname]`.
+   * the old socket and opens a fresh one.
    * @param {string} ifname
    * @param {string} linkLocalAddr
    * @returns {Promise<void>}
@@ -906,8 +894,7 @@ export class AutoInterface extends Interface {
   /**
    * Multicast-echo carrier watchdog for one interface. If we haven't seen our
    * own multicast announce echo within `multicastEchoTimeout`, flag carrier
-   * lost; clear the flag when echoes resume. Mirrors Python's
-   * `timed_out_interfaces` / `carrier_changed` logic.
+   * lost; clear the flag when echoes resume, matching the Python reference.
    * @param {string} ifname
    * @param {number} now
    * @private
@@ -992,8 +979,8 @@ export class AutoInterface extends Interface {
   /**
    * Tears down everything opened for one interface and drops its adoption, used
    * when a later socket bind fails mid-`connect` (e.g. EADDRINUSE because
-   * another Reticulum instance holds the port on this link). Mirrors the
-   * Python reference's per-interface skip on configuration failure.
+   * another Reticulum instance holds the port on this link). Matches the Python
+   * reference's per-interface skip on configuration failure.
    * @param {string} ifname
    * @param {string} linkLocalAddr
    * @returns {Promise<void>}
@@ -1033,9 +1020,8 @@ export class AutoInterface extends Interface {
   }
 
   /**
-   * Sends one multicast discovery token out the given interface.
-   *
-   * Mirrors Python's `peer_announce`: the token is
+   * Sends one multicast discovery token out the given interface, matching the
+   * Python reference's peer announce: the token is
    * `SHA-256(group_id || own_link_local)`, sent to the multicast group. Reuses
    * the bound multicast socket (whose `setMulticastInterface` pins the link)
    * instead of opening a fresh socket per announce — functionally identical and
@@ -1060,8 +1046,8 @@ export class AutoInterface extends Interface {
   /**
    * Authenticates an inbound discovery datagram and, on success, records the
    * peer. Verifies that the first {@link HASHLENGTH_BYTES} bytes equal
-   * `SHA-256(group_id || src_addr)`, exactly as Python's `discovery_handler`
-   * does. Self-multicast-echoes (src is one of our own link-local addresses)
+   * `SHA-256(group_id || src_addr)`, exactly as the Python reference does.
+   * Self-multicast-echoes (src is one of our own link-local addresses)
    * feed the carrier watchdog state instead of adding a peer.
    * @param {Uint8Array} data
    * @param {{ address: string; port: number; scopeId?: number }} rinfo
@@ -1072,9 +1058,9 @@ export class AutoInterface extends Interface {
   async _onDiscoveryMessage(data, rinfo, ifname) {
     if (!this.online) return;
     // Node reports link-local sources WITH a `%scope` suffix (e.g.
-    // `fe80::1%lo0`) in rinfo.address, whereas Python's recvfrom yields the
-    // bare address. Peers compute the token over the bare address, so descope
-    // here to authenticate real Python peers correctly.
+    // `fe80::1%lo0`) in rinfo.address, whereas the Python reference's recvfrom
+    // yields the bare address. Peers compute the token over the bare address,
+    // so descope here to authenticate real Python peers correctly.
     const srcAddr = descopeLinkLocal(rinfo.address);
     const expected = await Identity.fullHash(
       this._concat(this.groupId, new TextEncoder().encode(srcAddr)),
@@ -1095,8 +1081,8 @@ export class AutoInterface extends Interface {
   }
 
   /**
-   * Records a discovered peer, or refreshes a known one, mirroring Python's
-   * `add_peer`. For a new peer this spawns an {@link AutoInterfacePeer} data
+   * Records a discovered peer, or refreshes a known one, matching the Python
+   * reference. For a new peer this spawns an {@link AutoInterfacePeer} data
    * interface, registers it with the attached transport (if any), and dispatches
    * a `"connection"` event with the peer for parity with the other server
    * interfaces.
@@ -1148,10 +1134,11 @@ export class AutoInterface extends Interface {
       networkName: this.ifacNetname ?? undefined,
       passphrase: this.ifacNetkey ?? undefined,
     });
-    // Inherit the parent's nominal bitrate (Python spawned-interface parity).
+    // Inherit the parent's nominal bitrate, matching the Python reference's
+    // spawned interfaces.
     peer.bitrate = this.bitrate;
-    // Inherit the parent's ingress-control settings (Python copies all ic_*
-    // fields onto spawned interfaces in AutoInterface.spawn_peer) so a
+    // Inherit the parent's ingress-control settings (the Python reference
+    // copies all ingress-control settings onto spawned interfaces) so a
     // node-global override applied at addInterface reaches every spawned
     // peer too.
     peer.ingressControl = this.ingressControl;
@@ -1174,7 +1161,8 @@ export class AutoInterface extends Interface {
    * Synchronous because {@link AutoInterfacePeer.connect} is sync-effective
    * (stream setup has no awaits), so the peer's `writable` is ready before the
    * transport grabs its writer, and `addPeer`'s effects (peer count, event)
-   * are observable immediately — matching Python's synchronous `add_peer`.
+   * are observable immediately — matching the Python reference, where adding
+   * a peer is synchronous.
    * @param {AutoInterfacePeer} peer
    * @private
    */
@@ -1292,7 +1280,7 @@ export class AutoInterface extends Interface {
     return true;
   }
 
-  /** Monotonic-ish wall-clock seconds, mirroring Python's `time.time()`. */
+  /** Wall-clock seconds. */
   _now() {
     return Date.now() / 1000;
   }

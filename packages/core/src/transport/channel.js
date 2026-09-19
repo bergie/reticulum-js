@@ -3,10 +3,10 @@
  * @description Reliable, bi-directional, size-constrained message exchange
  *   over an active {@link import("./link.js").Link}.
  *
- * Ports `RNS/Channel.py` from the Python reference. A `Channel` lets two peers
- * exchange typed `MessageBase` messages for as long as the `Link` is open,
- * with automatic retries, send-window flow control, and in-order / dedup'd
- * delivery. Each message must fit in a single link DATA packet (≤ Channel MDU).
+ * A `Channel` lets two peers exchange typed `MessageBase` messages for as
+ * long as the `Link` is open, with automatic retries, send-window flow
+ * control, and in-order / dedup'd delivery. Each message must fit in a single
+ * link DATA packet (≤ Channel MDU).
  *
  * The wire unit is an `Envelope`:
  *
@@ -19,8 +19,7 @@
  *
  * `Channel` is not constructed directly; obtain one from `link.getChannel()`.
  *
- * Concurrency note: Python guards its rings with `threading.RLock` and serializes
- * sends with `threading.Lock`. JS is single-threaded, so ring mutations are kept
+ * Concurrency note: JS is single-threaded, so ring mutations are kept
  * synchronous (no `await` inside a critical section) and sends are serialized
  * with a Promise chain (`_sendChain`).
  */
@@ -35,12 +34,12 @@ import { LogLevel, log } from "../utils/log.js";
  * @enum {number}
  */
 export const SystemMessageTypes = {
-  /** `StreamDataMessage` — byte-stream frames (RNS/Buffer.py). */
+  /** `StreamDataMessage` — byte-stream frames. */
   SMT_STREAM_DATA: 0xff00,
 };
 
 /**
- * ChannelException type codes (`RNS/Channel.py` `CEType`).
+ * ChannelException type codes.
  * @enum {number}
  */
 export const CEType = {
@@ -69,7 +68,7 @@ export class ChannelException extends Error {
 }
 
 /**
- * Possible states of a sent message (`RNS/Channel.py` `MessageState`).
+ * Possible states of a sent message.
  * @enum {number}
  */
 export const MessageState = {
@@ -115,7 +114,7 @@ const ENVELOPE_HEADER_SIZE = 6;
 
 /**
  * System message carrying one framed chunk of a byte stream over a Channel
- * (`RNS/Buffer.py` `StreamDataMessage`, MSGTYPE 0xff00). Wire body:
+ * (MSGTYPE 0xff00). Wire body:
  *
  *   `header(2, BE) || data`
  *
@@ -285,9 +284,8 @@ export class Envelope {
 }
 
 /**
- * Abstract transport adapter a {@link Channel} sends through. Mirrors
- * `RNS/Channel.py` `ChannelOutletBase`. The concrete link-backed implementation
- * is {@link LinkChannelOutlet}.
+ * Abstract transport adapter a {@link Channel} sends through. The concrete
+ * link-backed implementation is {@link LinkChannelOutlet}.
  *
  * "Packet" here is the opaque handle a concrete outlet returns from `send`;
  * the channel only ever passes it back to the outlet's other methods.
@@ -347,8 +345,9 @@ export class ChannelOutletBase {
   _cleanup() {}
 }
 
-// Adaptive-window constants — must match `RNS/Channel.py` exactly (affects
-// throughput, pacing, and retry behavior a peer may be sensitive to).
+// Adaptive-window constants. These shape throughput, pacing, and retry
+// behavior that a peer's channel implementation can be sensitive to, so the
+// values match the Python reference exactly.
 const WINDOW = 2;
 const WINDOW_MIN = 2;
 const WINDOW_MIN_LIMIT_SLOW = 2;
@@ -389,7 +388,7 @@ export class Channel {
     this.fastRateRounds = 0;
     this.mediumRateRounds = 0;
     this._shutDown = false;
-    /** Serializes the async send path (the JS analog of Python's `_send_lock`). */
+    /** Serializes the async send path. */
     this._sendChain = Promise.resolve();
 
     if (this._outlet.rtt > RTT_SLOW) {
@@ -520,9 +519,8 @@ export class Channel {
 
   /**
    * Insert `envelope` into `ring` in sequence order (wraparound-aware), deduping
-   * by sequence. Returns false on duplicate. Ports `_emplace_envelope` verbatim
-   * (including its use of `_nextRxSequence` for the wrap guard, which is a
-   * no-op for the naturally-ordered tx ring).
+   * by sequence. Returns false on duplicate. The wraparound guard is keyed off
+   * `_nextRxSequence`, which is a no-op for the naturally-ordered tx ring.
    * @param {Envelope} envelope
    * @param {Envelope[]} ring
    * @returns {boolean}
@@ -638,7 +636,7 @@ export class Channel {
   }
 
   /**
-   * Whether the channel can accept another `send`. Mirrors `is_ready_to_send`.
+   * Whether the channel can accept another `send`.
    * @returns {boolean}
    */
   isReadyToSend() {
@@ -659,7 +657,7 @@ export class Channel {
 
   /**
    * Delivery confirmed for a packet: remove its envelope from the tx ring and
-   * grow / promote the window. Ports `_packet_tx_op`.
+   * grow / promote the window.
    * @param {any} packet
    * @param {(envelope: Envelope) => boolean} op
    * @private
@@ -720,8 +718,7 @@ export class Channel {
   }
 
   /**
-   * Per-packet timeout based on retry count, RTT, and tx-ring depth. Ports
-   * `_get_packet_timeout_time`.
+   * Per-packet timeout based on retry count, RTT, and tx-ring depth.
    * @param {number} tries
    * @returns {number} seconds
    * @private
@@ -736,8 +733,7 @@ export class Channel {
 
   /**
    * Only-ever-increase the scheduled timeout of in-flight envelopes (a new send
-   * grows the tx ring, which raises every envelope's fair timeout). Ports
-   * `_update_packet_timeouts`.
+   * grows the tx ring, which raises every envelope's fair timeout).
    * @private
    */
   _updatePacketTimeouts() {
@@ -750,7 +746,7 @@ export class Channel {
 
   /**
    * A sent packet's delivery proof did not arrive in time: retransmit (up to
-   * {@link _maxTries}) or tear the link down. Ports `_packet_timeout`.
+   * {@link _maxTries}) or tear the link down.
    * @param {any} packet
    * @private
    */
@@ -905,9 +901,9 @@ export class Channel {
 
   /**
    * Open a `ReadableStream<Uint8Array>` that receives byte-stream frames
-   * addressed to `streamId` (RNS/Buffer.py `create_reader`). Registers
-   * `StreamDataMessage` as a system type and a per-stream handler; the stream
-   * closes once an `eof` frame has been delivered.
+   * addressed to `streamId`. Registers `StreamDataMessage` as a system type
+   * and a per-stream handler; the stream closes once an `eof` frame has been
+   * delivered.
    *
    * Compression: a bz2 module injected on the link (`link.bz2`, the same field
    * Resources use) decompresses inbound frames; without it a compressed frame
@@ -926,13 +922,13 @@ export class Channel {
 
   /**
    * Open a `WritableStream<Uint8Array>` that sends byte-stream frames to the
-   * peer's `streamId` (RNS/Buffer.py `create_writer`). Each written chunk is
-   * split into `StreamDataMessage`-sized frames; backpressure follows the
-   * channel send window. `close()` sends a final `eof` frame.
+   * peer's `streamId`. Each written chunk is split into `StreamDataMessage`-
+   * sized frames; backpressure follows the channel send window. `close()`
+   * sends a final `eof` frame.
    *
    * Compression: when a bz2 module is available (via `options.bz2` or
-   * `link.bz2`), each frame is compressed when it actually shrinks (mirroring
-   * the Python writer's segment-size search).
+   * `link.bz2`), each frame is compressed only when compression actually
+   * shrinks it.
    *
    * @param {number} streamId - remote stream id to send to (0–0x3fff).
    * @param {{ bz2?: any }} [options] - override the link's injected bz2.
@@ -946,10 +942,10 @@ export class Channel {
   }
 
   /**
-   * Open a duplex `{ readable, writable }` pair over this channel
-   * (RNS/Buffer.py `create_bidirectional_buffer`): `readable` receives
-   * `receiveStreamId`, `writable` sends `sendStreamId`. See
-   * {@link openReadable} / {@link openWritable} for compression / backpressure.
+   * Open a duplex `{ readable, writable }` pair over this channel:
+   * `readable` receives `receiveStreamId`, `writable` sends `sendStreamId`.
+   * See {@link openReadable} / {@link openWritable} for compression /
+   * backpressure.
    *
    * @param {number} receiveStreamId - local stream id to receive at.
    * @param {number} sendStreamId - remote stream id to send to.
@@ -1087,8 +1083,8 @@ export class LinkChannelOutlet extends ChannelOutletBase {
     return this.link.rtt;
   }
 
-  // Matches Python's `LinkChannelOutlet.is_usable` (hardcoded true; the link's
-  // own CLOSED transition + the channel's `_shutDown` flag stop new sends).
+  // Always usable: the link's own CLOSED transition and the channel's
+  // `_shutDown` flag stop new sends.
   get isUsable() {
     return true;
   }

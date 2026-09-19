@@ -12,13 +12,11 @@
  * HKDF keystream. The receiver reverses it and silently drops packets that
  * fail verification.
  *
- * Mirrors the Python reference `RNS/Transport.py::transmit`/`inbound` and the
- * per-interface setup in `RNS/Reticulum.py` (and `AutoInterface`/`Backbone`
- * spawn). These functions operate on **raw wire bytes** — they are deliberately
+ * These functions operate on **raw wire bytes** — they are deliberately
  * decoupled from {@link import("../core/packet.js").Packet} so the transport
  * layer can call them immediately before framing (transmit) and immediately
- * after unframing (inbound), matching upstream where `Transport.transmit`/
- * `Transport.inbound` run on already-serialised bytes.
+ * after unframing (inbound), matching upstream where the transport's
+ * transmit/inbound run on already-serialised bytes.
  */
 
 /* @ts-self-types="../../types/src/core/ifac.d.ts" */
@@ -58,8 +56,8 @@ export const IFAC_SALT = new Uint8Array([
  * Derives the IFAC key, identity and signature from a shared network name
  * and/or passphrase.
  *
- * Reproduces `RNS/Reticulum.py` interface setup (~l.975) and the per-peer
- * re-derivation in `AutoInterface`/`Backbone` spawn: either secret may be
+ * Reproduces the reference implementations' interface setup and the per-peer
+ * re-derivation on Auto/Backbone spawn: either secret may be
  * omitted, but at least one must be provided.
  *
  *   origin       = fullHash(netname?) || fullHash(netkey?)
@@ -105,7 +103,7 @@ export async function deriveIfac(netname, netkey) {
 
 /**
  * Seals a raw (un-IFACed) packet for an authenticated interface
- * (`RNS/Transport.py::transmit`, ~l.1066).
+ * (the transport transmit hook's IFAC step).
  *
  * The input **must** be an unsealed packet — i.e. header byte 0 has the
  * `ifac_flag` (bit 7) clear, which is the normal state of a freshly
@@ -150,8 +148,8 @@ export async function seal(raw, cfg) {
 }
 
 /**
- * Verifies and unseals an IFAC-sealed packet (`RNS/Transport.py::inbound`,
- * ~l.1438).
+ * Verifies and unseals an IFAC-sealed packet (the transport inbound hook's
+ * IFAC step).
  *
  * Reverses {@link seal}: extracts the IFAC, regenerates the mask, unmasks,
  * clears the flag, strips the IFAC, re-signs the result and compares the last

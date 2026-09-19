@@ -3,8 +3,8 @@
  *
  * Paper messages are encrypted, out-of-band delivery units: byte-identical to
  * the propagation `lxmf_data` form, but carried as a QR code or an `lxm://`
- * URI instead of over the network (LXMessage.py `pack()` PAPER branch +
- * `as_uri`, LXMRouter.ingest_lxm_uri).
+ * URI instead of over the network (the Python reference's PAPER pack branch
+ * and URI ingestion).
  *
  * Covered:
  *   - URL-safe base64 + `lxm://` URI codec (round-trip & Python parity)

@@ -1,6 +1,6 @@
 /**
- * Interface discovery — consumer side (work doc #17, mirrors the consumer half
- * of `RNS/Discovery.py`).
+ * Interface discovery — consumer side (work doc #17, mirroring the consumer
+ * half of the Python reference).
  *
  * Covers: aspect name-hash filtering, the LXMF stamp round-trip at discovery's
  * cheap work factor, msgpack `info`-dict parsing field-for-field against a
@@ -230,7 +230,7 @@ test("parseDiscoveryAnnounce rejects an unauthorized discovery source", async ()
 });
 
 // ---------------------------------------------------------------------
-// Python interop: parse a fixture produced by RNS/Discovery.py
+// Python interop: parse a fixture produced by the Python reference
 // ---------------------------------------------------------------------
 
 test("parses a Python-generated discovery announce byte-for-byte (interop)", async () => {

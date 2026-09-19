@@ -180,10 +180,11 @@ export class Destination extends EventTarget {
   static RATCHET_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 
   /**
-   * Default periodic re-announce interval. The Python reference has no
-   * upstream-mandated default for application destinations — its
-   * `Transport.mgmt_announce_interval` (2 h) and interface-discovery cadence
-   * (6 h) are transport-internal, not what end-user destinations announce at.
+   * Default periodic re-announce interval. There is no protocol-mandated
+   * default for application destinations — the reference implementations'
+   * transport-internal management announce cadences (2 h) and
+   * interface-discovery cadences (6 h) are not what end-user destinations
+   * announce at.
    * PROTOCOL-SPEC.md §9.7 recommends 30–60 min for a desktop client and notes
    * Sideband emits roughly every 30 min; 30 min keeps cached mesh paths fresh
    * against transit-relay TTLs without dominating airtime.
@@ -258,8 +259,8 @@ export class Destination extends EventTarget {
     // going on air. Keeps restart/stop from emitting a straggler announce.
     this._announceGeneration = 0;
 
-    // Python `path_responses`: tag → { time, announceData, hasRatchet } cache
-    // so retransmitted `path?` requests with a seen tag reuse the signed
+    // §Path responses: tag → { time, announceData, hasRatchet } cache so
+    // retransmitted `path?` requests with a seen tag reuse the signed
     // announce payload instead of re-signing (and re-rotating ratchets) per
     // retransmission. Pruned to the {@link Destination.PR_TAG_WINDOW} on
     // every path response.
@@ -279,7 +280,7 @@ export class Destination extends EventTarget {
 
   /**
    * Seconds a path-response announce payload stays reusable for retransmitted
-   * `path?` requests with the same tag (Python `Destination.PR_TAG_WINDOW`).
+   * `path?` requests with the same tag.
    * @type {number}
    */
   static PR_TAG_WINDOW = 30;
@@ -304,9 +305,8 @@ export class Destination extends EventTarget {
    *
    * When called with the requesting PR's `tag`, the signed announce payload
    * is cached for {@link PR_TAG_WINDOW} seconds and retransmissions with the
-   * same tag reuse it — mirroring the Python reference's `path_responses`
-   * cache, which keeps PR floods from forcing a fresh signature (and ratchet
-   * rotation) per retransmitted request.
+   * same tag reuse it — a path-response cache keeps PR floods from forcing a
+   * fresh signature (and ratchet rotation) per retransmitted request.
    *
    * @param {Uint8Array|null} [tag] The `path?` request tag that triggered
    *   this response, when known.
@@ -451,9 +451,9 @@ export class Destination extends EventTarget {
    *
    * A tagged PATH_RESPONSE consults the {@link pathResponses} cache first and
    * reuses the cached payload when the tag was answered within
-   * {@link Destination.PR_TAG_WINDOW} seconds — the Python reference's
-   * defence against PR floods forcing a fresh signature (and ratchet
-   * rotation) per retransmission. Generation from scratch otherwise, and a
+   * {@link Destination.PR_TAG_WINDOW} seconds — the defence against PR floods
+   * forcing a fresh signature (and ratchet rotation) per retransmission.
+   * Generation from scratch otherwise, and a
    * fresh tagged response is cached.
    *
    * @param {number} contextByte
@@ -520,7 +520,7 @@ export class Destination extends EventTarget {
       // destination, rotate if due and embed the current ratchet public (32 B)
       // into both the signed data and the announce body, and set the packet
       // context_flag so receivers parse it (§4.5). Empty when disabled —
-      // matching Python's ratchet = b"" slot.
+      // the wire's empty-ratchet slot.
       const ratchetBytes = await this._currentRatchetForAnnounce();
       hasRatchet = ratchetBytes.length > 0;
 
@@ -594,8 +594,7 @@ export class Destination extends EventTarget {
 
   /**
    * Drops {@link pathResponses} entries older than
-   * {@link Destination.PR_TAG_WINDOW} seconds (mirrors the stale-entry sweep
-   * at the top of the Python reference's `Destination.announce`).
+   * {@link Destination.PR_TAG_WINDOW} seconds (a stale-entry sweep).
    * @private
    */
   _prunePathResponses() {

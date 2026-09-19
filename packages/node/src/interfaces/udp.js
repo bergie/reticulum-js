@@ -1,7 +1,7 @@
 /**
  * @file udp.js
- * @description UDPInterface — IPv4 broadcast-bus transport (Node.js), porting
- *   the Python reference `RNS/Interfaces/UDPInterface.py`.
+ * @description UDPInterface — IPv4 broadcast-bus transport (Node.js),
+ *   wire-compatible with the Python reference UDPInterface.
  *
  * A single interface that both **receives** (a UDP socket bound to
  * `(listenIp, listenPort)`) and **forwards** (sends raw datagrams to
@@ -28,15 +28,14 @@ import { LogLevel, log } from "@reticulum/core/src/utils/log.js";
 import { getBroadcastForInterface } from "../utils/netinfo.js";
 
 /**
- * Nominal bitrate guess, mirroring `UDPInterface.BITRATE_GUESS`
- * (10 Mbit/s) in the Python reference.
+ * Nominal bitrate guess (10 Mbit/s), matching the Python reference.
  */
 const BITRATE_GUESS = 10 * 1000 * 1000;
 
 /**
- * Hardware MTU, mirroring `self.HW_MTU = 1064` in the Python reference. The
- * current JS transport does not yet read it (it mirrors the Python reference's
- * own MTU-optimization knobs, which are themselves not yet ported); it is kept
+ * Hardware MTU (1064), matching the Python reference. The
+ * current JS transport does not yet read it (matching the Python reference,
+ * whose own MTU-optimization knobs are recent); it is kept
  * here for parity and to document the medium's maximum packet size.
  */
 const HW_MTU = 1064;
@@ -46,18 +45,15 @@ const HW_MTU = 1064;
  * @property {string} [name] - Human-readable interface name.
  * @property {string} [device] - Network device name (e.g. `eth0`). When set,
  *   the IPv4 broadcast address for that device is used as the default for both
- *   `listenIp` and `forwardIp` (Python config key: device).
+ *   `listenIp` and `forwardIp`.
  * @property {number} [port] - Shorthand port. When set, seeds `listenPort` and
- *   `forwardPort` if those aren't given explicitly (Python config key: port).
+ *   `forwardPort` if those aren't given explicitly.
  * @property {string} [listenIp] - Address to bind the receiving socket to. May
- *   be a subnet broadcast address (resolved from `device`) or `0.0.0.0`
- *   (Python config key: listen_ip).
- * @property {number} [listenPort] - Port to bind the receiving socket to
- *   (Python config key: listen_port).
+ *   be a subnet broadcast address (resolved from `device`) or `0.0.0.0`.
+ * @property {number} [listenPort] - Port to bind the receiving socket to.
  * @property {string} [forwardIp] - Destination address for outbound datagrams,
- *   typically a subnet broadcast address (Python config key: forward_ip).
- * @property {number} [forwardPort] - Destination port for outbound datagrams
- *   (Python config key: forward_port).
+ *   typically a subnet broadcast address.
+ * @property {number} [forwardPort] - Destination port for outbound datagrams.
  * @property {number} [ifacSize] - IFAC size in bytes (0 disables; v1 runs with
  *   IFAC disabled, matching the common case).
  * @property {string} [networkName] - Shared IFAC network name (`ifac_netname`).
@@ -94,8 +90,8 @@ export class UDPInterface extends Interface {
       description:
         "IPv4 broadcast-bus transport. Binds a UDP socket to receive and " +
         "sends raw datagrams (one RNS packet each, no framing) to a " +
-        "broadcast or unicast destination. Mirrors the Python reference " +
-        "UDPInterface.",
+        "broadcast or unicast destination. Wire-compatible with the Python " +
+        "reference UDPInterface.",
       properties: {
         ...base.properties,
         device: {
@@ -103,8 +99,7 @@ export class UDPInterface extends Interface {
           examples: ["eth0", "wlan0"],
           description:
             "Network device name. When set, its IPv4 broadcast address is " +
-            "used as the default for both listenIp and forwardIp (Python " +
-            "config key: device).",
+            "used as the default for both listenIp and forwardIp.",
         },
         port: {
           type: "integer",
@@ -112,7 +107,7 @@ export class UDPInterface extends Interface {
           maximum: 65535,
           description:
             "Shorthand port. When set, seeds listenPort and forwardPort " +
-            "when those aren't given explicitly (Python config key: port).",
+            "when those aren't given explicitly.",
         },
         listenIp: {
           type: "string",
@@ -120,30 +115,26 @@ export class UDPInterface extends Interface {
           description:
             "Address to bind the receiving socket to. May be a subnet " +
             "broadcast address (resolved from device) or 0.0.0.0 for all " +
-            "interfaces (Python config key: listen_ip).",
+            "interfaces.",
         },
         listenPort: {
           type: "integer",
           minimum: 0,
           maximum: 65535,
-          description:
-            "Port to bind the receiving socket to (Python config key: " +
-            "listen_port).",
+          description: "Port to bind the receiving socket to.",
         },
         forwardIp: {
           type: "string",
           examples: ["192.168.1.255", "127.0.0.1"],
           description:
             "Destination address for outbound datagrams, typically a " +
-            "subnet broadcast address (Python config key: forward_ip).",
+            "subnet broadcast address.",
         },
         forwardPort: {
           type: "integer",
           minimum: 0,
           maximum: 65535,
-          description:
-            "Destination port for outbound datagrams (Python config key: " +
-            "forward_port).",
+          description: "Destination port for outbound datagrams.",
         },
         configuredBitrate: {
           type: "integer",
@@ -177,7 +168,7 @@ export class UDPInterface extends Interface {
     this.forwardPort = options.forwardPort ?? (port !== null ? port : null);
 
     // device → broadcast address for whichever half isn't given explicitly,
-    // mirroring Python's `get_broadcast_for_if` fallback.
+    // matching the Python reference's device-broadcast fallback.
     if (options.device) {
       const broadcast = getBroadcastForInterface(options.device);
       if (broadcast) {
@@ -210,8 +201,7 @@ export class UDPInterface extends Interface {
     this.forwards = this.forwardIp !== null && this.forwardPort !== null;
 
     /**
-     * Nominal bitrate. Matches `UDPInterface.BITRATE_GUESS` (10 Mbit/s) in the
-     * Python reference.
+     * Nominal bitrate (10 Mbit/s), matching the Python reference.
      * @type {number}
      */
     this.bitrate = options.configuredBitrate ?? BITRATE_GUESS;
@@ -299,8 +289,9 @@ export class UDPInterface extends Interface {
 
     if (this.forwards) {
       // One persistent ephemeral-port socket with SO_BROADCAST set, reused for
-      // every send. Functionally identical to Python's per-send fresh socket
-      // (same ephemeral source, broadcast enabled) and far fewer sockets.
+      // every send. Functionally identical to the Python reference's per-send
+      // fresh socket (same ephemeral source, broadcast enabled) and far fewer
+      // sockets.
       // Bound first because Node requires a bound socket for setBroadcast().
       /** @type {import("node:dgram").Socket} */
       const sock = dgram.createSocket({ type: "udp4" });
@@ -337,8 +328,8 @@ export class UDPInterface extends Interface {
   }
 
   /**
-   * Deserializes an inbound datagram and enqueues it for the inbound loop.
-   * Mirrors Python's `process_incoming` (raw bytes, no unframing); the byte
+   * Deserializes an inbound datagram and enqueues it for the inbound loop
+   * (raw bytes, no unframing, matching the Python reference); the byte
    * counting and `"packet"` dispatch happen in the inbound loop via
    * {@link Interface._dispatchPacket}.
    * @param {Uint8Array} data
@@ -365,9 +356,9 @@ export class UDPInterface extends Interface {
   }
 
   /**
-   * Serializes an outbound packet and sends it to the forward destination.
-   * Mirrors Python's `process_outgoing` (raw bytes, one datagram, broadcast
-   * socket); byte counting happens in {@link Interface._recordOutbound}.
+   * Serializes an outbound packet and sends it to the forward destination
+   * (raw bytes, one datagram, broadcast socket, matching the Python
+   * reference); byte counting happens in {@link Interface._recordOutbound}.
    * @param {Packet} packet
    * @private
    */
@@ -461,7 +452,7 @@ export class UDPInterface extends Interface {
   /**
    * Binds a socket and resolves on `listening`, rejecting on `error`. With no
    * arguments binds to an ephemeral port on `0.0.0.0` (used for the send
-   * socket, mirroring Python's unbound send socket).
+   * socket, like the Python reference's unbound send socket).
    * @param {import("node:dgram").Socket} sock
    * @param {number} [port]
    * @param {string} [address]

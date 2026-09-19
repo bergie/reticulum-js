@@ -184,9 +184,7 @@ function base64urlToBytes(s) {
  * private key as JWK yields the public component in the `x` field
  * (RFC 8037), which we re-import as a raw public key. Used by
  * {@link import("../core/identity.js").Identity.fromPrivateKey} to build a
- * full identity from private-key material alone — mirroring the Python
- * reference's `Identity.load_private_key`, which derives `pub`/`sig_pub` from
- * `prv`/`sig_prv`.
+ * full identity from private-key material alone.
  * @param {CryptoKey} privateKey An extractable X25519 or Ed25519 private key.
  * @returns {Promise<{publicKey: CryptoKey, raw: Uint8Array}>} The matching
  *   public key, both as a CryptoKey and as 32 raw bytes.

@@ -61,8 +61,8 @@ const DIRECT_LINK_TIMEOUT_MS = 10_000;
 
 /**
  * How long (ms) to wait for a path-response announce after requesting a path
- * before attempting a DIRECT link anyway (Python `LXMRouter.PATH_REQUEST_WAIT`
- * = 7 s). A LINKREQUEST with no known path is broadcast and won't reach a
+ * before attempting a DIRECT link anyway (7 s, matching the Python
+ * reference). A LINKREQUEST with no known path is broadcast and won't reach a
  * multi-hop peer, so when no path is known we request one and wait for the
  * announce before initiating — recovering a stale/expired path after a
  * restart.
@@ -75,10 +75,9 @@ const RESOURCE_TRANSFER_TIMEOUT_MS = 60_000;
  * Upper bound on remembered message ids for inbound deduplication. Entries
  * are only ever inserted once (a repeat delivery is dropped, not re-inserted),
  * so insertion order is chronological order and the oldest entry is evicted
- * first. Python keeps `locally_delivered_transient_ids` (persisted to disk,
- * pruned after `MESSAGE_EXPIRY * 6` in its jobs loop); this port keeps the
- * cache in memory like `processedTransientIds`, and 4096 entries spans days
- * of mesh traffic in one process while staying trivially small.
+ * first. The Python reference persists its delivered-id set to disk and prunes
+ * it in its jobs loop; we keep the cache in memory, and 4096 entries spans
+ * days of mesh traffic in one process while staying trivially small.
  */
 const DELIVERED_MESSAGE_CACHE_MAX = 4096;
 
@@ -113,30 +112,29 @@ export class LXMRouter extends EventTarget {
     // Tracks outbound links (by hex link_id) we have already sent LINKIDENTIFY
     // on, so we identify once per link rather than on every message.
     this.identifiedLinks = new Set();
-    // --- Outbound DIRECT delivery links (Python LXMRouter.direct_links),
-    // cached by recipient destination hash so repeated sends reuse one link. ---
+    // --- Outbound DIRECT delivery links (the Python reference's direct
+    // links), cached by recipient destination hash so repeated sends reuse one link. ---
     /** @type {Map<string, import("@reticulum/core").Link>} */
     this.directLinks = new Map();
     // Last display name / stamp cost we announced with (§4.3 app_data).
     this.displayName = null;
     this.stampCost = null;
     // Tracks transient_ids of ingested paper/propagated messages we have
-    // already processed, so a repeated URI ingestion is ignored
-    // (LXMRouter.locally_processed_transient_ids).
+    // already processed, so a repeated URI ingestion is ignored (matching
+    // the Python reference's processed-transient-id tracking).
     /** @type {Map<string, number>} */
     this.processedTransientIds = new Map();
-    // Tracks message ids (§5.5 — Python LXMessage.hash) of messages already
+    // Tracks message ids (§5.5) of messages already
     // delivered through the "message" event, so the same message arriving
     // over another path (link + opportunistic + a propagation sync, or a
-    // sender retry) is dispatched exactly once (Python
-    // LXMRouter.locally_delivered_transient_ids / lxmf_delivery's
-    // has_message check).
+    // sender retry) is dispatched exactly once (matching the Python
+    // reference's delivered-message dedup).
     /** @type {Map<string, number>} */
     this.locallyDeliveredMessageIds = new Map();
     // --- Peer mesh (§5.8.4): peered propagation nodes keyed by dest hash. ---
     /** @type {Map<string, LXMPeer>} */
     this.peers = new Map();
-    // --- Autopeer (Python lxmd / LXMRouter): auto-peer with discovered ---
+    // --- Autopeer (the Python reference's lxmd): auto-peer with discovered ---
     // propagation nodes whose advertised peering cost ≤ this threshold.
     /** @type {boolean} */
     this.autopeerEnabled = false;
@@ -250,7 +248,8 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
-   * Enables autopeering (Python `lxmd` autopeer): when a `lxmf.propagation`
+   * Enables autopeering (matching the Python reference's lxmd autopeer): when
+   * a `lxmf.propagation`
    * announce is heard whose advertised peering cost is ≤ `maxPeeringCost`, a
    * peering relationship is established automatically. Requires
    * {@link enablePropagation} (this node must itself be a propagation node to
@@ -700,8 +699,8 @@ export class LXMRouter extends EventTarget {
 
   /**
    * Whether a message with this message id has already been delivered to
-   * local handlers, no matter which path it arrived on (Python
-   * `LXMRouter.has_message`, keyed by `LXMessage.hash`).
+   * local handlers, no matter which path it arrived on (matching the Python
+   * reference, keyed by message hash).
    * @param {Uint8Array} messageId - SHA-256 of the signed part (§5.5).
    * @returns {boolean}
    */
@@ -710,8 +709,8 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
-   * Records a message id as locally delivered (Python
-   * `locally_delivered_transient_ids[message.hash] = time.time()`), evicting
+   * Records a message id as locally delivered (matching the Python
+   * reference), evicting
    * the oldest entries past {@link DELIVERED_MESSAGE_CACHE_MAX}.
    * @param {string} messageIdHex
    * @private
@@ -786,10 +785,10 @@ export class LXMRouter extends EventTarget {
       const tidHex = toHex(tid);
       if (this.processedTransientIds.has(tidHex)) continue;
       // Dispatch — or drop as an already-delivered duplicate (a copy of a
-      // message we already received over a link / opportunistically; Python
-      // lxmf_delivery's has_message check). Either way the transient id is
-      // now processed and the copy acked to the node so it is purged: Python
-      // message_get_response acks every fetched message, duplicates
+      // message we already received over a link / opportunistically; the
+      // Python reference's has-message check). Either way the transient id is
+      // now processed and the copy acked to the node so it is purged: the
+      // Python reference acks every fetched message, duplicates
       // included, and records locally_processed before attempting delivery.
       const dispatched = await this._ingestPropagationData(lxmfData);
       this.processedTransientIds.set(tidHex, Date.now() / 1000);
@@ -1107,8 +1106,8 @@ export class LXMRouter extends EventTarget {
    * the message is still delivered, mirroring Python's
    * `lxmf_delivery` SOURCE_UNKNOWN behaviour.
    *
-   * Deduplicates by message id before dispatching (Python `lxmf_delivery`'s
-   * `has_message` check): every delivery of the same wire message — over a
+   * Deduplicates by message id before dispatching (the Python reference's
+   * has-message check): every delivery of the same wire message — over a
    * link, as an opportunistic packet, via a propagation-node sync, through the
    * embedded node's local delivery, or re-ingested from a paper URI — carries
    * the same id, so the second and later copies are dropped instead of
@@ -1259,7 +1258,7 @@ export class LXMRouter extends EventTarget {
   /**
    * Serializes and sends an LXMF message.
    *
-   * Delivery method mirrors the Python reference (`LXMRouter.process_outbound`):
+   * Delivery method mirrors the Python reference:
    *   - a provided `linkId` is reused (DIRECT over an existing link);
    *   - otherwise a DIRECT link to the recipient is established (and cached);
    *   - if no DIRECT link can be established, falls back to a single
@@ -1359,9 +1358,9 @@ export class LXMRouter extends EventTarget {
    *
    * The leading destination hash is stripped from the LXMF body — it is
    * conveyed by the outer Reticulum packet envelope and re-prepended by the
-   * receiver (Python LXMRouter.delivery_packet). The remainder is encrypted
+   * receiver (matching the Python reference). The remainder is encrypted
    * with the recipient's public key via Destination.send, exactly mirroring
-   * LXMessage.__as_packet for the OPPORTUNISTIC case.
+   * the Python reference's opportunistic packet form.
    *
    * The send is **settled**, not fire-and-forget: the tracked packet receipt
    * is awaited, so the returned promise resolves only once the receiver's
@@ -1419,8 +1418,8 @@ export class LXMRouter extends EventTarget {
   /**
    * Requests a path to `destinationHash` and resolves once one is known (a
    * path-response announce was ingested), or after `timeoutMs` if no path
-   * appears. Mirrors Python `LXMRouter` DIRECT delivery
-   * (`request_path` + `PATH_REQUEST_WAIT`): a link initiated with no known path
+   * appears. Mirrors the Python reference's DIRECT delivery (path request +
+   * wait): a link initiated with no known path
    * broadcasts its LINKREQUEST, which a multi-hop peer never receives.
    *
    * No-op (resolves `true` immediately) when a path is already known, or when
@@ -1492,7 +1491,7 @@ export class LXMRouter extends EventTarget {
 
   /**
    * Establishes (or reuses a cached) DIRECT delivery link to an `lxmf.delivery`
-   * destination (Python `LXMRouter.direct_links`).
+   * destination (the Python reference's direct links).
    *
    * DIRECT delivery is the default outbound method in the Python reference and
    * the channel mobile LXMF clients listen on for replies. Returns the link, or
@@ -1520,7 +1519,8 @@ export class LXMRouter extends EventTarget {
       );
       return null;
     }
-    // §Python LXMRouter DIRECT delivery: a LINKREQUEST with no known path is
+    // § DIRECT delivery, matching the Python reference: a LINKREQUEST with no
+    // known path is
     // broadcast and won't reach a multi-hop peer (it just times out). If we
     // have no path, request one and wait for the announce before initiating —
     // this is what recovers a stale/expired path after a restart.
@@ -1535,7 +1535,8 @@ export class LXMRouter extends EventTarget {
       const link = await Link.initiate(peerDestination, this.rns.transport);
       await link.whenActive(DIRECT_LINK_TIMEOUT_MS);
       // Evict from the cache when the link comes down so the next send
-      // re-establishes a fresh one (Python pops direct_links on close).
+      // re-establishes a fresh one (matching the Python reference, which
+      // drops the cached link on close).
       link.addEventListener("statuschange", (/** @type {any} */ ev) => {
         if (ev.detail.status === LinkStatus.CLOSED) {
           if (this.directLinks.get(destHex) === link) {
@@ -1556,7 +1557,7 @@ export class LXMRouter extends EventTarget {
         `DIRECT link to ${destHex} failed, falling back to opportunistic: ${e}`,
         LogLevel.WARNING,
       );
-      // Python LXMRouter.process_outbound: "The link to … was never
+      // Matching the Python reference: "The link to … was never
       // activated, retrying path request" — a link that cannot be
       // established over a known route means the route is dead. Expire it
       // and request a fresh path (MI-gated) so the next attempt — ours or an

@@ -3,8 +3,8 @@
  * @description LXMF propagation submit/sync container packing (§5.3).
  *
  * When a client submits messages to a propagation node — or peers sync — the
- * payload sent over the link is the `propagation_packed` container
- * (`LXMessage.propagation_packed` in the Python reference):
+ * payload sent over the link is the propagation-packed container (matching
+ * the Python reference):
  *
  *   msgpack([ send_time_float, [ lxmf_data, ... ] ])
  *

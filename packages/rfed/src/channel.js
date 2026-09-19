@@ -20,7 +20,7 @@
  * ```
  *
  * Matches the Rust `make_channel_identity` / `ChannelKeypair::from_name` and
- * the Python `channel_hash.compute_channel_hash` reference vectors.
+ * the Python reference's channel-hash vectors.
  */
 
 import { base64UrlToBytes, concatBytes, Identity } from "@reticulum/core";

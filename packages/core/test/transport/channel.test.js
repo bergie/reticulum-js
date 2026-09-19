@@ -1,5 +1,6 @@
 /**
- * Channel (reliable typed message exchange) tests — ports of `RNS/Channel.py`.
+ * Channel (reliable typed message exchange) tests, verifying behavior
+ * against the Python reference.
  *
  * Covers:
  *   - `Envelope` pack/unpack wire format (`msgtype ‖ seq ‖ len ‖ data`, BE).

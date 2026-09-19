@@ -40,8 +40,8 @@ const DESTINATION_LENGTH = 16;
  * @property {string|null} [name] Operator node name (announce metadata).
  * @property {boolean} [nodeState] Whether this node is actively serving.
  * @property {number|null} [storageLimitBytes] Stored-message byte cap; when
- *   set, the highest-weight entries are evicted to stay under it (Python
- *   `message_storage_limit`). `null` = unlimited.
+ *   set, the highest-weight entries are evicted to stay under it.
+ *   `null` = unlimited.
  * @property {number|null} [messageTtlSecs] Stored-message age TTL; entries
  *   older than this are pruned by {@link PropagationNode#tickMaintenance}.
  *   `null` = no age TTL (default; the Python reference relies on the byte cap).
@@ -124,8 +124,8 @@ export class PropagationNode {
 
   /**
    * Periodic maintenance — prunes aged entries (when `messageTtlSecs` is set)
-   * and re-runs capacity eviction. A runner calls this hourly (Python calls
-   * `clean_messages` from its job loop).
+   * and re-runs capacity eviction. A runner calls this hourly (the Python
+   * reference runs the same cull from its job loop).
    *
    * @returns {{ aged: number }}
    */

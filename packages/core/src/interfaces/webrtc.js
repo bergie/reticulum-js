@@ -28,9 +28,9 @@ import { Interface } from "./base.js";
 
 /**
  * Minimum RNS header size in bytes (`RNS.Reticulum.HEADER_MINSIZE`):
- * `2 + 1 + (TRUNCATED_HASHLENGTH / 8)` = `2 + 1 + 16` = 19. Mirrors the
- * defensive floor every Python reference interface applies before handing a
- * frame to Transport; anything this small or smaller is silently dropped.
+ * `2 + 1 + (TRUNCATED_HASHLENGTH / 8)` = `2 + 1 + 16` = 19. A defensive
+ * floor applied before handing a frame to the transport; anything this
+ * small or smaller is silently dropped.
  */
 const HEADER_MINSIZE = 19;
 
@@ -250,8 +250,7 @@ export class WebRTCInterface extends Interface {
             }
             const bytes = new Uint8Array(event.data);
             try {
-              // Match the Python reference read loop and the WebSocket
-              // interface: drop anything no larger than the header minimum.
+              // Drop anything no larger than the header minimum.
               if (bytes.length <= HEADER_MINSIZE) {
                 log(
                   "WebRTC",

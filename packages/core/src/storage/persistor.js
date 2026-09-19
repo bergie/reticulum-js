@@ -53,8 +53,8 @@ function encodeIdentityEntry(entry) {
  * @returns {import("../core/destination.js").KnownDestination}
  * @throws when the bytes do not decode to at least a 4-element array (so
  *   {@link Persistor#load} can skip corrupt records). A trailing fifth
- *   element — Python's per-entry last-use timestamp, which this port never
- *   tracked — is ignored if present.
+ *   element (the Python reference's per-entry last-use timestamp) is ignored
+ *   if present.
  */
 function decodeIdentityEntry(bytes) {
   const e = MicroMsgPack.decode(bytes);

@@ -16,8 +16,8 @@ import {
 import { LogLevel, log } from "@reticulum/core/src/utils/log.js";
 
 /**
- * Initial TCP keepalive probe delay, in milliseconds. Mirrors the Python
- * reference `TCP_PROBE_AFTER` (5s). Node only exposes the initial delay via
+ * Initial TCP keepalive probe delay, in milliseconds (5 s, matching the
+ * Python reference). Node only exposes the initial delay via
  * `setKeepAlive`; the finer-grained Linux `TCP_USER_TIMEOUT`/
  * `TCP_KEEPCNT`/`TCP_KEEPINTVL` knobs are not reachable from the standard API
  * (see work doc open question E).
@@ -25,7 +25,7 @@ import { LogLevel, log } from "@reticulum/core/src/utils/log.js";
 const TCP_PROBE_AFTER_MS = 5000;
 /**
  * Longer initial keepalive probe delay for I2P-tunneled connections, in
- * milliseconds. Mirrors the Python reference `I2P_PROBE_AFTER` (10s).
+ * milliseconds (10 s, matching the Python reference).
  */
 const I2P_PROBE_AFTER_MS = 10000;
 
@@ -39,8 +39,8 @@ const I2P_PROBE_AFTER_MS = 10000;
  * @property {string} [passphrase] - Shared IFAC passphrase (`ifac_netkey`).
  * @property {string} [name]
  * @property {"hdlc"|"kiss"} [framing] - Wire framing to use. Defaults to
- *   `"hdlc"` (Python reference default). `"kiss"` mirrors the Python
- *   `kiss_framing = yes` TCP option.
+ *   `"hdlc"` (the Python reference default). `"kiss"` matches a Python
+ *   peer configured with `kiss_framing = yes`.
  * @property {boolean} [autoReconnect] - Reconnect after drops (initiator
  *   only). Defaults to `true`.
  * @property {number} [reconnectWait] - Seconds between attempts. Defaults to 5.
@@ -85,13 +85,12 @@ export class TCPClientInterface extends Interface {
       description:
         "Connects to a remote Reticulum node over a TCP socket and " +
         "automatically reconnects (as the initiator) after a drop. " +
-        "Mirrors the Python reference TCPClientInterface.",
+        "Wire-compatible with the Python reference TCPClientInterface.",
       properties: {
         ...base.properties,
         host: {
           type: "string",
-          description:
-            "Target host to connect to (Python config key: target_host).",
+          description: "Target host to connect to.",
           examples: ["127.0.0.1", "reticulum.network"],
         },
         port: {
@@ -101,24 +100,22 @@ export class TCPClientInterface extends Interface {
           default: 4242,
           examples: [4242],
           description:
-            "Target TCP port to connect to (Python config key: " +
-            "target_port). The standard rnsd port is 4242.",
+            "Target TCP port to connect to. The standard rnsd port is 4242.",
         },
         i2pTunneled: {
           type: "boolean",
           default: false,
           description:
             "Use the longer I2P keepalive probe interval for connections " +
-            "tunneled through I2P (Python config key: i2p_tunneled).",
+            "tunneled through I2P.",
         },
         framing: {
           type: "string",
           enum: ["hdlc", "kiss"],
           default: "hdlc",
           description:
-            "Wire framing to use on the socket (Python config key: " +
-            "kiss_framing). Defaults to hdlc; set to kiss to match a " +
-            "Python peer configured with kiss_framing = yes.",
+            "Wire framing to use on the socket. Defaults to hdlc; set to " +
+            "kiss to match a Python peer configured with kiss_framing = yes.",
         },
         ...reconnectSchemaProperties(),
       },
@@ -154,8 +151,8 @@ export class TCPClientInterface extends Interface {
     /** @type {string|null} */
     this.ifacNetkey = options.passphrase || null;
     /**
-     * Nominal bitrate. Matches `TCPClientInterface.BITRATE_GUESS`
-     * (10 Mbit/s) in the Python reference; overwritten by the parent server
+     * Nominal bitrate (10 Mbit/s), matching the Python reference; overwritten
+     * by the parent server
      * when spawned by a {@link TCPServerInterface}.
      * @type {number}
      */
@@ -197,9 +194,8 @@ export class TCPClientInterface extends Interface {
    *
    * For an initiator whose first dial fails with auto-reconnect enabled, the
    * promise rejects (so the caller knows the first attempt failed) but the
-   * reconnect loop keeps retrying in the background. Mirrors the Python
-   * reference `initial_connect`, which spawns a background reconnect thread on
-   * the first failure.
+   * reconnect loop keeps retrying in the background, matching the Python
+   * reference, which retries in the background after the first failure.
    * @returns {Promise<void>}
    */
   async connect() {
@@ -461,7 +457,7 @@ export class TCPServerInterface extends Interface {
       title: "TCP Server Interface",
       description:
         "Listens for inbound TCP connections and spawns a client interface " +
-        "per accepted connection. Mirrors the Python reference " +
+        "per accepted connection. Wire-compatible with the Python reference " +
         "TCPServerInterface.",
       properties: {
         ...base.properties,
@@ -471,24 +467,20 @@ export class TCPServerInterface extends Interface {
           maximum: 65535,
           default: 4242,
           examples: [4242],
-          description:
-            "TCP port to listen on (Python config key: port / " +
-            "listen_port). The standard rnsd port is 4242.",
+          description: "TCP port to listen on. The standard rnsd port is 4242.",
         },
         listenIp: {
           type: "string",
           default: "0.0.0.0",
           examples: ["0.0.0.0", "127.0.0.1"],
-          description:
-            "Address to bind the listener to (Python config key: listen_ip).",
+          description: "Address to bind the listener to.",
         },
         framing: {
           type: "string",
           enum: ["hdlc", "kiss"],
           default: "hdlc",
           description:
-            "Wire framing for spawned client interfaces (Python config " +
-            "key: kiss_framing). Defaults to hdlc.",
+            "Wire framing for spawned client interfaces. Defaults to hdlc.",
         },
       },
       required: ["port"],
@@ -512,8 +504,8 @@ export class TCPServerInterface extends Interface {
     /** @type {"hdlc"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "hdlc";
     /**
-     * Nominal bitrate, inherited by spawned client interfaces. Matches
-     * `TCPServerInterface.BITRATE_GUESS` (10 Mbit/s) in the Python reference.
+     * Nominal bitrate, inherited by spawned client interfaces (10 Mbit/s,
+     * matching the Python reference).
      * @type {number}
      */
     this.bitrate = 10000000;
@@ -553,7 +545,8 @@ export class TCPServerInterface extends Interface {
           framing: this.framing,
           name: `tcp-client-from-server-${socket.remoteAddress}:${socket.remotePort}`,
         });
-        // Inherit the server's nominal bitrate (Python spawned-interface parity).
+        // Inherit the server's nominal bitrate, matching the Python
+        // reference's spawned interfaces.
         client.bitrate = this.bitrate;
         await client.connect();
         this.spawnedInterfaces.add(client);

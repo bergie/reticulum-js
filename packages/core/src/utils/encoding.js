@@ -130,7 +130,7 @@ const B64_DEC = (() => {
 /**
  * Decodes a (standard or URL-safe, padded or unpadded) base64 string.
  *
- * Tolerant in the same ways the LXMF Python reference is when ingesting paper
+ * Tolerant in the same ways the Python LXMF reference is when ingesting paper
  * URIs: stray padding is ignored and missing padding is restored.
  *
  * @param {string} str

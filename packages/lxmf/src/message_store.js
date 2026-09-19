@@ -1,13 +1,13 @@
 /**
  * @module @reticulum/lxmf/src/message_store.js
  * @description In-memory store for propagated LXMF messages on a propagation
- *   node (`LXMRouter.propagation_entries` in the Python reference).
+ *   node (the Python reference's propagation store).
  *
  * Entries are keyed by `transient_id = SHA-256(lxmf_data)` and serve the
- * client `/get` exchange (`LXMRouter.message_get_request`): list available
+ * client `/get` exchange: list available
  * transient_ids for a recipient, fetch their base `lxmf_data`, and purge
  * acknowledged ones. All ownership checks (a client may only touch messages
- * addressed to it) mirror the Python `message_entry[0] == remote_hash` filter.
+ * addressed to it) mirror the Python reference's per-recipient filter.
  */
 
 /* @ts-self-types="../types/src/message_store.d.ts" */
@@ -29,7 +29,7 @@ import { toHex } from "@reticulum/core";
  * @property {Set<string>} unhandledPeers hex peer hashes still needing this message.
  */
 
-/** Seconds per 4-day age-weight unit (Python `get_weight`). */
+/** Seconds per 4-day age-weight unit, matching the Python reference. */
 const AGE_WEIGHT_UNIT = 60 * 60 * 24 * 4;
 
 /** Default TTL: none (messages live until the byte cap evicts them), matching
@@ -37,10 +37,10 @@ const AGE_WEIGHT_UNIT = 60 * 60 * 24 * 4;
 const DEFAULT_MESSAGE_TTL_SECS = null;
 
 /**
- * Transfer weight used to order a sync offer (`LXMRouter.get_weight`):
+ * Transfer weight used to order a sync offer, matching the Python reference:
  * `priority * max(1, age/4days) * size`, ascending. There is no prioritised
  * list yet, so priority is always 1.0. Reused for capacity eviction (where the
- * *highest*-weight entries are culled first, mirroring Python `clean_messages`).
+ * *highest*-weight entries are culled first, matching the Python reference).
  *
  * @param {PropagationEntry} entry
  * @returns {number}
@@ -58,8 +58,8 @@ function weightOf(entry) {
  *
  * @typedef {Object} MessageStoreOptions
  * @property {number|null} [storageLimitBytes] Byte cap; when set, the
- *   highest-weight entries are evicted after an add to stay under it (Python
- *   `message_storage_limit`). `null` = unlimited.
+ *   highest-weight entries are evicted after an add to stay under it.
+ *   `null` = unlimited.
  * @property {number|null} [messageTtlSecs] Age TTL; entries older than this are
  *   pruned by {@link MessageStore#prune}. `null` = no age TTL (default; the
  *   Python reference relies on the byte cap alone).
@@ -161,7 +161,7 @@ export class MessageStore {
 
   /**
    * Evicts the highest-weight entries until `totalBytes ≤ storageLimitBytes`
-   * (Python `clean_messages` cull: weight descending). No-op when no cap.
+   * (weight descending, matching the Python reference). No-op when no cap.
    * @private
    */
   _enforceCapacity() {
@@ -182,8 +182,8 @@ export class MessageStore {
 
   /**
    * Periodic maintenance — prunes entries older than `messageTtlSecs` (when set)
-   * and re-runs capacity enforcement. A runner calls this hourly (Python calls
-   * `clean_messages` from its job loop).
+   * and re-runs capacity enforcement. A runner calls this hourly (the Python
+   * reference runs the same cull from its job loop).
    *
    * @returns {{ aged: number }} counts of pruned entries.
    */

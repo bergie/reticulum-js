@@ -1,6 +1,6 @@
 /**
  * Inbound packet-hash dedup ring (Transport.packet_hashlist / packet_filter),
- * a Python-reference behaviour ported for work doc #16.
+ * a Python-reference behaviour (work doc #16).
  *
  * A leaf drops a non-announce packet whose hash it has already seen, except for
  * contexts that legitimately recur or carry their own sequencing. Announces

@@ -2,7 +2,7 @@
  * Wire-format compliance tests for the Reticulum Link protocol (LINKS.md §6).
  *
  * Each test verifies a specific on-the-wire invariant derived from the Python
- * reference implementation (`RNS/Link.py`, `RNS/Packet.py`). The consolidated
+ * reference implementation. The consolidated
  * Link implementation lives in `src/transport/link.js`; these tests pin its
  * public behaviour and the on-the-wire byte layouts.
  */
@@ -102,7 +102,7 @@ async function x25519Pub(identity) {
 // ---------------------------------------------------------------------------
 
 test("§6.6.1 signallingBytes encodes mode + mtu as 3-byte big-endian", () => {
-  // RNS/Link.py:148-152. mode=1, mtu=500 -> 0x2001F4 -> bytes 20 01 f4
+  // matching the Python reference: mode=1, mtu=500 -> 0x2001F4 -> bytes 20 01 f4
   const sig = Link.signallingBytes(500, 0x01);
   assert.strictEqual(sig.length, 3);
   assert.deepStrictEqual(Array.from(sig), [0x20, 0x01, 0xf4]);
@@ -124,11 +124,11 @@ test("§6.6.1 signallingBytes round-trips mode and mtu", () => {
 });
 
 // ---------------------------------------------------------------------------
-// §6.7.1  isLinkPacketUnencrypted matches RNS/Packet.py pack()
+// §6.7.1  isLinkPacketUnencrypted matches the Python reference pack()
 // ---------------------------------------------------------------------------
 
 test("§6.7.1 isLinkPacketUnencrypted matches Python pack() not-encrypted set", () => {
-  // Unencrypted on a LINK destination (RNS/Packet.py:186-212)
+  // Unencrypted on a LINK destination (matching the Python reference)
   assert.ok(
     isLinkPacketUnencrypted(PacketType.PROOF, ContextType.NONE),
     "link PROOF (NONE) is unencrypted",
@@ -632,7 +632,7 @@ test("§6.7.1 responder answers 0xFF ping with 0xFE pong", async () => {
   );
   assert.ok(
     pong,
-    "responder MUST answer 0xFF with 0xFE (RNS/Link.py:1149-1153)",
+    "responder MUST answer 0xFF with 0xFE (matching the Python reference)",
   );
 });
 
@@ -831,7 +831,7 @@ async function awaitActive(initiator, getResponder, timeoutMs = 1000) {
 
 // ---------------------------------------------------------------------------
 // §6.7  Watchdog liveness: keepalive *sends* must not refresh it
-// (Python Link.py: `last_inbound`/`last_proof` only, `had_outbound` never)
+// (matching the Python reference: inbound traffic and proofs only, outbound never)
 // ---------------------------------------------------------------------------
 
 /**

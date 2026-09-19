@@ -30,7 +30,7 @@ import { LogLevel, log } from "../utils/log.js";
 
 /**
  * Snapshot of an interface's identity and byte counters (returned by
- * {@link Interface#getStats}), mirroring the Python reference stats fields.
+ * {@link Interface#getStats}), mirroring the Python reference's stats fields.
  *
  * @typedef {Object} InterfaceStats
  * @property {string} name - Human-readable interface name.
@@ -41,48 +41,44 @@ import { LogLevel, log } from "../utils/log.js";
  *   on multiple interfaces. `null` until `Reticulum.addInterface` applies the
  *   default.
  * @property {number} rxb - Total bytes received (post-framing RNS packet
- *   bytes), mirroring the Python reference `self.rxb`. Apps derive a transfer
- *   rate by sampling this over time.
- * @property {number} txb - Total bytes transmitted, mirroring `self.txb`.
+ *   bytes). Apps derive a transfer rate by sampling this over time.
+ * @property {number} txb - Total bytes transmitted.
  * @property {number} created - Epoch milliseconds when the interface was
- *   constructed (Python `self.created`).
+ *   constructed.
  * @property {number} incomingAnnounceFrequency - Live incoming-announce rate
- *   in Hz (Python `incoming_announce_frequency`). 0 with too few samples.
+ *   in Hz. 0 with too few samples.
  * @property {number} outgoingAnnounceFrequency - Live outgoing-announce rate
- *   in Hz (Python `outgoing_announce_frequency`).
+ *   in Hz.
  * @property {number} incomingPrFrequency - Live incoming `path?` request
- *   rate in Hz (Python `incoming_pr_frequency`).
+ *   rate in Hz.
  * @property {number} outgoingPrFrequency - Live outgoing `path?` request
- *   rate in Hz (Python `outgoing_pr_frequency`).
+ *   rate in Hz.
  * @property {boolean} announceBurstActive - Whether an announce ingress burst
- *   is latched (Python `burst_active`).
+ *   is latched.
  * @property {number} announceBurstActivated - When the current announce burst
- *   latched, epoch seconds (Python `burst_activated`; 0 = never).
- * @property {number} announceBurstCount - Times an announce burst has latched
- *   (Python `burst_count` — a subclass hook returning None there; ours is a
- *   real counter).
+ *   latched, epoch seconds (0 = never).
+ * @property {number} announceBurstCount - Times an announce burst has latched.
  * @property {boolean} prBurstActive - Whether a `path?` ingress burst is
- *   latched (Python `pr_burst_active`).
+ *   latched.
  * @property {number} prBurstActivated - When the current PR burst latched,
- *   epoch seconds (Python `pr_burst_activated`; 0 = never).
- * @property {number} prBurstCount - Times a PR burst has latched (Python
- *   `pr_burst_count`).
+ *   epoch seconds (0 = never).
+ * @property {number} prBurstCount - Times a PR burst has latched.
  * @property {number} prBurstDrops - Unique-tag path requests dropped while a
- *   PR burst was latched (our inline equivalent of Python's ingress-limited
- *   queue-drop counter `rxqild`).
+ *   PR burst was latched (the inline-processing equivalent of an
+ *   ingress-limited queue-drop counter).
  * @property {number} heldAnnounces - Announces currently held awaiting
- *   release (Python `held_announces`).
+ *   release.
  * @property {number} heldAnnounceReleases - Held announces released back into
  *   the inbound pipeline so far.
  * @property {number} heldAnnounceDrops - Announces dropped because the held
  *   table was at its cap when they arrived.
  * @property {number} protocolViolations - Generic protocol violations
- *   (RNS 1.5.0 `protocol_violations`): malformed packets, bad signatures,
+ *   (RNS 1.5.0): malformed packets, bad signatures,
  *   tagless/oversized path requests, etc.
- * @property {number} ifacViolations - IFAC-specific violations (RNS 1.5.0
- *   `ifac_violations`): missing/invalid/short IFAC fields.
+ * @property {number} ifacViolations - IFAC-specific violations (RNS 1.5.0):
+ *   missing/invalid/short IFAC fields.
  * @property {number} packetFilterHits - Inbound packet-filter (dedup) hits
- *   (RNS 1.5.0 `packet_filter_hits`).
+ *   (RNS 1.5.0).
  */
 
 /**
@@ -103,8 +99,7 @@ import { LogLevel, log } from "../utils/log.js";
  */
 
 /**
- * Reconnect defaults mirroring the Python reference client interfaces
- * (`RECONNECT_WAIT`, `RECONNECT_MAX_TRIES`, `INITIAL_CONNECT_TIMEOUT`).
+ * Default reconnect parameters for client interfaces.
  */
 const RECONNECT_DEFAULTS = {
   autoReconnect: true,
@@ -124,8 +119,7 @@ const RECONNECT_DEFAULTS = {
 
 /**
  * Returns the JSON Schema properties for the shared reconnect options, for
- * client interface schemas to spread in. Mirrors the Python reference config
- * keys (`kiss_framing` and the rest live per-interface).
+ * client interface schemas to spread in.
  * @returns {Record<string, any>}
  */
 function reconnectSchemaProperties() {
@@ -136,73 +130,65 @@ function reconnectSchemaProperties() {
       description:
         "Whether the initiator (outbound dialer) automatically reconnects " +
         "after the connection drops, with a fixed backoff. When false, " +
-        "behaviour is one-shot: a drop is terminal (Python config key: " +
-        "implicit; only the initiator reconnects).",
+        "behaviour is one-shot: a drop is terminal (only the initiator " +
+        "reconnects).",
     },
     reconnectWait: {
       type: "number",
       minimum: 0,
       default: 5,
       examples: [5],
-      description:
-        "Seconds to wait between reconnection attempts (Python config key: " +
-        "RECONNECT_WAIT).",
+      description: "Seconds to wait between reconnection attempts.",
     },
     maxReconnectTries: {
       anyOf: [{ type: "integer", minimum: 0 }, { type: "null" }],
       description:
         "Maximum reconnection attempts per drop before giving up and firing " +
-        "a terminal `closed` event. Omit (or null) to retry forever (Python " +
-        "config key: max_reconnect_tries; RECONNECT_MAX_TRIES defaults to " +
-        "None).",
+        "a terminal `closed` event. Omit (or null) to retry forever.",
     },
     connectTimeout: {
       type: "number",
       minimum: 0,
       default: 5,
       examples: [5],
-      description:
-        "Per-dial connect timeout in seconds (Python config key: " +
-        "connect_timeout; INITIAL_CONNECT_TIMEOUT).",
+      description: "Per-dial connect timeout in seconds.",
     },
   };
 }
 
 /**
  * Node-global ingress-control overrides accepted by the {@link Reticulum}
- * constructor's `ingressControl` config block (camelCase forms of the Python
- * reference's `[reticulum]`-section `ic_*` options, which apply to every
- * interface — Python has no per-interface form of these).
+ * constructor's `ingressControl` config block (camelCase forms of the
+ * node-level `ic_*` options, which apply to every interface — there is no
+ * per-interface form of these).
  *
  * @typedef {Object} IngressControlConfig
  * @property {number} [icBurstHold] Seconds a latched burst stays active
- *   (Python config key: ic_burst_hold; default 15).
+ *   (default 15).
  * @property {number} [icBurstFreqNew] Announce burst threshold in Hz for
- *   interfaces younger than `icNewTime` (ic_burst_freq_new; default 3).
+ *   interfaces younger than `icNewTime` (default 3).
  * @property {number} [icBurstFreq] Announce burst threshold in Hz for
- *   established interfaces (ic_burst_freq; default 10).
+ *   established interfaces (default 10).
  * @property {number} [icPrBurstFreqNew] Path-request burst threshold in Hz
- *   for new interfaces (ic_pr_burst_freq_new; default 3).
+ *   for new interfaces (default 3).
  * @property {number} [icPrBurstFreq] Path-request burst threshold in Hz for
- *   established interfaces (ic_pr_burst_freq; default 8).
+ *   established interfaces (default 8).
  * @property {number} [icNewTime] Interface age in seconds below which the
- *   "new" thresholds apply (ic_new_time; default 7200).
+ *   "new" thresholds apply (default 7200).
  * @property {number} [icBurstPenalty] Seconds before held announces may
- *   release after an announce burst (ic_burst_penalty; default 15).
+ *   release after an announce burst (default 15).
  * @property {number} [icHeldReleaseInterval] Seconds between held-announce
- *   releases (ic_held_release_interval; default 5).
+ *   releases (default 5).
  * @property {number} [icMaxHeldAnnounces] Maximum held announces per
- *   interface while a burst is latched (ic_max_held_announces; default 256).
+ *   interface while a burst is latched (default 256).
  */
 
 /**
- * Computes the arrival frequency (Hz) over a rolling timestamp window,
- * mirroring the Python reference `*_frequency()` methods exactly:
+ * Computes the arrival frequency (Hz) over a rolling timestamp window:
  *
  *   - fewer than `minSample + 1` samples → 0
  *   - a sample older than `decaySeconds` decays (is dropped for the *next*
- *     call — the current reading still uses the pre-drop sample count, as in
- *     Python)
+ *     call — the current reading still uses the pre-drop sample count)
  *   - non-positive span → 0 (guards same-tick sampling)
  *
  * @param {number[]} deque Ring of arrival timestamps (seconds).
@@ -257,33 +243,30 @@ export class Interface extends EventTarget {
           description:
             "Optional interface authentication code (IFAC) size in bytes. " +
             "Auto-defaults to the interface DEFAULT_IFAC_SIZE when a " +
-            "network_name / passphrase is set; 0 alone disables IFAC " +
-            "(Python config key: ifac_size, given in bits upstream).",
+            "network_name / passphrase is set; 0 alone disables IFAC. " +
+            "(Reference-node config files express this in bits.)",
         },
         networkName: {
           type: "string",
           description:
             "Shared interface network name enabling IFAC authentication " +
             "and obfuscation on the link. Both endpoints must set the same " +
-            "value (Python config key: networkname / network_name; " +
-            "ifac_netname).",
+            "value.",
         },
         passphrase: {
           type: "string",
           description:
             "Shared interface passphrase enabling IFAC authentication and " +
             "obfuscation on the link. Both endpoints must set the same " +
-            "value (Python config key: passphrase / pass_phrase; " +
-            "ifac_netkey).",
+            "value.",
         },
         gravity: {
           type: "integer",
           default: 0,
           description:
-            "Per-interface path preference weight (`Interface.gravity`). " +
-            "When the same announce is heard on multiple interfaces, the " +
-            "path table prefers the higher-gravity one. Higher = preferred " +
-            "(Python config key: gravity).",
+            "Per-interface path preference weight. When the same announce " +
+            "is heard on multiple interfaces, the path table prefers the " +
+            "higher-gravity one. Higher = preferred.",
         },
       },
       required: [],
@@ -308,8 +291,7 @@ export class Interface extends EventTarget {
 
   /**
    * Whether this interface is the initiator (the outbound dialer). Only
-   * initiators reconnect; adopted/server-spawned sockets never do (matching
-   * the Python reference `initiator` flag).
+   * initiators reconnect; adopted/server-spawned sockets never do.
    * @type {boolean}
    */
   initiator = false;
@@ -322,47 +304,40 @@ export class Interface extends EventTarget {
 
   /**
    * Nominal physical bitrate of this interface in bits per second
-   * (`self.bitrate` on `RNS.Interfaces.Interface` in the Python reference,
-   * default 62500). Each interface overrides this with its medium's rate.
+   * (default 62500). Each interface overrides this with its medium's rate.
    *
    * Used by `TransportCore.prioritizeInterfaces()` to order the interface set
-   * highest-bitrate-first (mirrors the Python reference's
-   * `Transport.prioritize_interfaces`); the per-bitrate link-timeout and
+   * highest-bitrate-first; the per-bitrate link-timeout and
    * announce-rate-limit behaviours that also build on it are tracked as
    * Phase 2 of work doc #20. Configured bitrates below
-   * {@link Reticulum.MINIMUM_BITRATE} are ignored (matching Python).
+   * {@link Reticulum.MINIMUM_BITRATE} are ignored.
    * @type {number}
    */
   bitrate = 62500;
 
   /**
-   * Total bytes received on this interface (`self.rxb` on
-   * `RNS.Interfaces.Interface` in the Python reference). Counted as the
-   * deserialized RNS packet length — matching Python's `len(data)` in each
-   * interface's `process_incoming` — so it reflects the on-the-wire RNS
-   * payload, not framing overhead. Apps derive a transfer rate by sampling
-   * this counter over time.
+   * Total bytes received on this interface. Counted as the deserialized RNS
+   * packet length, so it reflects the on-the-wire RNS payload, not framing
+   * overhead. Apps derive a transfer rate by sampling this counter over time.
    * @type {number}
    */
   rxb = 0;
   /**
-   * Total bytes transmitted on this interface (`self.txb` in the Python
-   * reference).
+   * Total bytes transmitted on this interface.
    * @type {number}
    */
   txb = 0;
   /**
-   * Epoch milliseconds when the interface was constructed (`self.created` in
-   * the Python reference, which uses `time.time()`).
+   * Epoch milliseconds when the interface was constructed.
    * @type {number}
    */
   created = Date.now();
 
   /**
-   * Per-interface path preference weight (`Interface.gravity` in the Python
-   * reference, `DEFAULT_GRAVITY = 0`). When the same announce reaches this
-   * node over multiple interfaces, the path table prefers the entry learned
-   * via the higher-gravity interface (e.g. a wired backbone over a slow radio
+   * Per-interface path preference weight (default 0 via
+   * `Reticulum.defaultGravity`). When the same announce reaches this node
+   * over multiple interfaces, the path table prefers the entry learned via
+   * the higher-gravity interface (e.g. a wired backbone over a slow radio
    * link). `null` means "no preference" — {@link import("../core/reticulum.js").Reticulum}
    * substitutes its `defaultGravity` at `addInterface` time.
    * @type {number|null}
@@ -370,13 +345,12 @@ export class Interface extends EventTarget {
   gravity = null;
 
   // ------------------------------------------------------------------
-  // Ingress control (Python `Interface` ingress control — work doc #31)
+  // Ingress control (work doc #31)
   // ------------------------------------------------------------------
 
   /**
-   * Rolling-sample cap for the announce/PR frequency deques
-   * (`IA_FREQ_SAMPLES` / `IP_FREQ_SAMPLES` / `OP_FREQ_SAMPLES` in the Python
-   * reference — all 48; Python reuses `IA_FREQ_SAMPLES` for the PR deque).
+   * Rolling-sample cap for the announce/PR frequency deques (48 samples,
+   * shared across announce and PR tracking).
    * @type {number}
    */
   static FREQ_SAMPLES = 48;
@@ -438,9 +412,9 @@ export class Interface extends EventTarget {
   static IC_DEQUE_MIN_SAMPLE = 2;
 
   /**
-   * Whether ingress burst control is enabled on this interface (Python
-   * `ingress_control`). Disabling makes {@link shouldIngressLimit} and
-   * {@link shouldIngressLimitPr} always return `false`.
+   * Whether ingress burst control is enabled on this interface. Disabling
+   * makes {@link shouldIngressLimit} and {@link shouldIngressLimitPr} always
+   * return `false`.
    * @type {boolean}
    */
   ingressControl = true;
@@ -490,9 +464,8 @@ export class Interface extends EventTarget {
   icHeldRelease = 0;
 
   // ------------------------------------------------------------------
-  // Ingress-control observability counters (work doc #31; Python surfaces
-  // burst state and drop stats via rnstatus — our inline-processing
-  // equivalents of the queue-drop counters live here)
+  // Ingress-control observability counters (work doc #31; surfaced via
+  // getStats() — the inline-processing equivalents of queue-drop counters)
   // ------------------------------------------------------------------
 
   /** Times an announce burst has latched on this interface. */
@@ -510,8 +483,7 @@ export class Interface extends EventTarget {
   // Per-interface protocol violation tracking (RNS 1.5.0). Counters for
   // malformed / invalid inbound traffic, surfaced via getStats(). Each
   // helper increments, logs at DEBUG, and returns `null` so it chains as the
-  // `return` value at every drop site (mirroring Python's
-  // `interface.protocol_violation(...)` returning `None`).
+  // `return` value at every drop site.
   // -----------------------------------------------------------------
 
   /** Generic protocol violations: malformed packets, bad signatures, etc. */
@@ -523,22 +495,22 @@ export class Interface extends EventTarget {
 
   /**
    * Announces held while an ingress burst is latched, keyed by destination
-   * hash hex (Python `held_announces`). Drained by
-   * {@link processHeldAnnounces} on the transport sweep.
+   * hash hex. Drained by {@link processHeldAnnounces} on the transport
+   * sweep.
    * @type {Map<string, import("../core/packet.js").Packet>}
    */
   heldAnnounces = new Map();
 
   /**
-   * Applies node-global ingress-control overrides to this interface
-   * (mirrors Python, where every interface reads the `[reticulum]`-section
-   * `ic_*` defaults via `RNS.Reticulum.get_instance()._default_ic_*()` — there
-   * is no per-interface config for these). Only keys present in `overrides`
-   * are assigned; absent keys keep the class constants. Called by
+   * Applies node-global ingress-control overrides to this interface (the
+   * reference implementations apply node-level `ic_*` defaults to every
+   * interface — there is no per-interface config for these). Only keys
+   * present in `overrides` are assigned; absent keys keep the class
+   * constants. Called by
    * {@link import("../core/reticulum.js").Reticulum#addInterface} when the
    * node was constructed with an `ingressControl` config block. These are
    * deliberately **not** constructor options / interface schema properties:
-   * they scope to the whole node, like the Python reference.
+   * they scope to the whole node.
    *
    * @param {Partial<IngressControlConfig>} overrides
    */
@@ -565,19 +537,19 @@ export class Interface extends EventTarget {
 
   /**
    * Buffers an announce for delayed processing while an ingress burst is
-   * latched (Python `hold_announce`). Announces at or beyond
-   * `PATHFINDER_M - 1` (127) hops are dropped rather than held; a destination
-   * already in the table always replaces its entry (newest emission wins);
-   * beyond {@link icMaxHeldAnnounces} distinct destinations, new ones are
-   * silently dropped.
+   * latched. Announces at or beyond `PATHFINDER_M - 1` (127) hops are
+   * dropped rather than held; a destination already in the table always
+   * replaces its entry (newest emission wins); beyond
+   * {@link icMaxHeldAnnounces} distinct destinations, new ones are silently
+   * dropped.
    *
    * @param {import("../core/packet.js").Packet} packet Validated announce.
    */
   holdAnnounce(packet) {
     const destHex = toHex(packet.destinationHash);
     if (packet.hops >= 127) {
-      // Python: `if announce_packet.hops >= RNS.Transport.PATHFINDER_M-1` —
-      // near-max-hop announces carry no useful path anyway.
+      // Near-max-hop announces (>= PATHFINDER_M - 1) carry no useful path
+      // anyway.
       return;
     }
     if (this.heldAnnounces.has(destHex)) {
@@ -590,14 +562,12 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Releases one held announce if conditions allow (the selection half of
-   * Python `process_held_announces`): at most one announce per
+   * Releases one held announce if conditions allow: at most one announce per
    * {@link icHeldReleaseInterval}, never before {@link icHeldRelease}, and
    * only while the incoming announce frequency is back below the burst
    * threshold. Selection prefers the lowest hop count (nearest destinations
    * converge first). The caller re-injects the returned packet into the
-   * normal inbound pipeline (Python spawns a thread calling
-   * `Transport.inbound(raw, receiving_interface)`).
+   * normal inbound pipeline.
    *
    * @returns {import("../core/packet.js").Packet|null} The announce to
    *   re-inject, or `null` when nothing is releasable.
@@ -627,7 +597,7 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Age of this interface in seconds (Python `age()`).
+   * Age of this interface in seconds.
    * @returns {number}
    */
   age() {
@@ -635,9 +605,9 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Records an inbound announce into {@link iaFreqDeque} (Python
-   * `received_announce`). Spawned interfaces propagate the sample to their
-   * parent so bursts are detected at the medium level.
+   * Records an inbound announce into {@link iaFreqDeque}. Spawned interfaces
+   * propagate the sample to their parent so bursts are detected at the medium
+   * level.
    * @param {boolean} [fromSpawned] Internal: true when called on a parent.
    */
   receivedAnnounce(fromSpawned = false) {
@@ -651,10 +621,10 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Records an outbound announce into {@link oaFreqDeque} (Python
-   * `sent_announce`); counted by `TransportCore.broadcast` at the transmit
-   * chokepoint, and surfaced as {@link outgoingAnnounceFrequency} for the
-   * future announce-rate-table work (#31 step 6).
+   * Records an outbound announce into {@link oaFreqDeque}; counted by
+   * `TransportCore.broadcast` at the transmit chokepoint, and surfaced as
+   * {@link outgoingAnnounceFrequency} for the future announce-rate-table
+   * work (#31 step 6).
    * @param {boolean} [fromSpawned] Internal: true when called on a parent.
    */
   sentAnnounce(fromSpawned = false) {
@@ -668,8 +638,8 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Records an inbound `path?` request into {@link ipFreqDeque} (Python
-   * `received_path_request`). Spawned interfaces propagate to their parent.
+   * Records an inbound `path?` request into {@link ipFreqDeque}. Spawned
+   * interfaces propagate to their parent.
    * @param {boolean} [fromSpawned] Internal: true when called on a parent.
    */
   receivedPathRequest(fromSpawned = false) {
@@ -683,8 +653,8 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Records an outbound `path?` request into {@link opFreqDeque} (Python
-   * `sent_path_request`); consumed by egress PR limiting (work doc #31 step 4).
+   * Records an outbound `path?` request into {@link opFreqDeque}; consumed by
+   * egress PR limiting (work doc #31 step 4).
    * @param {boolean} [fromSpawned] Internal: true when called on a parent.
    */
   sentPathRequest(fromSpawned = false) {
@@ -698,10 +668,9 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Incoming announce rate in Hz over the current sample window (Python
-   * `incoming_announce_frequency`). Returns 0 with fewer than
-   * {@link Interface.IC_DEQUE_MIN_SAMPLE}+1 samples; a sample older than
-   * {@link arFreqDecay} decays out of the window.
+   * Incoming announce rate in Hz over the current sample window. Returns 0
+   * with fewer than {@link Interface.IC_DEQUE_MIN_SAMPLE}+1 samples; a sample
+   * older than {@link arFreqDecay} decays out of the window.
    * @returns {number}
    */
   incomingAnnounceFrequency() {
@@ -713,9 +682,8 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Incoming `path?` request rate in Hz (Python `incoming_pr_frequency`).
-   * Same sampling rules as {@link incomingAnnounceFrequency}, with the PR
-   * decay window.
+   * Incoming `path?` request rate in Hz. Same sampling rules as
+   * {@link incomingAnnounceFrequency}, with the PR decay window.
    * @returns {number}
    */
   incomingPrFrequency() {
@@ -727,8 +695,7 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Outgoing announce rate in Hz (Python `outgoing_announce_frequency`).
-   * Needs more than one sample.
+   * Outgoing announce rate in Hz. Needs more than one sample.
    * @returns {number}
    */
   outgoingAnnounceFrequency() {
@@ -736,8 +703,7 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Outgoing `path?` request rate in Hz (Python `outgoing_pr_frequency`).
-   * Needs more than one sample.
+   * Outgoing `path?` request rate in Hz. Needs more than one sample.
    * @returns {number}
    */
   outgoingPrFrequency() {
@@ -745,12 +711,11 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Records a generic protocol violation on this interface (Python
-   * `protocol_violation`): malformed packets, invalid announce signatures,
-   * tagless / oversized path requests, undecodable MTU signalling, inbound
-   * processing exceptions. Increments {@link protocolViolations}, logs at
-   * DEBUG, and returns `null` so it chains as the `return` value at every
-   * drop site.
+   * Records a generic protocol violation on this interface: malformed
+   * packets, invalid announce signatures, tagless / oversized path requests,
+   * undecodable MTU signalling, inbound processing exceptions. Increments
+   * {@link protocolViolations}, logs at DEBUG, and returns `null` so it
+   * chains as the `return` value at every drop site.
    *
    * @param {string|null} [description] Optional human-readable detail.
    * @returns {null}
@@ -767,9 +732,9 @@ export class Interface extends EventTarget {
 
   /**
    * Records an IFAC (interface authentication code) violation on this
-   * interface (Python `ifac_violation`): missing IFAC flag, insufficient
-   * packet size for the IFAC field, or an IFAC that fails re-verification.
-   * Increments {@link ifacViolations}, logs at DEBUG, returns `null`.
+   * interface: missing IFAC flag, insufficient packet size for the IFAC
+   * field, or an IFAC that fails re-verification. Increments
+   * {@link ifacViolations}, logs at DEBUG, returns `null`.
    *
    * @param {string|null} [description]
    * @returns {null}
@@ -785,10 +750,9 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Records a packet-filter (dedup) hit on this interface (Python
-   * `packet_filter_hit`): an inbound non-announce packet whose hash is
-   * already in the dedup ring. Increments {@link packetFilterHits}, returns
-   * `null`.
+   * Records a packet-filter (dedup) hit on this interface: an inbound
+   * non-announce packet whose hash is already in the dedup ring. Increments
+   * {@link packetFilterHits}, returns `null`.
    *
    * @returns {null}
    */
@@ -798,19 +762,19 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Whether announce ingress should be limited right now (Python
-   * `should_ingress_limit`). Latches a burst when the incoming announce
-   * frequency exceeds the threshold for the interface's age — stricter
-   * (`icBurstFreqNew`) during the first {@link icNewTime} seconds. Once
-   * latched, stays limiting for at least {@link icBurstHold} seconds and
-   * until the frequency drops back below the threshold; the call that
-   * unlatches still reports `true` (mirroring the Python reference, the
+   * Whether announce ingress should be limited right now. Latches a burst
+   * when the incoming announce frequency exceeds the threshold for the
+   * interface's age — stricter ({@link icBurstFreqNew}) during the first
+   * {@link icNewTime} seconds. Once latched, stays limiting for at least
+   * {@link icBurstHold} seconds and until the frequency drops back below the
+   * threshold; the call that
+   * unlatches still reports `true` (mirroring the Python reference: the
    * next packet after it flows normally).
    *
    * Consumers: held-announce buffering for unknown destinations (work doc
    * #31 step 3). The announce frequency side effects (latching plus arming
-   * {@link icHeldRelease} with the {@link icBurstPenalty}) match Python so
-   * the state is already correct when that lands.
+   * {@link icHeldRelease} with the {@link icBurstPenalty}) keep the state
+   * correct when the announce-rate-table work lands.
    *
    * @returns {boolean}
    */
@@ -843,18 +807,17 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Whether `path?` request ingress should be limited right now (Python
-   * `should_ingress_limit_pr`, incl. the upstream cooldown hysteresis).
-   * Latches when the incoming PR frequency exceeds the age-dependent
-   * threshold ({@link icPrBurstFreqNew} during the first {@link icNewTime}
-   * seconds, {@link icPrBurstFreq} after). Once latched, stays limiting for
-   * at least {@link icBurstHold} seconds; after the hold, unlatching takes
-   * {@link Interface.IC_PR_BURST_COOLDOWN}+1 consecutive below-threshold
-   * evaluations — any above-threshold evaluation resets the cooldown
-   * (anti-flapping at the boundary). Consumers: `TransportCore` drops
-   * unique-tag path requests while a burst is latched (work doc #31 step 2 —
-   * our inline processing equivalent of the Python reference's
-   * `TC_INGRESS_LIMITED` traffic-class demotion).
+   * Whether `path?` request ingress should be limited right now (including
+   * cooldown hysteresis). Latches when the incoming PR frequency exceeds the
+   * age-dependent threshold ({@link icPrBurstFreqNew} during the first
+   * {@link icNewTime} seconds, {@link icPrBurstFreq} after). Once latched,
+   * stays limiting for at least {@link icBurstHold} seconds; after the hold,
+   * unlatching takes {@link Interface.IC_PR_BURST_COOLDOWN}+1 consecutive
+   * below-threshold evaluations — any above-threshold evaluation resets the
+   * cooldown (anti-flapping at the boundary). Consumers: `TransportCore`
+   * drops unique-tag path requests while a burst is latched (work doc #31
+   * step 2 — the inline-processing equivalent of an ingress-limited
+   * traffic-class demotion).
    *
    * @returns {boolean}
    */
@@ -908,17 +871,16 @@ export class Interface extends EventTarget {
   ifacNetkey = null;
   /**
    * IFAC field size in bytes. When a network name / passphrase is set this
-   * auto-defaults to {@link DEFAULT_IFAC_SIZE} (mirroring upstream
-   * `interface.ifac_size = interface.DEFAULT_IFAC_SIZE`); 0 with no shared
-   * secret disables IFAC entirely.
+   * auto-defaults to {@link DEFAULT_IFAC_SIZE}; 0 with no shared secret
+   * disables IFAC entirely.
    * @type {number}
    */
   ifacSize = 0;
   /**
    * Per-interface default IFAC size (bytes) when IFAC is enabled but no
-   * explicit `ifacSize` was given. Mirrors `DEFAULT_IFAC_SIZE` on each
-   * Python interface (16 for Auto/Backbone, 8 for AX.25). Subclasses
-   * override; the base default of 16 matches the common case.
+   * explicit `ifacSize` was given. Subclasses override (16 for
+   * Auto/Backbone, 8 for AX.25 in the reference implementations); the base
+   * default of 16 matches the common case.
    * @type {number}
    */
   DEFAULT_IFAC_SIZE = 16;
@@ -1016,7 +978,7 @@ export class Interface extends EventTarget {
    * dynamically — notably {@link AutoInterface}, which discovers peers and
    * spawns one per peer — override it to remember the transport so the spawned
    * peers can be auto-registered without a separate `Reticulum` global (the
-   * Python reference uses the global `RNS.Transport.add_interface` for this).
+   * reference implementations use their global Transport registry for this).
    *
    * Overriders should also register any peers spawned before the transport was
    * attached, so the `addInterface`/`connect` call order doesn't matter.
@@ -1026,9 +988,9 @@ export class Interface extends EventTarget {
 
   /**
    * Derives and caches the IFAC key/identity/signature from the configured
-   * {@link ifacNetname} / {@link ifacNetkey}, mirroring the per-interface
-   * setup in `RNS/Reticulum.py` (~l.975). No-op (resolves `false`) when IFAC
-   * is disabled. Memoised so the HKDF + Ed25519 key load runs at most once.
+   * {@link ifacNetname} / {@link ifacNetkey}. No-op (resolves `false`) when
+   * IFAC is disabled. Memoised so the HKDF + Ed25519 key load runs at most
+   * once.
    * @returns {Promise<boolean>} `true` if IFAC material is available.
    * @protected
    */
@@ -1050,11 +1012,11 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Seals raw (un-IFACed) wire bytes for transmit (`RNS.Transport.transmit`).
-   * No-op passthrough when IFAC is disabled; otherwise derives the IFAC
-   * material on first use, then signs, sets the `ifac_flag`, inserts the IFAC
-   * field and XOR-masks the packet. Subclasses/interfaces call this at the
-   * chokepoint where a packet is serialised to bytes, just before framing.
+   * Seals raw (un-IFACed) wire bytes for transmit. No-op passthrough when
+   * IFAC is disabled; otherwise derives the IFAC material on first use, then
+   * signs, sets the `ifac_flag`, inserts the IFAC field and XOR-masks the
+   * packet. Subclasses/interfaces call this at the chokepoint where a packet
+   * is serialised to bytes, just before framing.
    * @param {Uint8Array} raw Serialised, unsealed wire bytes.
    * @returns {Promise<Uint8Array>} The bytes to put on the medium.
    * @protected
@@ -1072,7 +1034,7 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * Verifies and unseals inbound raw wire bytes (`RNS.Transport.inbound`).
+   * Verifies and unseals inbound raw wire bytes.
    *
    * Enforces the flag-presence rules: an IFAC-enabled interface drops a
    * flag-clear packet, and a plain interface drops a flag-set packet — both
@@ -1146,7 +1108,7 @@ export class Interface extends EventTarget {
   }
 
   // ------------------------------------------------------------------
-  // Statistics (Python `self.rxb` / `self.txb` / `self.created`)
+  // Statistics
   // ------------------------------------------------------------------
 
   /**
@@ -1154,8 +1116,7 @@ export class Interface extends EventTarget {
    * interface's outbound stream `write` callback) call this at the point a
    * packet is handed to the medium — the single chokepoint where every
    * transmitted packet passes, whether sent via {@link send}, the transport
-   * router, or a broadcast. Mirrors the `self.txb += len(data)` line in each
-   * Python interface's `process_outgoing`.
+   * router, or a broadcast.
    *
    * RNodeInterface overrides its own counting (it measures the IFAC-inclusive
    * wire payload) and does not call this.
@@ -1169,8 +1130,7 @@ export class Interface extends EventTarget {
   /**
    * Counts an inbound packet against {@link rxb} and dispatches the `"packet"`
    * event, the single inbound chokepoint each interface's read loop funnels
-   * through. Mirrors the `self.rxb += len(data)` + `self.owner.inbound(...)`
-   * pairing in each Python interface's `process_incoming`.
+   * through.
    *
    * Uses the deserialized packet's cached raw bytes when available (set by
    * `Packet.deserialize`), avoiding a re-serialize. RNodeInterface dispatches
@@ -1187,8 +1147,7 @@ export class Interface extends EventTarget {
 
   /**
    * Returns a snapshot of traffic and link statistics for this interface, for
-   * observability and UIs. Mirrors the fields apps derive from the Python
-   * reference's `self.rxb` / `self.txb` / `self.bitrate` / `self.created`.
+   * observability and UIs.
    *
    * Subclasses that carry medium-specific telemetry (notably
    * {@link import("./rnode.js").RNodeInterface}, which exposes RNode airtime,
@@ -1204,7 +1163,7 @@ export class Interface extends EventTarget {
       rxb: this.rxb,
       txb: this.txb,
       created: this.created,
-      // Ingress-control observability (Python ifstats / rnstatus fields).
+      // Ingress-control observability.
       incomingAnnounceFrequency: this.incomingAnnounceFrequency(),
       outgoingAnnounceFrequency: this.outgoingAnnounceFrequency(),
       incomingPrFrequency: this.incomingPrFrequency(),
@@ -1305,7 +1264,7 @@ export class Interface extends EventTarget {
       options.reconnectWait !== undefined
         ? options.reconnectWait
         : RECONNECT_DEFAULTS.reconnectWait;
-    // Python treats `max_reconnect_tries = None` as "retry forever".
+    // `null` means retry forever.
     this.maxReconnectTries =
       options.maxReconnectTries === undefined ||
       options.maxReconnectTries === null
@@ -1349,10 +1308,9 @@ export class Interface extends EventTarget {
    * Called when the underlying connection drops (the inbound stream ends or
    * errors). For an initiator with auto-reconnect enabled and not deliberately
    * detached, dispatches `disconnected` and kicks off the reconnect loop;
-   * otherwise dispatches a terminal `closed` event.
-   *
-   * Matches the Python reference `read_loop`, which reconnects the initiator
-   * on any termination and tears down (non-reconnecting) everyone else.
+   * otherwise dispatches a terminal `closed` event — matching the Python
+   * reference, which reconnects the initiator on any termination and tears
+   * down (non-reconnecting) everyone else.
    * @protected
    */
   _handleConnectionLost() {

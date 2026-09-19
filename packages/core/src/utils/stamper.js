@@ -23,11 +23,10 @@
 import { hkdf } from "../crypto/ciphers.js";
 
 /**
- * Encodes a non-negative integer as MessagePack, matching `umsgpack.packb` /
- * `msgpack.packb` for unsigned ints (positive fixint, uint8, uint16, uint32,
- * uint64). Used for the per-round stamp-workblock salt counter so the workblock
- * is byte-identical to Python LXMF's at any round count (rfed 16, LXMF PN 1000,
- * LXMF message 3000).
+ * Encodes a non-negative integer as MessagePack (positive fixint, uint8,
+ * uint16, uint32, uint64). Used for the per-round stamp-workblock salt counter
+ * so the workblock is byte-identical to the Python LXMF reference's at any
+ * round count (rfed 16, LXMF PN 1000, LXMF message 3000).
  *
  * @param {number} n
  * @returns {Uint8Array}

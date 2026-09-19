@@ -1,14 +1,14 @@
 /**
  * @file netinfo.js
  * @description Network interface enumeration helpers for the
- *   {@link AutoInterface}, mirroring the role of the Python reference
- *   `RNS.Interfaces.util.netinfo` module.
+ *   {@link AutoInterface}, serving the role the Python reference's netinfo
+ *   module plays there.
  *
  * The Python reference reaches into the system `getifaddrs`/`GetAdapters*` APIs
  * via `ctypes` and reports interface names, per-interface address families,
  * link-local IPv6 addresses and numeric interface indexes. Node.js exposes the
  * same information through `os.networkInterfaces()`, so this module adapts that
- * API into the Python-shaped calls (`listInterfaces`, `listAddresses`,
+ * API into the equivalent calls (`listInterfaces`, `listAddresses`,
  * `descopeLinkLocal`, `interfaceIndex`) that `AutoInterface` relies on.
  *
  * This module is Node-only (`node:os`).
@@ -16,19 +16,21 @@
 import os from "node:os";
 
 /**
- * Address-family tag mirroring Python's `netinfo.AF_INET6`, as compared with
+ * Address-family tag for IPv6, mirroring the Python reference's netinfo
+ * `AF_INET6`, as compared with
  * `if AF_INET6 in listAddresses(ifname)`. Node's `networkInterfaces()` reports
  * families as the strings `"IPv4"` / `"IPv6"`, so those strings are the tags.
  */
 export const AF_INET6 = "IPv6";
 /**
- * Address-family tag mirroring Python's `netinfo.AF_INET`.
+ * Address-family tag for IPv4, mirroring the Python reference's netinfo
+ * `AF_INET`.
  */
 export const AF_INET = "IPv4";
 
 /**
  * Lists the names of all present network interfaces (configured or not),
- * matching the shape of Python's `netinfo.interfaces()`.
+ * matching the shape of the Python reference's `netinfo.interfaces()`.
  *
  * The order is whatever `os.networkInterfaces()` yields (insertion order of the
  * host's interface table); callers that need determinism for tests should pin a
@@ -41,11 +43,11 @@ export function listInterfaces() {
 
 /**
  * Returns the addresses configured on `ifname`, keyed by family tag
- * ({@link AF_INET6} / {@link AF_INET}), mirroring the shape of Python's
- * `netinfo.ifaddresses(ifname)`.
+ * ({@link AF_INET6} / {@link AF_INET}), mirroring the shape of the Python
+ * reference's `netinfo.ifaddresses(ifname)`.
  *
- * IPv6 entries carry the **bare** address in `addr` (no `%scope` suffix, just as
- * Python's netinfo does) plus the numeric `scopeid` that Node exposes
+ * IPv6 entries carry the **bare** address in `addr` (no `%scope` suffix, just
+ * as the Python reference does) plus the numeric `scopeid` that Node exposes
  * separately. IPv4 entries carry `addr` and `netmask`.
  *
  * Returns an empty object for an unknown interface.
@@ -76,7 +78,7 @@ export function listAddresses(ifname) {
 
 /**
  * Normalizes a link-local IPv6 address string by dropping its scope specifier,
- * matching Python's `AutoInterface.descope_linklocal`:
+ * matching the Python reference's descope behavior:
  *
  * - Drops the `%ifname` scope suffix as used on macOS (`fe80::1%lo0` →
  *   `fe80::1`).
@@ -93,7 +95,7 @@ export function descopeLinkLocal(addr) {
   // Drop scope specifier expressed as %ifname (macOS).
   let a = String(addr).split("%")[0];
   // Drop embedded scope specifier (NetBSD, OpenBSD). Unanchored, matching
-  // Python's `re.sub(r"fe80:[0-9a-f]*::", "fe80::", …)`.
+  // the Python reference's regex behavior.
   a = a.replace(/fe80:[0-9a-f]*::/, "fe80::");
   return a;
 }
@@ -125,8 +127,8 @@ function longToIPv4(n) {
 
 /**
  * Computes the IPv4 broadcast address for an address/netmask pair as
- * `(addr & netmask) | ~netmask`. Mirrors the broadcast address that Python's
- * `netinfo.ifaddresses` reads directly from `getifaddrs`, which Node does not
+ * `(addr & netmask) | ~netmask`. Equivalent to the broadcast address the
+ * Python reference reads directly from `getifaddrs`, which Node does not
  * expose. Correct for ordinary subnets (the only kind RNS UDP broadcast runs
  * over).
  * @param {string} address
@@ -141,9 +143,8 @@ function computeIPv4Broadcast(address, netmask) {
 }
 
 /**
- * Returns the first IPv4 unicast address on `ifname`, mirroring the role of
- * the Python reference's `UDPInterface.get_address_for_if` (which reads
- * `netinfo.ifaddresses(name)[AF_INET][0]["addr"]`).
+ * Returns the first IPv4 unicast address on `ifname`, serving the role of the
+ * Python reference's UDP interface address lookup.
  *
  * Returns `undefined` when the interface has no IPv4 address.
  * @param {string} ifname
@@ -156,8 +157,8 @@ export function getAddressForInterface(ifname) {
 }
 
 /**
- * Returns the IPv4 broadcast address on `ifname`, mirroring the role of the
- * Python reference's `UDPInterface.get_broadcast_for_if`. Node does not report
+ * Returns the IPv4 broadcast address on `ifname`, serving the role of the
+ * Python reference's UDP interface broadcast lookup. Node does not report
  * the broadcast address, so it is computed from the address and netmask via
  * {@link computeIPv4Broadcast}.
  *
@@ -174,8 +175,8 @@ export function getBroadcastForInterface(ifname) {
 }
 
 /**
- * Best-effort numeric interface index for `ifname`, mirroring Python's
- * `interface_name_to_index` (which wraps `socket.if_nametoindex`).
+ * Best-effort numeric interface index for `ifname`, mirroring the Python
+ * reference's name-to-index lookup.
  *
  * Node does not expose `if_nametoindex` directly; the IPv6 `scopeid` that Node
  * reports for a link-local address is, however, the same kernel interface index

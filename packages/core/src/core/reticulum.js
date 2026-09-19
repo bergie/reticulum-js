@@ -12,11 +12,10 @@ import { Packet } from "./packet.js";
  */
 export class Reticulum {
   /**
-   * Minimum acceptable interface bitrate in bits/s
-   * (`RNS.Reticulum.MINIMUM_BITRATE` in the Python reference). A configured
+   * Minimum acceptable interface bitrate in bits/s. A configured
    * bitrate below this is ignored so the interface keeps its default — used
    * for config-time validation only. It does **not** cause interfaces to be
-   * skipped in routing; the Python reference doesn't either.
+   * skipped in routing; the reference implementations behave the same.
    */
   static MINIMUM_BITRATE = 5;
   /**
@@ -54,19 +53,19 @@ export class Reticulum {
    * @param {Object} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
    * @param {boolean} [config.useImplicitProof] - §6.5.2 PROOF form for opportunistic DATA: `true` (default, upstream) emits the 64-byte implicit body; `false` emits the 96-byte explicit body.
    * @param {number} [config.defaultGravity] - Default interface gravity applied
-   *   to any interface that doesn't specify one (Python `default_gravity`).
-   *   Higher gravity = preferred for paths. Defaults to
+   *   to any interface that doesn't specify one. Higher gravity = preferred
+   *   for paths. Defaults to
    *   {@link Reticulum.DEFAULT_GRAVITY} (0).
    * @param {import("../interfaces/base.js").IngressControlConfig} [config.ingressControl] -
    *   Node-global ingress burst-control overrides applied to every interface
-   *   at `addInterface` time (Python's `[reticulum]`-section `ic_*` options —
-   *   there is no per-interface form). Absent keys keep the Python defaults.
+   *   at `addInterface` time (node-level `ic_*` options —
+   *   there is no per-interface form). Absent keys keep the defaults.
    *   Per-interface programmatic control (including `iface.ingressControl =
    *   false` to opt out) always remains available.
    * @param {boolean} [config.enableDiscovery] - When true, start an
    *   {@link InterfaceDiscovery} listener on the transport `"announce"` event
    *   so a leaf can discover connectable transport-node interfaces on the
-   *   `rnstransport.discovery.interface` aspect (Python `discover_interfaces`).
+   *   `rnstransport.discovery.interface` aspect.
    *   v1 is surface-only — no auto-connect.
    * @param {Object} [config.discovery] - Extra options forwarded to the
    *   {@link InterfaceDiscovery} constructor when `enableDiscovery` is true
@@ -92,11 +91,11 @@ export class Reticulum {
     this.useImplicitProof = config.useImplicitProof ?? true;
 
     // §Interface gravity: the default weight applied to any interface that
-    // doesn't specify its own (Python `default_gravity` / `DEFAULT_GRAVITY`).
+    // doesn't specify its own.
     this.defaultGravity = config.defaultGravity ?? Reticulum.DEFAULT_GRAVITY;
 
     // Ingress-control overrides applied to every interface at `addInterface`
-    // (Python `[reticulum]` `ic_*` config → `_default_ic_*()` getters).
+    // time (node-level `ic_*` defaults).
     /** @type {import("../interfaces/base.js").IngressControlConfig} */
     this.ingressControl = config.ingressControl ?? {};
 
@@ -152,14 +151,16 @@ export class Reticulum {
    * @param {boolean} isDefault - If true, unroutable packets fallback to this interface
    */
   addInterface(rnsInterface, isDefault = false) {
-    // Apply the default gravity to interfaces that didn't specify one (Python
-    // `Reticulum._add_interface` applies `_default_gravity()` at setup).
+    // Apply the default gravity to interfaces that didn't specify one (the
+    // reference implementations apply their default-gravity getter at
+    // interface setup).
     if (rnsInterface.gravity == null) {
       rnsInterface.gravity = this.defaultGravity;
     }
-    // Apply node-global ingress-control overrides to every interface (Python
-    // applies the `[reticulum]` `ic_*` defaults in each interface's
-    // `__init__`; `addInterface` is our nearest equivalent chokepoint).
+    // Apply node-global ingress-control overrides to every interface
+    // (the reference implementations apply the node-level `ic_*` defaults in
+    // each interface's constructor; `addInterface` is our nearest equivalent
+    // chokepoint).
     rnsInterface.applyIngressConfig?.(this.ingressControl);
     this.transport.addInterface(rnsInterface, isDefault);
     log("Reticulum", `[+] Interface attached: ${rnsInterface.name}`);
@@ -248,8 +249,8 @@ export class Reticulum {
 
   /**
    * The bitrate of the slowest currently-online interface, in bits/s, or
-   * `null` when no online interface reports a usable bitrate
-   * (`RNS.Reticulum.get_lowest_interface_bitrate`). Delegates to
+   * `null` when no online interface reports a usable bitrate.
+   * Delegates to
    * {@link TransportCore.lowestInterfaceBitrate}. (The Python reference also
    * has a shared-instance RPC branch; reticulum-js has no shared-instance
    * model yet, so only the local delegation is exposed.)

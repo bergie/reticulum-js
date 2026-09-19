@@ -1,12 +1,10 @@
 /**
  * @file buffer.js
- * @description Web Stream adapters over a {@link Channel} — the JS analog of
- *   Python's `RNS/Buffer.py`.
+ * @description Web Stream adapters over a {@link Channel}.
  *
- * Python exposes byte streams over a Channel as `BufferedReader` /
- * `BufferedWriter` / `BufferedRWPair` (Python file objects). The idiomatic JS
- * replacement is **Web Streams**: `ReadableStream<Uint8Array>` /
- * `WritableStream<Uint8Array>` / a `{ readable, writable }` duplex pair.
+ * Byte streams over a Channel are exposed as **Web Streams**:
+ * `ReadableStream<Uint8Array>` / `WritableStream<Uint8Array>` / a
+ * `{ readable, writable }` duplex pair.
  *
  *   - `openReadable(channel, streamId)`  ≈ `Buffer.create_reader`
  *   - `openWritable(channel, streamId)`  ≈ `Buffer.create_writer`
@@ -33,7 +31,7 @@ import {
 
 /**
  * Largest single uncompressed chunk the writer will accept from one `write()`
- * (`RNS/Buffer.py` `RawChannelWriter.MAX_CHUNK_LEN`). Also the decompress
+ * (matching the Python reference's buffer writer cap). Also the decompress
  * bound on the reader.
  */
 const MAX_CHUNK_LEN = 16384;
@@ -189,8 +187,8 @@ class ChannelStreamWriter {
   }
 
   /**
-   * Wait until the channel send window has room (poll, like Python's
-   * `RawChannelWriter.close`). Bails if the channel shuts down.
+   * Wait until the channel send window has room (poll). Bails if the channel
+   * shuts down.
    * @returns {Promise<void>}
    * @private
    */

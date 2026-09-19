@@ -3,20 +3,19 @@ import { LogLevel, log } from "../utils/log.js";
 
 /**
  * One week in ms — the path-liveness horizon (Transport.PATHFINDER_E ==
- * Transport.DESTINATION_TIMEOUT). It serves two distinct purposes, mirroring
- * the Python reference:
+ * Transport.DESTINATION_TIMEOUT). It serves two distinct purposes:
  *   - **Cull**: a route is dropped when it has been *unused* for this long
- *     (`IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT`); the timestamp is refreshed on
- *     every outbound send, so a path in active use never times out.
+ *     (last-used timestamp + DESTINATION_TIMEOUT); the timestamp is refreshed
+ *     on every outbound send, so a path in active use never times out.
  *   - **Ingestion `expires`**: set once when an announce is learned
- *     (`now + PATHFINDER_E`, the `IDX_PT_EXPIRES` slot) and used *only* for the
- *     longer-hop replacement decision — never for culling.
+ *     (`now + PATHFINDER_E`) and used *only* for the longer-hop replacement
+ *     decision — never for culling.
  * Interface-mode-specific expiries (Access Point / Roaming) are a
  * transport-instance concern and not yet modelled here.
  */
 const PATH_EXPIRY_MS = 60 * 60 * 24 * 7 * 1000;
 
-/** Maximum announce `random_blob`s remembered per destination (Transport.MAX_RANDOM_BLOBS). */
+/** Maximum announce `random_blob`s remembered per destination. */
 const MAX_RANDOM_BLOBS = 64;
 
 /**
@@ -53,16 +52,15 @@ export const PathState = {
  * @property {number} hops Distance to the destination.
  * @property {number} timestamp ms epoch of the last route *use* (outbound
  *   send). The cull drops a route once `timestamp + PATH_EXPIRY_MS` is in the
- *   past (Python `IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT`); refreshed on every
- *   send so an active path never times out.
+ *   past; refreshed on every send so an active path never times out.
  * @property {number} expires ms epoch set once at announce ingestion
- *   (`now + PATH_EXPIRY_MS`, Python `IDX_PT_EXPIRES`). Used *only* for the
- *   longer-hop replacement decision — **not** for culling.
+ *   (`now + PATH_EXPIRY_MS`). Used *only* for the longer-hop replacement
+ *   decision — **not** for culling.
  * @property {Uint8Array[]} randomBlobs Recorded announce `random_hash`es, used
  *   for replay defense and path-table replacement ordering (§4.5 step 6.3).
  * @property {number} state Path liveness ({@link PathState}); defaults to
  *   {@link PathState.UNKNOWN}. Reset to `UNKNOWN` whenever the entry is
- *   replaced by a fresh announce (`Transport.mark_path_unknown_state`).
+ *   replaced by a fresh announce.
  */
 
 /**
@@ -100,8 +98,8 @@ function timebaseFromBlobs(blobs) {
  *
  * Each entry maps a destination hash (hex) to the next hop, the interface it was
  * learned through, the announced hop count, an expiry and the recorded announce
- * `random_blob`s. Acceptance follows the Python reference (Transport.py inbound
- * announce handling): shortest path wins, ties go to the more recently emitted
+ * `random_blob`s. Acceptance follows the protocol's inbound announce rules:
+ * shortest path wins, ties go to the more recently emitted
  * announce, and a seen `random_blob` is never accepted twice (anti-replay /
  * anti-loop).
  */
@@ -138,11 +136,11 @@ export class RoutingTable {
    * @param {import("../interfaces/base.js").Interface|null} entry.viaInterface
    * @param {Uint8Array} entry.randomBlob 10-byte announce `random_hash`.
    * @param {number} [entry.expires] ms epoch; defaults to now + PATH_EXPIRY_MS.
-   *   Stored as the ingestion `expires` (Python `IDX_PT_EXPIRES`); used only for
-   *   the longer-hop replacement decision, never for culling.
+   *   Stored as the ingestion `expires`; used only for the longer-hop
+   *   replacement decision, never for culling.
    * @param {number} [entry.timestamp] ms epoch of last use; defaults to now.
-   *   The cull basis (Python `IDX_PT_TIMESTAMP`). Overridden by the persistor
-   *   on hydration to restore the real last-used time.
+   *   The cull basis. Overridden by the persistor on hydration to restore the
+   *   real last-used time.
    * @returns {boolean} `true` if the route was added or replaced.
    */
   addOrUpdateRoute(destinationHash, entry) {
@@ -175,11 +173,11 @@ export class RoutingTable {
           // also enforces anti-replay for this branch.
           shouldAdd = true;
         } else if (emitted === timebase) {
-          // §gravity tie-break (Transport.py ~l.1836-1844): the *same* announce
-          // heard on a higher-gravity interface replaces the path so traffic
-          // egresses via the preferred interface. With default gravity
-          // (null/0) everywhere this is a no-op. Python doesn't call
-          // mark_path_unknown_state here, so the liveness state is preserved.
+          // §gravity tie-break: the *same* announce heard on a higher-gravity
+          // interface replaces the path so traffic egresses via the preferred
+          // interface. With default gravity (null/0) everywhere this is a
+          // no-op. The Python reference does not reset the liveness state
+          // here, so it is preserved.
           const currentGravity = existing.interface?.gravity ?? null;
           const announceGravity = entry.viaInterface?.gravity ?? null;
           if (
@@ -205,8 +203,8 @@ export class RoutingTable {
           // §7 path_is_unresponsive gate: the same announce heard again, but
           // the stored path was marked unresponsive — accept it (likely via a
           // a different next hop / interface) so we try an alternative instead
-          // of trusting a known-dead path. Python does not call
-          // mark_path_unknown_state here, so the state is preserved.
+          // of trusting a known-dead path. The Python reference does not reset
+          // the liveness state here, so it is preserved.
           shouldAdd = true;
           preserveState = true;
         }
@@ -223,9 +221,9 @@ export class RoutingTable {
       while (randomBlobs.length > MAX_RANDOM_BLOBS) randomBlobs.shift();
     }
 
-    // A path replaced by a fresh announce is "unknown" until proven again
-    // (Transport.mark_path_unknown_state). The unresponsive-gate and
-    // gravity-switch exceptions keep the existing state, matching Python.
+    // A path replaced by a fresh announce is "unknown" until proven again.
+    // The unresponsive-gate and gravity-switch exceptions keep the existing
+    // state.
     const state =
       existing && preserveState ? existing.state : PathState.UNKNOWN;
 
@@ -275,9 +273,9 @@ export class RoutingTable {
   }
 
   /**
-   * Forgets a path immediately (`Transport.expire_path`). Python marks the
-   * entry for lazy culling; with no transport-node cull job we delete outright
-   * so `hasPath` reflects the expiry at once.
+   * Forgets a path immediately. The reference implementations mark the entry
+   * for lazy culling; with no transport-node cull job we delete outright so
+   * `hasPath` reflects the expiry at once.
    * @param {Uint8Array} destinationHash
    * @returns {boolean} `true` if a route was removed.
    */
@@ -286,10 +284,10 @@ export class RoutingTable {
   }
 
   /**
-   * Rewrites the hop count of a known path (`Transport.py` link path-rebalance
-   * at the terminus: `path_entry[IDX_PT_HOPS] = packet.hops`). Leaves the
-   * next hop / interface / state untouched — only corrects the distance
-   * estimate after a link handshake reveals the real path length.
+   * Rewrites the hop count of a known path (link path-rebalance at the
+   * terminus). Leaves the next hop / interface / state untouched — only
+   * corrects the distance estimate after a link handshake reveals the real
+   * path length.
    * @param {Uint8Array} destinationHash
    * @param {number} hops
    * @returns {boolean} `true` if a route was updated.
@@ -305,10 +303,9 @@ export class RoutingTable {
    * Looks up the best-known route for a destination hash.
    *
    * Two lazy behaviours, both evaluated on access (a leaf has no periodic
-   * tables-cull job, unlike Python's `Transport.jobs`):
+   * tables-cull job, unlike the reference implementations' transport jobs):
    *   - **Cull on last-used**: drops the route once it has been *unused* for
-   *     {@link PATH_EXPIRY_MS} (`route.timestamp + PATH_EXPIRY_MS`, mirroring
-   *     `IDX_PT_TIMESTAMP + DESTINATION_TIMEOUT`). The frozen ingestion
+   *     {@link PATH_EXPIRY_MS} (`route.timestamp + PATH_EXPIRY_MS`). The frozen ingestion
    *     `expires` is intentionally **not** used here — it is for the
    *     longer-hop replacement decision only, and a path in active use must not
    *     be culled just because its announce is old.

@@ -1,5 +1,6 @@
 /**
- * Buffer / Web Stream adapter tests — ports of `RNS/Buffer.py`.
+ * Buffer / Web Stream adapter tests, verifying behavior against the Python
+ * reference.
  *
  * Covers:
  *   - `StreamDataMessage` header bit layout (stream_id / compressed / eof).

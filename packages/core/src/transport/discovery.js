@@ -1,8 +1,7 @@
 /**
  * @file discovery.js
- * @description On-network interface discovery — consumer side. Mirrors the
- *   consumer half of `RNS/Discovery.py` (`InterfaceAnnounceHandler` +
- *   `InterfaceDiscovery`, verified against RNS 1.4.0).
+ * @description On-network interface discovery — consumer side (verified
+ *   against RNS 1.4.0 behavior).
  *
  *   A transport node announces its connectable interfaces on the
  *   `rnstransport.discovery.interface` announce aspect, LXMF-stamped against
@@ -35,7 +34,7 @@ import {
 } from "../utils/stamper.js";
 
 // ---------------------------------------------------------------------
-// Constants (RNS/Discovery.py)
+// Constants
 // ---------------------------------------------------------------------
 
 /** Application name for the interface-discovery destination family. */
@@ -64,7 +63,7 @@ export const FLAG_SIGNED = 0b00000001;
 /** Discovery announce `app_data` flag bit: payload encrypted to a network identity. */
 export const FLAG_ENCRYPTED = 0b00000010;
 
-// msgpack `info` dict keys (small ints; see RNS/Discovery.py).
+// msgpack `info` dict keys (small ints).
 /** Interface type string (e.g. `"TCPServerInterface"`). */
 export const NAME = 0xff;
 /** 16-byte transport identity hash (`bytes`). */
@@ -101,16 +100,15 @@ export const MODULATION = 0x0d;
 export const CHANNEL = 0x0e;
 /**
  * Operator LXMF address (`bytes | nil`, 16 bytes). Optional field carrying
- * the transport node operator's LXMF destination hash (RNS 1.5.0,
- * `interface.discovery_lxmf_address`). When present, surfaced as
- * `operatorLxmfAddress` (hex) on the parsed record.
+ * the transport node operator's LXMF destination hash (RNS 1.5.0). When
+ * present, surfaced as `operatorLxmfAddress` (hex) on the parsed record.
  */
 export const OP_ADDR = 0xf0;
 
 /**
- * Interface types the announce *handler* accepts (`DISCOVERABLE_INTERFACE_TYPES`
- * in Python — includes `TCPClientInterface` because a KISS-over-TCP interface
- * is announced under that type before being rewritten to `KISSInterface`).
+ * Interface types the announce *handler* accepts — includes
+ * `TCPClientInterface` because a KISS-over-TCP interface is announced under
+ * that type before being rewritten to `KISSInterface`.
  */
 export const ACCEPTED_INTERFACE_TYPES = Object.freeze([
   "BackboneInterface",
@@ -123,9 +121,9 @@ export const ACCEPTED_INTERFACE_TYPES = Object.freeze([
 ]);
 
 /**
- * Interface types the discovery orchestrator surfaces/persists
- * (`DISCOVERABLE_TYPES` in Python — narrower than {@link ACCEPTED_INTERFACE_TYPES}:
- * a bare `TCPClientInterface` is parsed but not listed).
+ * Interface types the discovery orchestrator surfaces/persists — narrower
+ * than {@link ACCEPTED_INTERFACE_TYPES}: a bare `TCPClientInterface` is
+ * parsed but not listed.
  */
 export const DISCOVERABLE_TYPES = Object.freeze([
   "BackboneInterface",
@@ -154,7 +152,7 @@ export const STATUS_AVAILABLE = 1000;
 
 /**
  * ASCII characters allowed by {@link sanitizeName} at the name's edges
- * (digits, upper- and lower-case letters) — matches Python's `san_map`.
+ * (digits, upper- and lower-case letters).
  */
 const SAN_MAP =
   "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -164,8 +162,7 @@ const SAN_MAP =
 // ---------------------------------------------------------------------
 
 /**
- * Returns the current time as Unix seconds (Python `time.time()` equivalent),
- * preserving fractional precision.
+ * Returns the current time as Unix seconds, preserving fractional precision.
  * @returns {number}
  */
 function nowSeconds() {
@@ -188,8 +185,7 @@ export async function aspectNameHash(aspect) {
 }
 
 /**
- * Sanitizes a discovered-interface display name (Python
- * `InterfaceAnnounceHandler.sanitize_name`).
+ * Sanitizes a discovered-interface display name.
  *
  * Strips non-ASCII, collapses runs of 2+ spaces, then trims leading/trailing
  * characters that aren't alphanumeric. Returns `null` for an empty/falsy input.
@@ -198,7 +194,7 @@ export async function aspectNameHash(aspect) {
  */
 export function sanitizeName(name) {
   if (typeof name !== "string" || name.length === 0) return null;
-  // ASCII-only, ignoring everything else (Python encode ascii ignore).
+  // ASCII-only, ignoring everything else.
   // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional ASCII range (0x00-0x7f) strip
   let s = name.replace(/[^\x00-\x7f]/g, "").trim();
   // Collapse runs of 5, then 3, then 2 spaces into one space.
@@ -216,8 +212,7 @@ export function sanitizeName(name) {
 }
 
 /**
- * Tests whether a string is a valid IPv4 or IPv6 address (Python
- * `ipaddress.ip_address` equivalent for discovery's sanity check).
+ * Tests whether a string is a valid IPv4 or IPv6 address.
  * @param {string} str
  * @returns {boolean}
  */
@@ -254,8 +249,7 @@ function isValidIPv6(str) {
 }
 
 /**
- * Tests whether a string is a syntactically valid DNS hostname (Python
- * `is_hostname`).
+ * Tests whether a string is a syntactically valid DNS hostname.
  * @param {string} hostname
  * @returns {boolean}
  */
@@ -271,7 +265,7 @@ export function isHostname(hostname) {
 }
 
 // ---------------------------------------------------------------------
-// config_entry generation (RNS/Discovery.py received_announce)
+// config_entry generation
 // ---------------------------------------------------------------------
 
 /**
@@ -281,9 +275,9 @@ export function isHostname(hostname) {
  * @property {string|null} ifacNetname
  * @property {string|null} ifacNetkey
  * @property {boolean} backboneSupport Whether the receiver platform supports
- *   the Backbone interface type (Python: `not is_windows()`). JS defaults to
- *   `true`, mirroring the dominant non-Windows deployment so generated config
- *   entries are directly usable by a Python transport node.
+ *   the Backbone interface type (the Python reference enables it on
+ *   non-Windows platforms). JS defaults to `true`, the dominant deployment,
+ *   so generated config entries are directly usable by a transport node.
  */
 
 /**
@@ -298,15 +292,15 @@ function configSuffix(ctx) {
     : "";
   const netkey = ctx.ifacNetkey ? `\n  passphrase = ${ctx.ifacNetkey}` : "";
   const identity = `\n  transport_identity = ${ctx.transportIdHex}`;
-  // Python orders these identity, netname, netkey for most types — see callers.
+  // Suffix order: identity, netname, netkey for most types — see callers.
   return { identity, netname, netkey };
 }
 
 /**
  * Generates the human-readable TOML-ish config snippet for a discovered
- * interface, matching Python's `received_announce` per-type output. Used by a
- * leaf operator to add the interface manually (auto-connect is out of scope for
- * v1, see work doc #17).
+ * interface, in the same per-type format the reference implementation
+ * emits. Used by a leaf operator to add the interface manually (auto-connect
+ * is out of scope for v1, see work doc #17).
  *
  * @param {DiscoveredFields} fields
  * @param {boolean} [backboneSupport=true]
@@ -450,8 +444,7 @@ export function buildConfigEntry(fields, backboneSupport = true) {
  * @property {Identity|null} [networkIdentity] Identity to decrypt an encrypted
  *   payload with (`FLAG_ENCRYPTED`). Required iff the announce is encrypted.
  * @property {Uint8Array[]|null} [discoverySources] When set, only accepts
- *   announces whose destination identity hash is in this allow-list (Python
- *   `interface_discovery_sources`).
+ *   announces whose destination identity hash is in this allow-list.
  * @property {number} [hops] Hop distance to fill into the result.
  * @property {boolean} [backboneSupport] See {@link buildConfigEntry}.
  */
@@ -460,16 +453,15 @@ export function buildConfigEntry(fields, backboneSupport = true) {
  * Parses and validates a discovery announce's `app_data`.
  *
  * Verifies the LXMF stamp at discovery's cheap work factor, unpacks the msgpack
- * `info` dict, validates the field types/shapes (mirroring Python's
- * `received_announce`), and builds the normalized {@link DiscoveredInterface}
- * record including a generated `config_entry`.
+ * `info` dict, validates the field types/shapes, and builds the normalized
+ * {@link DiscoveredInterface} record including a generated `config_entry`.
  *
  * @param {Uint8Array|null|undefined} appData Raw `app_data` bytes from the
  *   transport `"announce"` event detail.
  * @param {Identity} announcedIdentity Identity reconstructed from the announce.
  * @param {ParseDiscoveryOptions} [options]
  * @returns {Promise<DiscoveredInterface|null>} `null` for any malformed,
- *   unauthorized, or insufficiently-stamped announce (Python logs and swallows).
+ *   unauthorized, or insufficiently-stamped announce.
  */
 export async function parseDiscoveryAnnounce(
   appData,
@@ -482,7 +474,7 @@ export async function parseDiscoveryAnnounce(
   const hops = options.hops ?? 0;
   const backboneSupport = options.backboneSupport ?? true;
 
-  // Python: authorize the announcing network identity when a source list is set.
+  // Authorize the announcing network identity when a source list is set.
   if (discoverySources) {
     const ok = discoverySources.some((h) =>
       bytesEqual(h, announcedIdentity.identityHash),
@@ -559,7 +551,7 @@ export async function parseDiscoveryAnnounce(
 
 /**
  * Validates the unpacked msgpack dict and builds the normalized record. Throws
- * on any validation failure (the caller swallows it, mirroring Python).
+ * on any validation failure (the caller swallows it).
  *
  * @param {Record<string, any>} unpacked
  * @param {Identity} announcedIdentity
@@ -584,7 +576,7 @@ async function buildDiscoveredInfo(unpacked, announcedIdentity, meta) {
 
   const name = sanitizeName(unpacked[String(NAME)]);
 
-  // Field type checks (Python raises ValueError on mismatch).
+  // Field type checks.
   if (typeof unpacked[String(TRANSPORT)] !== "boolean") {
     throw new Error("Invalid data in transport field of announce");
   }
@@ -614,7 +606,7 @@ async function buildDiscoveredInfo(unpacked, announcedIdentity, meta) {
 
   // §RNS 1.5.0 OP_ADDR: optional operator LXMF address. `nil` or a 16-byte
   // (TRUNCATED_HASHLENGTH/8) destination hash; anything else is a protocol
-  // violation (Python raises ValueError).
+  // violation.
   /** @type {Uint8Array|null} */
   let operatorLxmfAddress = null;
   if (unpacked[String(OP_ADDR)] !== undefined) {
@@ -754,7 +746,7 @@ function isNullOrFloat(v) {
  * `SHA-256(msgpack(info))`.
  *
  * @param {Map<number, any>} infoMap Info dict with integer keys (use a `Map` so
- *   msgpack emits integer keys, matching Python's wire format).
+ *   msgpack emits integer keys, matching the wire format).
  * @returns {Promise<Uint8Array>}
  */
 export async function discoveryInfoHash(infoMap) {
@@ -850,8 +842,8 @@ export async function buildDiscoveryAppData(infoMap, options = {}) {
  */
 
 /**
- * Consumer-side orchestrator for on-network interface discovery (Python
- * `InterfaceDiscovery`). Subscribes to the transport `"announce"` event,
+ * Consumer-side orchestrator for on-network interface discovery. Subscribes
+ * to the transport `"announce"` event,
  * aspect-filters to {@link ASPECT}, stamp-validates each candidate, and
  * dispatches a `"discovered"` event for every fresh/repeated discovery.
  *
@@ -862,7 +854,7 @@ export async function buildDiscoveryAppData(infoMap, options = {}) {
  * @extends EventTarget
  */
 export class InterfaceDiscovery extends EventTarget {
-  /** @type {Promise<void>} Serializes announce processing (Python discovery_lock). */
+  /** @type {Promise<void>} Serializes announce processing. */
   _chain = Promise.resolve();
   /** @type {Map<string, DiscoveredInterface>} */
   _store = new Map();
@@ -931,7 +923,7 @@ export class InterfaceDiscovery extends EventTarget {
    * Handles a transport `"announce"` event: aspect-filters, parses, persists,
    * and dispatches `"discovered"`. Processing is serialized through
    * {@link InterfaceDiscovery#_chain} so concurrent announces for the same
-   * interface can't lose `heard_count` increments (Python's `discovery_lock`).
+   * interface can't lose `heard_count` increments.
    * @param {CustomEvent} event
    */
   _onAnnounce(event) {
@@ -970,8 +962,7 @@ export class InterfaceDiscovery extends EventTarget {
 
   /**
    * Upserts a discovery into the store (and storage adapter), bumping
-   * `heard_count` on repeats and refreshing `last_heard`. Mirrors Python's
-   * `interface_discovered` persistence flow.
+   * `heard_count` on repeats and refreshing `last_heard`.
    * @param {DiscoveredInterface} info
    * @returns {Promise<void>}
    */
@@ -992,8 +983,7 @@ export class InterfaceDiscovery extends EventTarget {
   }
 
   /**
-   * Returns the persisted discovered-interface list, mirroring Python's
-   * `list_discovered_interfaces`.
+   * Returns the persisted discovered-interface list.
    *
    * Records past {@link THRESHOLD_REMOVE}, or whose type/`reachable_on` is no
    * longer valid, are pruned (from memory and the storage adapter). Remaining

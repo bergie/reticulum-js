@@ -55,14 +55,14 @@ export class RNodeWebSerialInterface extends RNodeInterface {
         "Connects to a LoRa RNode over the Web Serial API (navigator.serial) " +
         "in a browser. The host page must have obtained a SerialPort via " +
         "navigator.serial.requestPort() from a user gesture and pass it as " +
-        "options.serialPort. Mirrors the Python reference RNodeInterface.",
+        "options.serialPort.",
       properties: {
         ...radio.properties,
         baudRate: {
           type: "integer",
           default: 115200,
           examples: [115200],
-          description: "Serial baud rate (Python: defaults to 115200).",
+          description: "Serial baud rate.",
         },
         dataBits: {
           type: "integer",

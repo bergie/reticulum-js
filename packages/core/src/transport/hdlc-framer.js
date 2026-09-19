@@ -2,8 +2,7 @@
  * @module @reticulum/core/src/transport/hdlc-framer.js
  * @description HDLC-based stream framing for RNS packets.
  *
- * Used by stream-oriented interfaces (TCP, local Unix socket). Mirrors the
- * `HDLC` class in the Python reference `RNS/Interfaces/TCPInterface.py`:
+ * Used by stream-oriented interfaces (TCP, local Unix socket):
  * `FLAG` (0x7E) / `ESC` (0x7D) byte-stuffing with an `ESC_MASK` of 0x20.
  * See `PROTOCOL-SPEC.md` §8.2.
  */
@@ -19,10 +18,10 @@ const ESC_MASK = 0x20;
 /**
  * Escapes data using HDLC byte-stuffing.
  *
- * Matches the Python reference `HDLC.escape` precedence: `ESC` is escaped
- * first, then `FLAG`. Because `0x7D ^ 0x20 == 0x5D` and `0x7E ^ 0x20 ==
- * 0x5E`, escaping `ESC` first cannot introduce a stray `FLAG` (and vice
- * versa), so a single forward pass is order-safe.
+ * `FLAG` and `ESC` are escaped as `ESC` followed by the byte XOR `ESC_MASK`.
+ * Because `0x7D ^ 0x20 == 0x5D` and `0x7E ^ 0x20 == 0x5E`, escaping `ESC`
+ * first cannot introduce a stray `FLAG` (and vice versa), so a single
+ * forward pass is order-safe.
  * @param {Uint8Array} data
  * @returns {Uint8Array}
  */
@@ -73,8 +72,8 @@ export function hdlcUnescape(data) {
  *
  * When `sealRaw` is provided (an interface's
  * {@link import("../interfaces/base.js").Interface#_sealRaw}), the serialised
- * bytes are IFAC-sealed before framing — the byte-level chokepoint that
- * mirrors `RNS.Transport.transmit`.
+ * bytes are IFAC-sealed before framing — the byte-level equivalent of the
+ * transport transmit hook.
  * @param {((raw: Uint8Array) => Promise<Uint8Array>) | null} [sealRaw] -
  *   Optional async IFAC seal hook.
  * @returns {TransformStream}
@@ -107,16 +106,16 @@ export function createHdlcFramerStream(sealRaw = null) {
  * The accumulated in-progress frame is bounded by `maxFrameSize`: if a peer
  * sends a continuous run of non-FLAG bytes (or opens a frame and never closes
  * it) the buffer is dropped once it exceeds the cap and the unframer resyncs
- * on the next FLAG, mirroring the Python TCP reader's `len(frame_buffer) >
- * HW_MTU*2` guard. Defaults to 2× the Python TCP `HW_MTU` (262144), which
- * comfortably admits any legitimate frame while preventing unbounded memory
- * growth on a stream-oriented interface.
+ * on the next FLAG — the same twice-the-hardware-MTU bound the reference TCP
+ * interfaces use. The default (2 × 262144) comfortably admits any legitimate
+ * frame while preventing unbounded memory growth on a stream-oriented
+ * interface.
  *
  * When `openRaw` is provided (an interface's
  * {@link import("../interfaces/base.js").Interface#_openRaw}), each unframed
  * frame is IFAC-verified/unsealed before deserialisation, and frames that
  * fail verification (or violate the flag-presence rules) are silently
- * dropped — the byte-level chokepoint that mirrors `RNS.Transport.inbound`.
+ * dropped — the byte-level equivalent of the transport inbound hook.
  * @param {typeof import('../core/packet.js').Packet} packetClass
  * @param {((raw: Uint8Array) => Promise<Uint8Array | null>) | null} [openRaw]
  *   - Optional async IFAC open hook; return `null` to drop the frame.

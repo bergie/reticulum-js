@@ -90,12 +90,11 @@ export const DestType = {
 /**
  * Maximum hop count before a packet is rejected as looping / invalid.
  *
- * Mirrors `RNS.Transport.PATHFINDER_M` (128) from the Python reference: a
- * packet whose hop count has reached this ceiling has traversed too many
- * transports to be valid and is dropped at deserialize time, matching
- * `Packet.unpack()`'s `if self.hops >= RNS.Transport.PATHFINDER_M: raise
- * ValueError`. Defined here (rather than on `Transport`) so `deserialize`
- * can apply the guard without a circular import.
+ * Protocol-fixed at 128: a packet whose hop count has reached this ceiling
+ * has traversed too many transports to be valid and is dropped at
+ * deserialize time (and refused at send time). Defined here (rather than on
+ * `Transport`) so `deserialize` can apply the guard without a circular
+ * import.
  */
 export const PATHFINDER_M = 128;
 
@@ -285,9 +284,9 @@ export class Packet {
     const minLen = isHeader2 ? 2 + 2 * DST_LEN + 1 : 2 + DST_LEN + 1;
     if (data.length < minLen) throw new Error("Packet too short");
 
-    // Loop-prevention: mirror Python `unpack()`'s hop-count sanity check. A
-    // packet whose hops have reached PATHFINDER_M is invalid and must be
-    // rejected rather than routed further.
+    // Loop-prevention: hop-count sanity check. A packet whose hops have
+    // reached PATHFINDER_M is invalid and must be rejected rather than
+    // routed further.
     if (hops >= PATHFINDER_M) {
       throw new Error(`Invalid hop count ${hops}`);
     }
@@ -303,7 +302,7 @@ export class Packet {
     const destinationHash = data.slice(offset, offset + DST_LEN);
     offset += DST_LEN;
 
-    // The context byte is extracted unconditionally, mirroring Python's fixed slicing
+    // The context byte is extracted unconditionally (fixed slicing)
     const contextByte = data[offset];
     offset += 1;
 

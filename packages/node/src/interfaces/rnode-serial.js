@@ -73,22 +73,20 @@ export class RNodeSerialInterface extends RNodeInterface {
       description:
         "Connects to a LoRa RNode over a POSIX serial device " +
         "(/dev/ttyUSB*, /dev/ttyACM*, /dev/cu.*) using a non-blocking fd + " +
-        "stty + polled readSync/writeSync (no external dependencies). Mirrors " +
-        "the Python reference RNodeInterface serial path.",
+        "stty + polled readSync/writeSync (no external dependencies). " +
+        "Wire-compatible with the Python reference RNodeInterface serial path.",
       properties: {
         ...radio.properties,
         port: {
           type: "string",
           examples: ["/dev/ttyUSB0", "/dev/cu.SLAB_USBtoUART"],
-          description: "Serial device path (Python config key: port).",
+          description: "Serial device path.",
         },
         baudRate: {
           type: "integer",
           default: 115200,
           examples: [115200, 9600],
-          description:
-            "Serial baud rate (Python config key: implicit; defaults to " +
-            "115200).",
+          description: "Serial baud rate (defaults to 115200).",
         },
       },
       required: [...radio.required, "port"],

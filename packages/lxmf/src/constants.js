@@ -9,7 +9,7 @@
  */
 export const APP_NAME = "lxmf";
 
-// --- Delivery methods (LXMessage.py) ---
+// --- Delivery methods ---
 /** Delivery via a single opportunistic encrypted packet (§5.1). */
 export const DeliveryMethod = Object.freeze({
   OPPORTUNISTIC: 0x01,
@@ -18,7 +18,7 @@ export const DeliveryMethod = Object.freeze({
   PAPER: 0x05,
 });
 
-// --- Paper message (QR / URI) delivery geometry (LXMessage.py) ---
+// --- Paper message (QR / URI) delivery geometry ---
 /** URI scheme prefixing URL-safe base64 paper messages (`as_uri`). */
 export const URI_SCHEMA = "lxm";
 /** Max raw byte capacity of an L-level QR code (qrcode lib, ERROR_CORRECT_L). */
@@ -27,20 +27,20 @@ export const QR_MAX_STORAGE = 2953;
 const URI_PREFIX_LEN = URI_SCHEMA.length + "://".length;
 /**
  * Maximum size (bytes) of a paper message's encrypted payload. Derived from the
- * 6-bits-per-base64-char QR capacity minus the `lxm://` scheme prefix.
- * Mirrors Python `LXMessage.PAPER_MDU`.
+ * 6-bits-per-base64-char QR capacity minus the `lxm://` scheme prefix,
+ * matching the Python reference.
  */
 export const PAPER_MDU = Math.floor(
   ((QR_MAX_STORAGE - URI_PREFIX_LEN) * 6) / 8,
 );
 
-// --- Propagation request paths (LXMPeer.py) ---
+// --- Propagation request paths ---
 /** Node-to-node sync offer (peer mesh). Client→node submit uses a Resource. */
 export const OFFER_REQUEST_PATH = "/offer";
-/** Client↔node message download: list, fetch, and purge-ack (LXMPeer.py). */
+/** Client↔node message download: list, fetch, and purge-ack. */
 export const MESSAGE_GET_PATH = "/get";
 
-// --- Propagation limits & costs in KB (LXMRouter.py) ---
+// --- Propagation limits & costs in KB ---
 /** Per-transfer propagation limit (KB). */
 export const PROPAGATION_LIMIT = 256;
 /** Per-sync propagation limit (KB). */
@@ -65,7 +65,7 @@ export const SYNC_STRATEGY_PERSISTENT = 0x02;
 /** Default peer sync strategy (`LXMPeer.DEFAULT_SYNC_STRATEGY`). */
 export const DEFAULT_SYNC_STRATEGY = SYNC_STRATEGY_PERSISTENT;
 
-// --- Peer error codes returned from propagation request handlers (LXMPeer.py) ---
+// --- Peer error codes returned from propagation request handlers ---
 /** Peer error: the requesting identity was not supplied. */
 export const PEER_ERROR_NO_IDENTITY = 0xf0;
 /** Peer error: the requesting identity has no access to the node. */
@@ -94,10 +94,10 @@ export const TransferState = Object.freeze({
 /** Sentinel for `request_messages_from_propagation_node`: fetch everything. */
 export const ALL_MESSAGES = 0x00;
 
-// --- LXMF message geometry (LXMessage.py) ---
+// --- LXMF message geometry ---
 /** Fixed overhead of a packed LXMF message (dest+src+signature). */
 export const LXMF_OVERHEAD = 112;
-/** Size of a proof-of-work stamp appended to the payload (LXStamper.py). */
+/** Size of a proof-of-work stamp appended to the payload. */
 export const STAMP_SIZE = 32;
 
 // --- Top-level `fields` dict keys (§5.9.1) ---

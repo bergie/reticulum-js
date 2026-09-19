@@ -46,7 +46,8 @@ export const LinkTeardownReason = {
 /**
  * Returns true if a packet on a Link must NOT be Token-encrypted.
  *
- * Mirrors `RNS/Packet.py` `pack()` for a HEADER_1 packet whose destination is a
+ * Mirrors the Python reference's `pack()` for a HEADER_1 packet whose
+ * destination is a
  * Link (LINKS.md §6.7.1, §6.5). The not-encrypted branches are:
  *   - LINKREQUEST (handled separately, never reaches this predicate on a live link)
  *   - packet_type PROOF with context NONE         (regular link DATA proof)
@@ -80,7 +81,7 @@ export function isLinkPacketUnencrypted(packetType, contextByte) {
  *
  * `link_id = truncated_hash(low_flags || dest_hash || context || body)` with the
  * trailing MTU-discovery signalling bytes (if present) stripped before hashing,
- * so the id is invariant under signalling changes (`RNS/Link.py:341-348`).
+ * so the id is invariant under signalling changes.
  *
  * @param {Packet} packet - a LINKREQUEST packet with `raw` populated
  * @returns {Promise<Uint8Array>}
@@ -125,7 +126,7 @@ export class Link extends EventTarget {
   /** Default Reticulum MTU when MTU discovery is disabled or unavailable. */
   static DEFAULT_MTU = 500;
 
-  // Keepalive cadence constants (RNS/Link.py:79-101)
+  // Keepalive cadence constants (matching the Python reference's Link)
   static KEEPALIVE_MAX = 360;
   static KEEPALIVE_MIN = 5;
   static KEEPALIVE_MAX_RTT = 1.75;
@@ -165,9 +166,8 @@ export class Link extends EventTarget {
   keepaliveInterval = Link.KEEPALIVE_MAX;
 
   /**
-   * Wall-clock ms of the last keepalive *sent* on this link (Python
-   * `Link.last_keepalive`, maintained by `had_outbound(is_keepalive=True)`).
-   * Purely an egress-cadence guard: unlike {@link Link#lastInboundTime} it
+   * Wall-clock ms of the last keepalive *sent* on this link. Purely an
+   * egress-cadence guard: unlike {@link Link#lastInboundTime} it
    * never counts toward liveness — a keepalive we *sent* proves nothing about
    * the peer still being there. Gating pings on it also prevents a ping storm
    * while a pong is in flight or lost.
@@ -247,7 +247,7 @@ export class Link extends EventTarget {
 
   /**
    * Lazy `Channel` for reliable typed message exchange over this link
-   * (`RNS/Link.py` `get_channel`). Created on first {@link getChannel} call or
+   * (matching the Python reference's Link). Created on first {@link getChannel} call or
    * on the first inbound CHANNEL packet; shut down when the link closes.
    * @type {Channel | null}
    * @private
@@ -374,14 +374,14 @@ export class Link extends EventTarget {
         if (this.transport) this.transport.removeLink(this.linkId);
         // §11.5: fail any in-flight REQUESTs so their Promises don't dangle.
         this._rejectPendingRequests("Link closed before RESPONSE arrived");
-        // §7 leaf path-recovery (Transport.py ~l.538-541): a pending link that
+        // §7 leaf path-recovery: a pending link that
         // never reached ACTIVE means the path is bad. Expire it and rediscover
         // so the next attempt can pick an alternative next hop. Skipped for
         // links that were ACTIVE (a graceful teardown of a working link).
         // Guarded so test/lightweight transports without the path-health API
         // (and responder links whose destination is local) are unaffected.
         // The re-request uses the automated gate (PATH_REQUEST_MI = 20 s per
-        // destination, Python jobs-loop rediscovery discipline) so an app
+        // destination, the reference rediscovery discipline) so an app
         // retry loop over dead links cannot emit a PR per failure.
         const dh = this.destination?.destinationHash;
         if (
@@ -401,8 +401,8 @@ export class Link extends EventTarget {
   }
 
   /**
-   * The reliable typed-message `Channel` for this link (`RNS/Link.py`
-   * `get_channel`). Lazily created on first access (or on the first inbound
+   * The reliable typed-message `Channel` for this link (the Python
+   * reference's Link carries one lazily). Lazily created on first access (or on the first inbound
    * CHANNEL packet). Returns the same instance for the lifetime of the link.
    *
    * Register message classes with `channel.registerMessageType(...)` and
@@ -421,8 +421,8 @@ export class Link extends EventTarget {
   /**
    * The default `whenActive` wait: the bitrate-adaptive establishment timeout
    * ({@link import("./transport.js").TransportCore.establishmentTimeout}) when
-   * a transport and destination are available, else 15 s. Mirrors Python
-   * `Link.establishment_timeout = get_first_hop_timeout + PER_HOP*hops`.
+   * a transport and destination are available, else 15 s (establishment wait =
+   * first-hop timeout + per-hop grace × hops).
    * @returns {number} milliseconds
    * @private
    */
@@ -445,7 +445,7 @@ export class Link extends EventTarget {
    * this before sending application data, since the session token is only
    * derived once the handshake completes.
    *
-   * Mirrors the gating the Python LXMF router applies in `process_outbound`
+   * Mirrors the gating the LXMF router applies in its outbound processing
    * before sending DIRECT messages.
    *
    * @param {number} [timeoutMs] - How long to wait for the handshake.
@@ -494,7 +494,7 @@ export class Link extends EventTarget {
    * LINKREQUEST (dest_type=SINGLE, addressed to the responder's destination
    * hash), derives the link_id from the serialized packet, registers the link
    * with the transport, and transitions to HANDSHAKE. The link becomes ACTIVE
-   * once the responder's LRPROOF is validated (`RNS/Link.py:283-328`).
+   * once the responder's LRPROOF is validated.
    *
    * @param {import("../core/destination.js").Destination} destination - OUT destination whose identity is the responder's.
    * @param {import("../transport/transport.js").TransportCore} transport
@@ -563,7 +563,7 @@ export class Link extends EventTarget {
    * session keys, builds and sends the LRPROOF signed with the destination's
    * long-term identity key, registers the link with the transport, and
    * transitions to HANDSHAKE. The link becomes ACTIVE once the initiator's
-   * LRRTT arrives (`RNS/Link.py:186-200, 353-394`).
+   * LRRTT arrives.
    *
    * @param {import("../core/destination.js").Destination} destination - IN destination whose identity is this node's.
    * @param {import("../transport/transport.js").TransportCore} transport
@@ -609,7 +609,7 @@ export class Link extends EventTarget {
     await link._deriveKeys(initiatorX25519Pub);
     link.requestTimeMs = Date.now();
     // §Link.expected_hops: the responder records the hop count the LINKREQUEST
-    // arrived with (`Link.py:525`).
+    // arrived with.
     link.expectedHops = requestPacket.hops;
     link.status = LinkStatus.HANDSHAKE;
     transport.addLink(linkId, link);
@@ -619,7 +619,7 @@ export class Link extends EventTarget {
   }
 
   // -----------------------------------------------------------------------
-  // Signalling helpers (RNS/Link.py:148-152)
+  // Signalling helpers (matching the Python reference's Link)
   // -----------------------------------------------------------------------
 
   /**
@@ -843,7 +843,7 @@ export class Link extends EventTarget {
 
   /**
    * Initiator: validate the responder's LRPROOF, derive session keys, send
-   * LRRTT, and transition to ACTIVE (`RNS/Link.py:401-442`).
+   * LRRTT, and transition to ACTIVE.
    * @param {Packet} packet
    * @private
    */
@@ -879,7 +879,7 @@ export class Link extends EventTarget {
 
     // signed_data = link_id || responder_X25519 || responder_Ed25519 || [signalling]
     // The responder's long-term Ed25519 pub is known from the prior announce
-    // (destination.identity). RNS/Link.py:417.
+    // (destination.identity).
     const responderEd25519Pub = (
       await this.destination.identity.getPublicKey()
     ).subarray(32, 64);
@@ -911,7 +911,7 @@ export class Link extends EventTarget {
       throw new Error("LRPROOF signature verification failed.");
     }
 
-    // §Link path-rebalancing at the terminus (Transport.py ~l.2276-2310): if
+    // §Link path-rebalancing at the terminus: if
     // the LRPROOF traversed a different hop count than the link expected, the
     // real path has diverged from the routing-table estimate. Correct the
     // estimate so future timeout/route math (`hopsTo`, `establishmentTimeout`)
@@ -967,7 +967,7 @@ export class Link extends EventTarget {
 
   /**
    * Responder: process the initiator's LRRTT, settle RTT, transition to ACTIVE
-   * (`RNS/Link.py:534-553`). This is the only path that fires `established` on
+   * (matching the Python reference's Link). This is the only path that fires `established` on
    * the responder side.
    * @param {Packet} packet
    * @private
@@ -1040,7 +1040,7 @@ export class Link extends EventTarget {
       contextByte: ContextType.NONE,
       payload: proofPayload,
     });
-    // Link PROOFs are unencrypted (RNS/Packet.py:200-201).
+    // Link PROOFs are unencrypted.
     await this.transport.sendPacket(proofPacket);
   }
 
@@ -1162,8 +1162,7 @@ export class Link extends EventTarget {
   /**
    * Builds and sends the LINKCLOSE packet (encrypted body = link_id), without
    * touching the status. Shared by the graceful {@link Link#teardown} and
-   * the watchdog's stale teardown, mirroring the Python reference's
-   * `Link.__teardown_packet`.
+   * the watchdog's stale teardown.
    * @returns {Promise<void>}
    * @private
    */
@@ -1201,7 +1200,7 @@ export class Link extends EventTarget {
    */
   async _handleLinkClose(packet) {
     // packet.payload is already decrypted by _processPacket; the sole auth
-    // check is plaintext == link_id (RNS/Link.py:713).
+    // check is plaintext == link_id.
     const plaintext = /** @type {Uint8Array} */ (packet.payload);
     if (plaintext.length !== this.linkId.length) return;
     let diff = 0;
@@ -1225,14 +1224,15 @@ export class Link extends EventTarget {
    * Initiator: prove which long-term identity owns this link to the responder.
    *
    * Must be called AFTER the link is ACTIVE and BEFORE sending any application
-   * DATA. This is load-bearing for Python-LXMF interop: Python's LXMRouter does
-   * not install its link-data listener until it has processed LINKIDENTIFY, so a
-   * DATA/RESOURCE sent before LINKIDENTIFY is silently dropped on the Python
-   * side. Wire body (link-encrypted):
+   * DATA. This is load-bearing for Python-LXMF interop: the Python LXMRouter
+   * does not install its link-data listener until it has processed
+   * LINKIDENTIFY, so a DATA/RESOURCE sent before LINKIDENTIFY is silently
+   * dropped on the Python side. Wire body (link-encrypted):
    *
    *   public_key(64) || signature(64)
    *
-   * where `signature = identity.sign(link_id || public_key)` (`RNS/Link.py:459-475`).
+   * where `signature = identity.sign(link_id || public_key)`, matching the
+   * Python reference.
    *
    * @param {import("../core/identity.js").Identity} identity - The initiator's long-term identity.
    */
@@ -2010,9 +2010,8 @@ export class Link extends EventTarget {
         break;
 
       case ContextType.CHANNEL: {
-        // Reliable typed-message layer (RNS/Channel.py). Prove before delivery
-        // (mirrors Python: `packet.prove()` then `_channel._receive(plaintext)`),
-        // then hand the plaintext envelope to the channel for ordering/dispatch.
+        // Reliable typed-message layer. Prove before delivery, then hand the
+        // plaintext envelope to the channel for ordering/dispatch.
         if (this.transport) await this._provePacket(packet);
         this.getChannel()._receive(decrypted.payload);
         break;
@@ -2059,9 +2058,9 @@ export class Link extends EventTarget {
     log("Link", `Watchdog tick for ${toHex(this.linkId)}`, LogLevel.EXTREME);
     const now = Date.now();
     if (now >= this.lastInboundTime + this.staleTime * 1000) {
-      // Send the LINKCLOSE like the Python reference does when a link goes
-      // stale (Link.py: status STALE → `__teardown_packet()` → CLOSED with
-      // TIMEOUT). The peer may well still be reachable — asymmetric path
+      // Send the LINKCLOSE like the reference implementations do when a link
+      // goes stale (status STALE → teardown packet → CLOSED with TIMEOUT).
+      // The peer may well still be reachable — asymmetric path
       // loss (our keepalive pings dropped, its traffic would get through),
       // a route that recovered between the last failed ping and now — and
       // a LINKCLOSE lets it tear its side down at once instead of waiting
@@ -2079,11 +2078,11 @@ export class Link extends EventTarget {
       return;
     }
     // Send a keepalive ping when there has been no inbound traffic for an
-    // interval (Python: `now >= last_inbound + keepalive`), rate-limited to one
-    // per interval by `last_keepalive`. Sending a keepalive must NOT refresh
-    // liveness — Python counts only *inbound* traffic (and link proofs) via
-    // `last_inbound`; `had_outbound(is_keepalive=True)` touches just
-    // `last_keepalive`/`last_outbound`. Resetting the stale clock on our own
+    // interval, rate-limited to one per interval by the last-keepalive-sent
+    // timestamp. Sending a keepalive must NOT refresh
+    // liveness — only *inbound* traffic (and link proofs) refresh it; a
+    // keepalive send touches just the egress-cadence clock. Resetting the
+    // stale clock on our own
     // ping made an initiator-side link whose peer had vanished (connection
     // drop without a teardown — interface loss, rnsd restart, peer going out
     // of range) look ACTIVE forever: every watchdog tick sent a ping into the
