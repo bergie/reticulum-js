@@ -123,7 +123,9 @@ export class LXMPeer {
   async generatePeeringKey() {
     if (this.peeringCost == null) return false;
     if (this.peeringKey) return true;
-    const peerIdentity = await Destination.recall(this.destinationHash);
+    const peerIdentity = await this.router.rns.transport.recallIdentity(
+      this.destinationHash,
+    );
     if (!peerIdentity) {
       log(
         "LXMF",
@@ -188,7 +190,9 @@ export class LXMPeer {
     }
 
     // Establish a link to the peer's lxmf.propagation destination and identify.
-    const peerIdentity = await Destination.recall(this.destinationHash);
+    const peerIdentity = await this.router.rns.transport.recallIdentity(
+      this.destinationHash,
+    );
     if (!peerIdentity) return false;
     const peerDest = await Destination.OUT(
       APP_NAME + ".propagation",

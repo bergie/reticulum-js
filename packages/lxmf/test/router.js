@@ -9,6 +9,8 @@ import {
   MemoryStorageAdapter,
   StorageNamespace,
 } from "@reticulum/core/src/storage/storage.js";
+import { IdentityCache } from "@reticulum/core/src/transport/identity-cache.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "../src/message.js";
 import { LXMRouter } from "../src/router.js";
@@ -19,11 +21,7 @@ test("LXMRouter", async (t) => {
     registerDestination: (dest) => {
       interfaceLayer.lastRegisteredDest = dest;
     },
-    transport: Object.assign(new EventTarget(), {
-      bindLocalDestination: () => {},
-      addLink: () => {},
-      sendPacket: async () => {},
-    }),
+    transport: new TransportCore(),
   };
 
   await t.test("initialization", async () => {
@@ -49,8 +47,8 @@ test("LXMRouter", async (t) => {
       );
       const recipientDestHash = recipientDest.destinationHash;
 
-      // Register the recipient so Destination.recall(destHash) finds it.
-      await Destination.remember(
+      // Register the recipient so the router's transport recalls it.
+      await interfaceLayer.transport.rememberIdentity(
         recipientHash,
         recipientDestHash,
         recipientIdentity.publicKey,
@@ -120,7 +118,7 @@ test("LXMRouter", async (t) => {
     const destHash = router.deliveryDest.destinationHash;
 
     // Register sender as known to the router
-    await Destination.remember(
+    await interfaceLayer.transport.rememberIdentity(
       senderHash,
       senderHash,
       senderIdentity.publicKey,
@@ -305,12 +303,12 @@ test("LXMRouter", async (t) => {
       );
 
       // 2. Now send the IDENTIFY event on the link
-      // We need to simulate how Destination.remember is called in the identity listener
+      // We need to simulate how rememberIdentity is called in the identity listener
       // In a real scenario, the peer sends a LINKIDENTIFY packet.
       // Here we'll just trigger the identity event on the link.
 
-      // We need to perform the same Destination.remember calls that the identity listener does.
-      await Destination.remember(
+      // We need to perform the same rememberIdentity calls that the identity listener does.
+      await interfaceLayer.transport.rememberIdentity(
         senderHash,
         senderHash,
         senderIdentity.publicKey,
@@ -322,7 +320,7 @@ test("LXMRouter", async (t) => {
         senderIdentity,
         interfaceLayer,
       );
-      await Destination.remember(
+      await interfaceLayer.transport.rememberIdentity(
         senderHash,
         peerDeliveryDest.destinationHash,
         senderIdentity.publicKey,
@@ -414,16 +412,29 @@ test("LXMRouter", async (t) => {
   await t.test(
     "LINKIDENTIFY persists the learned identity so it survives a restart (#16)",
     async () => {
-      // Isolate the static map the router's Destination.remember writes to.
-      // The Persistor defaults to that same map, so it sees the entry; and the
-      // test doesn't leak state into other tests.
-      const realKnownDestinations = Destination.knownDestinations;
-      Destination.knownDestinations = new Map();
+      // Isolate the caches the router writes to via injected IdentityCache
+      // maps (work doc #37: state travels through the transport instance, so
+      // swapping the class static no longer isolates it). The Persistor gets
+      // the same maps, so it sees the entry; and the test doesn't leak state
+      // into other tests.
+      const knownDestinations = new Map();
+      const knownRatchets = new Map();
+      const adapter = new MemoryStorageAdapter();
+      const persistor = new Persistor({
+        adapter,
+        debounceMs: 0,
+        knownDestinations,
+        knownRatchets,
+      });
+      const isolatedTransport = new TransportCore({
+        caches: new IdentityCache({ knownDestinations, knownRatchets }),
+      });
+      const rnsWithPersistor = {
+        registerDestination: () => {},
+        transport: isolatedTransport,
+        persistor,
+      };
       try {
-        const adapter = new MemoryStorageAdapter();
-        const persistor = new Persistor({ adapter, debounceMs: 0 });
-        const rnsWithPersistor = { ...interfaceLayer, persistor };
-
         const router = new LXMRouter(identity, rnsWithPersistor);
         await router.init();
 
@@ -481,11 +492,18 @@ test("LXMRouter", async (t) => {
           );
 
           // Simulate a restart: a fresh instance hydrates from the adapter
-          // into a clean map, then recalls the identity by destination hash.
-          Destination.knownDestinations = new Map();
-          const reloaded = new Persistor({ adapter, debounceMs: 0 });
+          // into clean maps, then recalls the identity by destination hash.
+          const reloadedDestinations = new Map();
+          const reloadedRatchets = new Map();
+          const reloaded = new Persistor({
+            adapter,
+            debounceMs: 0,
+            knownDestinations: reloadedDestinations,
+            knownRatchets: reloadedRatchets,
+          });
           await reloaded.load();
-          const recalled = await Destination.recall(
+          const recalled = await Destination.recallFrom(
+            reloadedDestinations,
             peerDeliveryDest.destinationHash,
           );
           assert.ok(recalled, "identity recallable after a simulated restart");
@@ -494,7 +512,7 @@ test("LXMRouter", async (t) => {
           router.deliveryDest.respondToLinkRequest = originalRespond;
         }
       } finally {
-        Destination.knownDestinations = realKnownDestinations;
+        // nothing to restore — isolation was via injected maps
       }
     },
   );

@@ -619,7 +619,7 @@ export class Identity extends EventTarget {
    * outer packet header (step 3).
    *
    * The caller is responsible for the §4.5 step 4 public-key collision check
-   * and step 6 caching, since those touch `Destination.knownDestinations`.
+   * and step 6 caching, since those touch the transport's identity cache.
    *
    * @param {Uint8Array} destinationHash - 16-byte dest_hash from the outer packet header.
    * @param {boolean} contextFlag - the packet header's context_flag bit (ratchet present).

@@ -13,6 +13,7 @@ import assert from "node:assert";
 import test from "node:test";
 import { Destination } from "@reticulum/core/src/core/destination.js";
 import { Identity } from "@reticulum/core/src/core/identity.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import {
   buildAnnounceAppData,
   parseAnnounceAppData,
@@ -33,9 +34,9 @@ function mockRns(captured) {
     broadcast: (/** @type {any} */ pkt) => {
       captured.push(pkt);
     },
-    transport: Object.assign(new EventTarget(), {
-      bindLocalDestination: () => {},
-    }),
+    // A real TransportCore (no interfaces) so instance-scoped cache calls
+    // (work doc #37) work.
+    transport: new TransportCore(),
   });
 }
 

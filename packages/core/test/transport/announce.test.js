@@ -4,8 +4,8 @@
  * A packet built by `Destination.announce` is serialized and deserialized
  * (mirroring a real wire arrival), then routed through
  * `TransportCore._routeIncomingPacket`. Valid announces must be
- * signature-verified, destination-hash-checked, cached in
- * `Destination.knownDestinations`, and dispatched as an `announce` event;
+ * signature-verified, destination-hash-checked, cached in the transport's
+ * instance identity cache, and dispatched as an `announce` event;
  * forged and self-echo announces must be dropped.
  */
 import assert from "node:assert";
@@ -67,7 +67,7 @@ test("TransportCore ingests a valid announce and dispatches an `announce` event"
   assert.ok(bytesEqual(event.destinationHash, destinationHash));
   assert.ok(bytesEqual(event.identity.identityHash, identity.identityHash));
 
-  const entry = Destination.knownDestinations.get(toHex(destinationHash));
+  const entry = transport.caches.knownDestinations.get(toHex(destinationHash));
   assert.ok(entry, "announce should have been cached in knownDestinations");
   assert.ok(bytesEqual(entry.publicKey, identity.publicKey));
 });
@@ -90,7 +90,7 @@ test("TransportCore drops an announce with a tampered signature", async () => {
 
   assert.strictEqual(fired, false);
   assert.ok(
-    !Destination.knownDestinations.has(toHex(destinationHash)),
+    !transport.caches.knownDestinations.has(toHex(destinationHash)),
     "forged announce must not be cached",
   );
 });
@@ -172,7 +172,7 @@ test("TransportCore routes a ratchet-bearing announce and caches the ratchet", a
   const transport = new TransportCore();
   await transport._routeIncomingPacket(packet, /** @type {any} */ (null));
 
-  const recalled = Destination.recallRatchet(dest.destinationHash);
+  const recalled = transport.recallRatchet(dest.destinationHash);
   assert.ok(recalled, "ratchet should have been cached");
   assert.ok(bytesEqual(recalled, ratchet));
 });

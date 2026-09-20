@@ -1,7 +1,32 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Instance-scoped caches (work doc #37, split-brain safety): `TransportCore`
+  now owns the identity, ratchet and proof-receipt caches via `IdentityCache`
+  (fresh maps per instance), with instance methods `rememberIdentity`,
+  `recallIdentity`, `rememberRatchet`, `recallRatchet`, `trackReceipt` and
+  `findReceipt` (`rns.transport.recallIdentity(…)`, …). The class-level
+  statics (`Destination.knownDestinations` / `knownRatchets`,
+  `PacketReceipt.receipts`) and the static cache methods
+  (`Destination.remember`/`recall`/`rememberRatchet`/`recallRatchet`,
+  `PacketReceipt.track`/`find`) are **removed** — a fragmented install (two
+  physical copies of the package, which Node treats as separate module
+  instances with divergent statics) no longer splits state when access goes
+  through the instance. `Persistor` now requires the owning transport's
+  cache maps (`knownDestinations`/`knownRatchets` options), and standalone
+  `Destination.encrypt` with no attached interface layer falls back to the
+  long-term key (no shared ratchet lookup).
+- `CORE_INSTANCE_TOKEN` (a per-module-copy marker) and
+  `warnIfFragmented(name, dependentToken, rns.coreInstanceToken)` so
+  dependent packages can detect a fragmented install at first boot;
+  `Reticulum#coreInstanceToken` exposes the instance's origin copy.
+
 ### Changed
+- All internal cache access (transport announce ingestion, proof resolution,
+  the `Persistor` wiring in `Reticulum`, WebRTC signaling) goes through the
+  instance caches; `TransportCore` accepts an injected `IdentityCache` for
+  sharing caches between transport instances.
 - Renamed constants to match house style (real words, explicit units).
   Values and behavior are unchanged, except
   `Identity.TRUNCATED_HASHLENGTH` (128, bits) which is now

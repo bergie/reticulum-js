@@ -358,7 +358,8 @@ export class WebRTCSignaling extends EventTarget {
    * @private
    */
   async _connectOnce(peerDestinationHash, peerHex) {
-    const peerIdentity = await Destination.recall(peerDestinationHash);
+    const peerIdentity =
+      await this.rns.transport.recallIdentity(peerDestinationHash);
     if (!peerIdentity) {
       throw new Error(
         `Unknown identity for ${peerHex}; wait for its announce before connecting.`,

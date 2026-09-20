@@ -30,6 +30,7 @@
  */
 
 import {
+  CORE_INSTANCE_TOKEN,
   ContextType,
   Destination,
   DestType,
@@ -39,6 +40,7 @@ import {
   PacketType,
   Resource,
   toHex,
+  warnIfFragmented,
 } from "@reticulum/core";
 import { LXMessage as Message } from "@reticulum/lxmf";
 import {
@@ -165,6 +167,9 @@ export class RFedClient {
   constructor({ identity, rns }) {
     this.identity = identity;
     this.rns = rns;
+    // Split-brain self-check (work doc #37): warn when the provided Reticulum
+    // instance comes from a different physical copy of @reticulum/core.
+    warnIfFragmented("RFedClient", CORE_INSTANCE_TOKEN, rns.coreInstanceToken);
 
     /** Cached channel derivations: channel name → derivation entry. */
     this.channels = new Map();
@@ -229,7 +234,7 @@ export class RFedClient {
    * @private
    */
   async _nodeIdentity(nodeHash) {
-    const id = await Destination.recall(nodeHash);
+    const id = await this.rns.transport.recallIdentity(nodeHash);
     if (!id) {
       throw new Error(
         `rfed node identity unknown for ${toHex(nodeHash)}; wait for its announce`,
@@ -663,6 +668,7 @@ export class RFedClient {
       innerBlob,
       channelIdentity: channel.identity,
       channelDeliveryHash: channel.deliveryHash,
+      rns: this.rns,
     });
     this.onMessage?.({
       kind: "lxmf",

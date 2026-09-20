@@ -7,6 +7,7 @@ import {
 } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import { ContextType, DestType, PacketType } from "../../src/core/packet.js";
+import { TransportCore } from "../../src/transport/transport.js";
 import { bytesEqual } from "../../src/utils/encoding.js";
 
 /** Minimal knownDestinations entry for map-membership tests. */
@@ -195,57 +196,51 @@ test("Destination.announce output round-trips through Identity.validateAnnounce"
   assert.strictEqual(result.ratchet, null);
 });
 
-test("Destination.rememberRatchet / recallRatchet store the newest ratchet", () => {
+test("TransportCore.rememberRatchet / recallRatchet store the newest ratchet", () => {
   const destHash = crypto.getRandomValues(new Uint8Array(16));
   const ratchetA = crypto.getRandomValues(new Uint8Array(32));
   const ratchetB = crypto.getRandomValues(new Uint8Array(32));
+  const transport = new TransportCore();
 
-  // Clean slate (other tests may have populated the static map).
-  const key = Array.from(destHash)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  Destination.knownRatchets.delete(key);
-
-  Destination.rememberRatchet(destHash, ratchetA);
-  let ratchet = Destination.recallRatchet(destHash);
+  transport.rememberRatchet(destHash, ratchetA);
+  let ratchet = transport.recallRatchet(destHash);
   assert.ok(ratchet);
   assert.ok(bytesEqual(ratchet, ratchetA));
 
   // Only the single newest is retained: a newer ratchet overwrites.
-  Destination.rememberRatchet(destHash, ratchetB);
-  ratchet = Destination.recallRatchet(destHash);
+  transport.rememberRatchet(destHash, ratchetB);
+  ratchet = transport.recallRatchet(destHash);
   assert.ok(ratchet);
   assert.ok(bytesEqual(ratchet, ratchetB));
 
   // Re-announcing the SAME ratchet is a no-op (received is not refreshed).
-  Destination.rememberRatchet(destHash, ratchetB);
-  ratchet = Destination.recallRatchet(destHash);
+  transport.rememberRatchet(destHash, ratchetB);
+  ratchet = transport.recallRatchet(destHash);
+  assert.ok(ratchet);
   assert.ok(bytesEqual(ratchet, ratchetB));
-
-  Destination.knownRatchets.delete(key);
 });
 
-test("Destination.recallRatchet returns null for an unknown destination", () => {
+test("TransportCore.recallRatchet returns null for an unknown destination", () => {
   const destHash = crypto.getRandomValues(new Uint8Array(16));
-  assert.strictEqual(Destination.recallRatchet(destHash), null);
+  assert.strictEqual(new TransportCore().recallRatchet(destHash), null);
 });
 
-test("Destination.recallRatchet drops an expired ratchet", () => {
+test("TransportCore.recallRatchet drops an expired ratchet", () => {
   const destHash = crypto.getRandomValues(new Uint8Array(16));
   const ratchet = crypto.getRandomValues(new Uint8Array(32));
   const key = Array.from(destHash)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-  Destination.knownRatchets.delete(key);
+  const transport = new TransportCore();
 
   // Seed an already-expired entry directly.
-  Destination.knownRatchets.set(key, {
+  transport.caches.knownRatchets.set(key, {
     ratchet: ratchet.slice(),
     received: Date.now() - Destination.RATCHET_EXPIRY_MS - 1,
   });
-  assert.strictEqual(Destination.recallRatchet(destHash), null);
+  assert.strictEqual(transport.recallRatchet(destHash), null);
   // Recall deletes the expired entry.
-  assert.ok(!Destination.knownRatchets.has(key));
+  assert.ok(!transport.caches.knownRatchets.has(key));
 });
 
 test("Destination.cleanKnownRatchets drops expired and unknown-destination entries", () => {

@@ -4,6 +4,7 @@
  */
 
 import {
+  CORE_INSTANCE_TOKEN,
   ContextType,
   Destination,
   DestType,
@@ -18,6 +19,7 @@ import {
   ReceiptStatus,
   Resource,
   toHex,
+  warnIfFragmented,
 } from "@reticulum/core";
 import {
   buildAnnounceAppData,
@@ -95,6 +97,12 @@ export class LXMRouter extends EventTarget {
     super();
     this.identity = identity;
     this.rns = rnsCore;
+    // Split-brain self-check (work doc #37): the core module copy we were
+    // bundled with must be the one that created the provided Reticulum
+    // instance, else the install tree holds two physical copies of
+    // @reticulum/core. Not fatal (state travels through the instance), but
+    // worth a loud warning at first boot.
+    warnIfFragmented("LXMF", CORE_INSTANCE_TOKEN, rnsCore.coreInstanceToken);
     this.deliveryDest = null;
     /** @type {import("./propagation_node.js").PropagationNode|null} */
     this.propagationNode = null;
@@ -517,7 +525,9 @@ export class LXMRouter extends EventTarget {
     if (cached && cached.status === 2 /* LinkStatus.ACTIVE */) {
       return cached;
     }
-    const nodeIdentity = await Destination.recall(this.outboundPropagationNode);
+    const nodeIdentity = await this.rns.transport.recallIdentity(
+      this.outboundPropagationNode,
+    );
     if (!nodeIdentity) {
       throw new Error(
         `Propagation node identity unknown for ${toHex(
@@ -560,7 +570,7 @@ export class LXMRouter extends EventTarget {
     // Resolve the stamp cost: explicit option > node's advertised cost > default.
     let stampCost = options.stampCost;
     if (stampCost == null) {
-      const nodeIdentity = await Destination.recall(
+      const nodeIdentity = await this.rns.transport.recallIdentity(
         this.outboundPropagationNode,
       );
       const pn = nodeIdentity
@@ -655,7 +665,9 @@ export class LXMRouter extends EventTarget {
    * @private
    */
   async _packForPropagationSubmit(message, senderIdentity, stampCost) {
-    const recipientIdentity = await Destination.recall(message.destinationHash);
+    const recipientIdentity = await this.rns.transport.recallIdentity(
+      message.destinationHash,
+    );
     if (!recipientIdentity) {
       throw new Error(
         `Unknown recipient identity for ${toHex(message.destinationHash)}`,
@@ -827,7 +839,9 @@ export class LXMRouter extends EventTarget {
       this.deliveryDest,
     );
     if (!message) return false;
-    const senderIdentity = await Destination.recall(message.sourceHash);
+    const senderIdentity = await this.rns.transport.recallIdentity(
+      message.sourceHash,
+    );
     return this._dispatchMessage(message, null, senderIdentity ?? undefined);
   }
 
@@ -937,7 +951,7 @@ export class LXMRouter extends EventTarget {
                     "Failed to derive peer delivery destination hash",
                   );
                 }
-                await Destination.remember(
+                await this.rns.transport.rememberIdentity(
                   identityHash,
                   peerDeliveryDest.destinationHash,
                   peerIdentity.publicKey,
@@ -1049,7 +1063,9 @@ export class LXMRouter extends EventTarget {
     log("LXMF", `Incoming message from source ${toHex(message.sourceHash)}`);
 
     // 2. Validate signature against the SENDER'S public key
-    const senderIdentity = await Destination.recall(message.sourceHash);
+    const senderIdentity = await this.rns.transport.recallIdentity(
+      message.sourceHash,
+    );
 
     if (!senderIdentity) {
       // Park the message until the sender's identity is learned: for link
@@ -1250,7 +1266,9 @@ export class LXMRouter extends EventTarget {
     }
 
     log("LXMF", `Ingested paper message from ${toHex(message.sourceHash)}`);
-    const senderIdentity = await Destination.recall(message.sourceHash);
+    const senderIdentity = await this.rns.transport.recallIdentity(
+      message.sourceHash,
+    );
     await this._dispatchMessage(message, null, senderIdentity ?? undefined);
     return message;
   }
@@ -1381,7 +1399,9 @@ export class LXMRouter extends EventTarget {
    */
   async _sendOpportunistic(message, wireData) {
     const DESTINATION_LENGTH = Identity.TRUNCATED_HASH_LENGTH;
-    const peerIdentity = await Destination.recall(message.destinationHash);
+    const peerIdentity = await this.rns.transport.recallIdentity(
+      message.destinationHash,
+    );
     if (!peerIdentity) {
       throw new Error(
         `Cannot deliver: identity for ${toHex(message.destinationHash)} is unknown`,
@@ -1510,7 +1530,8 @@ export class LXMRouter extends EventTarget {
     }
     this.directLinks.delete(destHex);
 
-    const peerIdentity = await Destination.recall(destinationHash);
+    const peerIdentity =
+      await this.rns.transport.recallIdentity(destinationHash);
     if (!peerIdentity) {
       log(
         "LXMF",

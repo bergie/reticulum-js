@@ -42,13 +42,17 @@ describe("Persistor — enabled detection", () => {
 
   test("disabled when adapter lacks the KV methods", () => {
     const p = new Persistor({
+      ...freshSurface(),
       adapter: { loadKey() {}, saveKey() {} }, // legacy identity-only adapter
     });
     assert.strictEqual(p.enabled, false);
   });
 
   test("enabled for a full StorageAdapter", () => {
-    const p = new Persistor({ adapter: new MemoryStorageAdapter() });
+    const p = new Persistor({
+      ...freshSurface(),
+      adapter: new MemoryStorageAdapter(),
+    });
     assert.strictEqual(p.enabled, true);
   });
 });

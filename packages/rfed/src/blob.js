@@ -22,7 +22,7 @@
  * private key (i.e. an authorised subscriber).
  */
 
-import { concatBytes, Destination, Identity } from "@reticulum/core";
+import { concatBytes, Identity } from "@reticulum/core";
 import { LXMessage as Message } from "@reticulum/lxmf";
 import { deliveryHashFor } from "./channel.js";
 import {
@@ -233,8 +233,8 @@ export function parseSendPayload(payload) {
  * Inverse of {@link wrapChannelMessage}: EC-decrypts with the channel identity,
  * verifies the RTID magic, extracts the embedded sender public key, and feeds
  * the reconstructed LXMF wire block to `Message.deserialize`. The sender
- * identity is cached via `Destination.remember` so subsequent messages from the
- * same sender validate without the prelude.
+ * identity is cached via the transport's instance-scoped cache (work doc #37)
+ * so subsequent messages from the same sender validate without the prelude.
  *
  * The returned `signatureValid` is **the** integrity check: a forged
  * `sender_identity_pub` produces a signature mismatch.
@@ -246,6 +246,9 @@ export function parseSendPayload(payload) {
  *   the private key used to EC-decrypt).
  * @param {Uint8Array} opts.channelDeliveryHash - Channel's `lxmf.delivery`
  *   destination hash (prepended to the LXMF tail before deserialisation).
+ * @param {import("@reticulum/core").Reticulum} opts.rns - Reticulum instance
+ *   whose transport caches the sender identity (work doc #37: there is no
+ *   class-level shared cache anymore).
  * @returns {Promise<{ message: Message, senderPub: Uint8Array,
  *   senderIdentity: Identity, sourceHash: Uint8Array, signatureValid: boolean }>}
  * @throws {Error} when decryption fails, the magic is absent, or the LXMF tail
@@ -255,6 +258,7 @@ export async function unwrapChannelMessage({
   innerBlob,
   channelIdentity,
   channelDeliveryHash,
+  rns,
 }) {
   const plaintext = await channelIdentity.decrypt(innerBlob);
   if (!plaintext) {
@@ -289,7 +293,7 @@ export async function unwrapChannelMessage({
   // prelude's embedded sender pub. packetHash uses the message id as a stable
   // marker (it is metadata only).
   try {
-    await Destination.remember(
+    await rns.transport.rememberIdentity(
       message.messageId ?? message.sourceHash,
       message.sourceHash,
       senderPub,

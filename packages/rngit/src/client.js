@@ -18,11 +18,13 @@
  */
 
 import {
+  CORE_INSTANCE_TOKEN,
   Destination,
   DestType,
   fromHex,
   Identity,
   Reticulum,
+  warnIfFragmented,
 } from "@reticulum/core";
 import {
   ASPECT,
@@ -158,6 +160,9 @@ export class RngitClient {
       });
     }
     const rns = this.rns;
+    // Split-brain self-check (work doc #37): warn when the provided Reticulum
+    // instance comes from a different physical copy of @reticulum/core.
+    warnIfFragmented("rngit", CORE_INSTANCE_TOKEN, rns.coreInstanceToken);
     if (!this.identity) {
       this.identity = await Identity.loadOrGenerate(rns.storage);
     }
@@ -376,7 +381,7 @@ async function waitForIdentity(rns, destinationHash, timeoutMs) {
     /* best-effort; poll retries below */
   }
   while (Date.now() < deadline) {
-    const identity = await Destination.recall(destinationHash);
+    const identity = await rns.transport.recallIdentity(destinationHash);
     if (identity) return identity;
     await sleep(1000);
   }

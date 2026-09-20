@@ -76,6 +76,17 @@ export {
   StreamDataMessage,
   SystemMessageTypes,
 } from "./transport/channel.js";
+// --- Instance-scoped cache support (work doc #37) ---
+// Per-copy module token + fragmentation self-check for dependent packages
+// (`import { CORE_INSTANCE_TOKEN, warnIfFragmented } from "@reticulum/core"`;
+// see the `IdentityCache` docs for the split-brain background). `IdentityCache`
+// itself is only needed when constructing a `TransportCore` with hard cache
+// isolation.
+export {
+  CORE_INSTANCE_TOKEN,
+  IdentityCache,
+  warnIfFragmented,
+} from "./transport/identity-cache.js";
 
 import "./transport/buffer.js";
 

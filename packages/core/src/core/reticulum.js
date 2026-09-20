@@ -102,6 +102,16 @@ export class Reticulum {
     // The internal router that handles Interface failover, KISS framing, and packet delivery
     this.transport = new TransportCore();
 
+    /**
+     * Module-instance identity of this copy of `@reticulum/core` (work doc
+     * #37). Dependent packages (`@reticulum/lxmf`, `@reticulum/rfed`, ...)
+     * compare it against their own `CORE_INSTANCE_TOKEN` import via
+     * `warnIfFragmented` to detect a fragmented install (two physical core
+     * copies in one process) at first boot.
+     * @type {object}
+     */
+    this.coreInstanceToken = this.transport.caches.instanceToken;
+
     // Local registered endpoints (e.g., the Yjs sync endpoint, LXMF delivery)
     this.localDestinations = new Map();
 
@@ -115,6 +125,12 @@ export class Reticulum {
     this.persistor = new Persistor({
       adapter: this.storage,
       routingTable: this.transport.routingTable,
+      // Instance-scoped caches (work doc #37): the Persistor reads/writes the
+      // transport's cache maps, not the deprecated class-level statics —
+      // identical objects when the default aliasing is in effect, but correct
+      // for embedders injecting a fresh IdentityCache for hard isolation.
+      knownDestinations: this.transport.caches.knownDestinations,
+      knownRatchets: this.transport.caches.knownRatchets,
     });
     this.transport.persistor = this.persistor;
     this.persistorLoadPromise = this.persistor.load();

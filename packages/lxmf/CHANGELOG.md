@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Cache access is now instance-scoped (work doc #37): the router and peers
+  recall and remember identities/ratchets via `rns.transport` instead of the
+  deprecated `Destination` class statics, so a fragmented install (two
+  physical copies of `@reticulum/core` in one process) shares one state
+  through the `Reticulum` instance. The router also warns at construction
+  (`warnIfFragmented`) when it was bundled against a different physical copy
+  of core than the provided `Reticulum` instance.
 
 ## [0.8.2] - 2026-09-19
 

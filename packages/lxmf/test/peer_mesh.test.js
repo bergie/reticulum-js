@@ -9,6 +9,7 @@ import { describe, test } from "node:test";
 import { Destination } from "@reticulum/core/src/core/destination.js";
 import { Identity } from "@reticulum/core/src/core/identity.js";
 import { DestType } from "@reticulum/core/src/core/packet.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import {
   PEER_ERROR_INVALID_KEY,
@@ -207,9 +208,21 @@ class Wire {
     this.transports.push(t);
   }
 }
+// A real TransportCore mixed in for the instance-scoped cache API (work doc
+// #37): its methods alias the same statics these tests populate.
+const _core = new TransportCore();
+const _cacheApi = {
+  rememberIdentity: _core.rememberIdentity.bind(_core),
+  recallIdentity: _core.recallIdentity.bind(_core),
+  rememberRatchet: _core.rememberRatchet.bind(_core),
+  recallRatchet: _core.recallRatchet.bind(_core),
+  trackReceipt: _core.trackReceipt.bind(_core),
+  findReceipt: _core.findReceipt.bind(_core),
+};
 class LoopbackTransport extends EventTarget {
   constructor() {
     super();
+    Object.assign(this, _cacheApi);
     this.wire = null;
     this.activeLinks = new Map();
     this.destinations = new Map();
@@ -257,20 +270,29 @@ async function makeNode() {
   return { identity, rns, transport };
 }
 
-async function rememberDelivery(identity) {
+async function rememberDelivery(identity, transports) {
   const out = await Destination.OUT(
     "lxmf.delivery",
     DestType.SINGLE,
     identity,
     null,
   );
-  await Destination.remember(
-    rnd(16),
-    out.destinationHash,
-    identity.publicKey,
-    null,
-  );
+  for (const t of transports) {
+    await t.rememberIdentity(
+      rnd(16),
+      out.destinationHash,
+      identity.publicKey,
+      null,
+    );
+  }
   return out;
+}
+
+/** Remembers an (destination, public key, appData) tuple on every transport. */
+async function rememberEverywhere(transports, destHash, publicKey, appData) {
+  for (const t of transports) {
+    await t.rememberIdentity(rnd(16), destHash, publicKey, appData);
+  }
 }
 
 /** Polls `fn` until truthy or timeout. */
@@ -292,6 +314,12 @@ describe("peer mesh sync over loopback", () => {
     const nodeB = await makeNode();
     const sender = await makeNode();
     const recipient = await makeNode();
+    // Each node's transport has its own instance cache (work doc #37), so
+    // announcing-equivalent knowledge is seeded on all of them, mirroring a
+    // fully-connected mesh where everyone hears every announce.
+    const transports = [nodeA, nodeB, sender, recipient].map(
+      (n) => n.rns.transport,
+    );
     for (const n of [nodeA, nodeB, sender, recipient]) wire.attach(n.transport);
 
     // --- Both nodes enable propagation with a low peering cost. ---
@@ -314,15 +342,15 @@ describe("peer mesh sync over loopback", () => {
 
     // Make node B's propagation destination recallable on node A.
     const nodeBPropHash = routerB.propagationDest.destinationHash;
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      transports,
       nodeBPropHash,
       nodeB.identity.publicKey,
       routerB.propagationDest.appData,
     );
 
     // Recipient + sender delivery destinations known.
-    await rememberDelivery(recipient.identity);
+    await rememberDelivery(recipient.identity, transports);
     const recipientOut = await Destination.OUT(
       "lxmf.delivery",
       DestType.SINGLE,
@@ -332,8 +360,8 @@ describe("peer mesh sync over loopback", () => {
     const recipientDeliveryHash = recipientOut.destinationHash;
     const senderRouter = new LXMRouter(sender.identity, sender.rns);
     await senderRouter.init();
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      transports,
       senderRouter.deliveryDest.destinationHash,
       sender.identity.publicKey,
       null,
@@ -352,8 +380,8 @@ describe("peer mesh sync over loopback", () => {
     senderRouter.setOutboundPropagationNode(
       routerA.propagationDest.destinationHash,
     );
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      transports,
       routerA.propagationDest.destinationHash,
       nodeA.identity.publicKey,
       routerA.propagationDest.appData,
@@ -394,8 +422,8 @@ describe("peer mesh sync over loopback", () => {
     const recipientRouter = new LXMRouter(recipient.identity, recipient.rns);
     await recipientRouter.init();
     recipientRouter.setOutboundPropagationNode(nodeBPropHash);
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      transports,
       nodeBPropHash,
       nodeB.identity.publicKey,
       routerB.propagationDest.appData,

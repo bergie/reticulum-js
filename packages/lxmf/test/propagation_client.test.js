@@ -12,34 +12,34 @@ import { describe, test } from "node:test";
 import { Destination } from "@reticulum/core/src/core/destination.js";
 import { Identity } from "@reticulum/core/src/core/identity.js";
 import { DestType } from "@reticulum/core/src/core/packet.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "../src/message.js";
 import { unpackPropagationContainer } from "../src/propagation.js";
 import { LXMRouter } from "../src/router.js";
 
-/** Mock RNS core (transport is a real EventTarget; broadcast is a no-op). */
+/** Mock RNS core (transport is a real TransportCore; broadcast is a no-op). */
 function mockRns() {
   return Object.assign(new EventTarget(), {
     registerDestination: () => {},
     broadcast: () => {},
-    transport: Object.assign(new EventTarget(), {
-      bindLocalDestination: () => {},
-      activeLinks: new Map(),
-    }),
+    // A real TransportCore (no interfaces) so instance-scoped cache calls
+    // (work doc #37) work.
+    transport: new TransportCore(),
   });
 }
 
 const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
 
 /** Remembers `identity` under its `lxmf.delivery` destination hash. */
-async function rememberDelivery(identity) {
+async function rememberDelivery(identity, transport) {
   const out = await Destination.OUT(
     "lxmf.delivery",
     DestType.SINGLE,
     identity,
     null,
   );
-  await Destination.remember(
+  await transport.rememberIdentity(
     rnd(16),
     out.destinationHash,
     await identity.getPublicKey(),
@@ -52,10 +52,11 @@ describe("submit packing — _packForPropagationSubmit", () => {
   test("builds msgpack([time,[lxmf_data||stamp]]) with transient_id over the base", async () => {
     const sender = await Identity.generate();
     const recipient = await Identity.generate();
-    const recipientOut = await rememberDelivery(recipient);
-    const senderOut = await rememberDelivery(sender);
+    const rns = mockRns();
+    const recipientOut = await rememberDelivery(recipient, rns.transport);
+    const senderOut = await rememberDelivery(sender, rns.transport);
 
-    const router = new LXMRouter(sender, mockRns());
+    const router = new LXMRouter(sender, rns);
     await router.init();
 
     const message = new Message({
@@ -99,10 +100,11 @@ describe("sync — syncFromPropagationNode orchestration", () => {
   test("drives list → wants → ack and delivers the synced message", async () => {
     const syncer = await Identity.generate(); // the router's identity (recipient)
     const sender = await Identity.generate();
-    await rememberDelivery(syncer);
-    await rememberDelivery(sender);
+    const rns = mockRns();
+    await rememberDelivery(syncer, rns.transport);
+    await rememberDelivery(sender, rns.transport);
 
-    const router = new LXMRouter(syncer, mockRns());
+    const router = new LXMRouter(syncer, rns);
     await router.init();
     router.setOutboundPropagationNode(rnd(16));
 
@@ -173,8 +175,9 @@ describe("sync — syncFromPropagationNode orchestration", () => {
 
   test("marks already-held transient_ids as haves (no re-fetch)", async () => {
     const syncer = await Identity.generate();
-    await rememberDelivery(syncer);
-    const router = new LXMRouter(syncer, mockRns());
+    const rns = mockRns();
+    await rememberDelivery(syncer, rns.transport);
+    const router = new LXMRouter(syncer, rns);
     await router.init();
     router.setOutboundPropagationNode(rnd(16));
 

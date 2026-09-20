@@ -21,6 +21,7 @@ import {
 import { Identity } from "@reticulum/core/src/core/identity.js";
 import { DestType } from "@reticulum/core/src/core/packet.js";
 import { Link } from "@reticulum/core/src/transport/link.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "../src/message.js";
 import { LXMRouter } from "../src/router.js";
@@ -32,9 +33,21 @@ const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
  * (sendPacket called with a linkId) is handed to `link.send()` so it is
  * token-encrypted and re-addressed to the link_id — mirroring Transport.sendPacket.
  */
+// A real TransportCore mixed in for the instance-scoped cache API (work doc
+// #37): its methods alias the same statics these tests populate.
+const _core = new TransportCore();
+const _cacheApi = {
+  rememberIdentity: _core.rememberIdentity.bind(_core),
+  recallIdentity: _core.recallIdentity.bind(_core),
+  rememberRatchet: _core.rememberRatchet.bind(_core),
+  recallRatchet: _core.recallRatchet.bind(_core),
+  trackReceipt: _core.trackReceipt.bind(_core),
+  findReceipt: _core.findReceipt.bind(_core),
+};
 class LoopbackTransport extends EventTarget {
   constructor(label) {
     super();
+    Object.assign(this, _cacheApi);
     this.label = label;
     this.peer = null;
     /** @type {Map<string, Link>} */
@@ -119,20 +132,24 @@ describe("echo bot — DIRECT delivery with backchannel receiving", () => {
     const clientRouter = new LXMRouter(client.identity, client.rns);
     await clientRouter.init();
 
-    // Make both delivery destinations recallable (simulates hearing each
-    // other's announce) so each side can recall the other's identity.
-    await Destination.remember(
-      rnd(16),
-      botDeliveryHash,
-      bot.identity.publicKey,
-      null,
-    );
-    await Destination.remember(
-      rnd(16),
-      clientRouter.deliveryDest.destinationHash,
-      client.identity.publicKey,
-      null,
-    );
+    // Make both delivery destinations recallable on EACH side's transport
+    // (simulates hearing each other's announce) so each side can recall the
+    // other's identity. Each transport has its own instance cache (work doc
+    // #37), so both need the entry.
+    for (const t of [bot.rns.transport, client.rns.transport]) {
+      await t.rememberIdentity(
+        rnd(16),
+        botDeliveryHash,
+        bot.identity.publicKey,
+        null,
+      );
+      await t.rememberIdentity(
+        rnd(16),
+        clientRouter.deliveryDest.destinationHash,
+        client.identity.publicKey,
+        null,
+      );
+    }
 
     // BOT: echo handler (same shape as examples/lxmf_echobot.js).
     botRouter.addEventListener("message", async (event) => {

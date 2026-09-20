@@ -76,7 +76,7 @@ describe("Destination.enableRatchets — ownership & announce emission", () => {
     const transport = new TransportCore();
     await transport._routeIncomingPacket(arriving, /** @type {any} */ (null));
 
-    const recalled = Destination.recallRatchet(dest.destinationHash);
+    const recalled = transport.recallRatchet(dest.destinationHash);
     assert.ok(recalled);
     assert.ok(bytesEqual(recalled, dest.ratchets[0].publicKey));
   });
@@ -96,19 +96,22 @@ describe("Destination.encrypt / _handleData — ratchet wiring", () => {
     const ratchetPriv = destA.ratchets[0].privateKey;
 
     // Sender learns A's ratchet (as if from an announce).
-    Destination.rememberRatchet(
+    // The sender's transport holds the learned ratchet; the OUT destination
+    // reads it via its layer (work doc #37: no shared static cache).
+    const senderTransport = new TransportCore();
+    senderTransport.rememberRatchet(
       destA.destinationHash,
       destA.ratchets[0].publicKey,
     );
 
     // Outbound destination for A (public-only identity) routes encrypt() via
-    // Destination.recallRatchet → Identity.encrypt(ratchet).
+    // the transport's ratchet cache → Identity.encrypt(ratchet).
     const idAOut = await Identity.fromPublicKey(await idA.getPublicKey());
     const destAOut = await Destination.OUT(
       "test.ratchet.xcv",
       DestType.SINGLE,
       idAOut,
-      null,
+      /** @type {any} */ ({ transport: senderTransport }),
     );
     const plaintext = enc("forward-secret payload");
     const ciphertext = await destAOut.encrypt(plaintext);
@@ -128,7 +131,8 @@ describe("Destination.encrypt / _handleData — ratchet wiring", () => {
       new CapturingLayer(),
     );
     await destA.enableRatchets();
-    Destination.rememberRatchet(
+    const senderTransport = new TransportCore();
+    senderTransport.rememberRatchet(
       destA.destinationHash,
       destA.ratchets[0].publicKey,
     );
@@ -138,7 +142,7 @@ describe("Destination.encrypt / _handleData — ratchet wiring", () => {
       "test.ratchet.not.longterm",
       DestType.SINGLE,
       idAOut,
-      null,
+      /** @type {any} */ ({ transport: senderTransport }),
     );
     const ciphertext = await destAOut.encrypt(enc("ratchet-only"));
 
@@ -185,13 +189,14 @@ describe("Destination.rotateRatchets — rotation tolerance", () => {
     assert.ok(!bytesEqual(oldPub, newPub), "rotation must produce a new key");
 
     // Simulate an in-flight message encrypted to the OLD ratchet.
-    Destination.rememberRatchet(destA.destinationHash, oldPub);
+    const senderTransport = new TransportCore();
+    senderTransport.rememberRatchet(destA.destinationHash, oldPub);
     const idAOut = await Identity.fromPublicKey(await idA.getPublicKey());
     const destAOut = await Destination.OUT(
       "test.ratchet.rotate",
       DestType.SINGLE,
       idAOut,
-      null,
+      /** @type {any} */ ({ transport: senderTransport }),
     );
     const ciphertext = await destAOut.encrypt(enc("in flight"));
 
@@ -221,13 +226,14 @@ describe("Destination.enableRatchets — owned private-ring persistence", () => 
     const advertisedPub = dest1.ratchets[0].publicKey.slice();
 
     // A peer encrypts to that ratchet (sender recalls the advertised pub).
-    Destination.rememberRatchet(dest1.destinationHash, advertisedPub);
+    const senderTransport = new TransportCore();
+    senderTransport.rememberRatchet(dest1.destinationHash, advertisedPub);
     const idOut = await Identity.fromPublicKey(await identity.getPublicKey());
     const destOut = await Destination.OUT(
       "test.ratchet.persist",
       DestType.SINGLE,
       idOut,
-      null,
+      /** @type {any} */ ({ transport: senderTransport }),
     );
     const ciphertext = await destOut.encrypt(enc("survive restart"));
 

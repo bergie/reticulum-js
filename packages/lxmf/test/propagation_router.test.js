@@ -7,6 +7,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { Identity } from "@reticulum/core/src/core/identity.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import {
   buildPropagationNodeAppData,
@@ -25,9 +26,9 @@ function mockRns(captured) {
     broadcast: (/** @type {any} */ pkt) => {
       captured.push(pkt);
     },
-    transport: Object.assign(new EventTarget(), {
-      bindLocalDestination: () => {},
-    }),
+    // A real TransportCore (no interfaces) so instance-scoped cache calls
+    // (work doc #37) work.
+    transport: new TransportCore(),
   });
 }
 

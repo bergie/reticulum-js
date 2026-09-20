@@ -33,6 +33,7 @@
 import {
   Allow,
   bytesEqual,
+  CORE_INSTANCE_TOKEN,
   ContextType,
   concatBytes,
   Destination,
@@ -44,6 +45,7 @@ import {
   Packet,
   PacketType,
   toHex,
+  warnIfFragmented,
 } from "@reticulum/core";
 import {
   parseFanoutPayload,
@@ -195,6 +197,9 @@ export class RFedNode {
   constructor({ identity, rns, config = {}, stores = {} }) {
     this.identity = identity;
     this.rns = rns;
+    // Split-brain self-check (work doc #37): warn when the provided Reticulum
+    // instance comes from a different physical copy of @reticulum/core.
+    warnIfFragmented("RFedNode", CORE_INSTANCE_TOKEN, rns.coreInstanceToken);
 
     const stampCost =
       config.stampCost && config.stampCost > 0 ? config.stampCost : null;
@@ -737,7 +742,7 @@ export class RFedNode {
    * @private
    */
   async _pushSubscriptionsToBackup(backupHash, pairs) {
-    const peerIdentity = await Destination.recall(backupHash);
+    const peerIdentity = await this.rns.transport.recallIdentity(backupHash);
     if (!peerIdentity) {
       this.rns.transport?.requestPath?.(backupHash);
       log("RFedNode", "backup push — no path to backup node", LogLevel.DEBUG);
@@ -1172,7 +1177,7 @@ export class RFedNode {
    * @param {Uint8Array} peerNodeHash
    */
   async _syncWithPeerInternal(peerNodeHash) {
-    const peerIdentity = await Destination.recall(peerNodeHash);
+    const peerIdentity = await this.rns.transport.recallIdentity(peerNodeHash);
     const dest = await Destination.OUT(
       NODE_NAME,
       DestType.SINGLE,
@@ -1330,7 +1335,7 @@ export class RFedNode {
     if (!relayBytes || relayBytes.length !== HASH_LENGTH) return;
     let identity;
     try {
-      identity = await Destination.recall(relayBytes);
+      identity = await this.rns.transport.recallIdentity(relayBytes);
     } catch {
       log(
         "RFedNode",

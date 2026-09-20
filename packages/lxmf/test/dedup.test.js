@@ -11,33 +11,33 @@ import { describe, test } from "node:test";
 import { Destination } from "@reticulum/core/src/core/destination.js";
 import { Identity } from "@reticulum/core/src/core/identity.js";
 import { DestType } from "@reticulum/core/src/core/packet.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "../src/message.js";
 import { LXMRouter } from "../src/router.js";
 
-/** Mock RNS core (transport is a real EventTarget; broadcast is a no-op). */
+/** Mock RNS core (transport is a real TransportCore; broadcast is a no-op). */
 function mockRns() {
   return Object.assign(new EventTarget(), {
     registerDestination: () => {},
     broadcast: () => {},
-    transport: Object.assign(new EventTarget(), {
-      bindLocalDestination: () => {},
-      activeLinks: new Map(),
-    }),
+    // A real TransportCore so the router's instance-scoped cache calls
+    // (work doc #37) work; it has no interfaces so nothing hits the network.
+    transport: new TransportCore(),
   });
 }
 
 const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
 
 /** Remembers `identity` under its `lxmf.delivery` destination hash. */
-async function rememberDelivery(identity) {
+async function rememberDelivery(identity, transport) {
   const out = await Destination.OUT(
     "lxmf.delivery",
     DestType.SINGLE,
     identity,
     null,
   );
-  await Destination.remember(
+  await transport.rememberIdentity(
     rnd(16),
     out.destinationHash,
     await identity.getPublicKey(),
@@ -53,10 +53,11 @@ describe("inbound dedup — _dispatchMessage / hasMessage", () => {
   test("a repeated delivery of the same message over a link dispatches once", async () => {
     const recipient = await Identity.generate();
     const sender = await Identity.generate();
-    const senderOut = await rememberDelivery(sender);
-    await rememberDelivery(recipient);
+    const rns = mockRns();
+    const senderOut = await rememberDelivery(sender, rns.transport);
+    await rememberDelivery(recipient, rns.transport);
 
-    const router = new LXMRouter(recipient, mockRns());
+    const router = new LXMRouter(recipient, rns);
     await router.init();
 
     const msg = new Message({
@@ -107,10 +108,11 @@ describe("inbound dedup — _dispatchMessage / hasMessage", () => {
   test("the same message over a link and again as an opportunistic packet dispatches once", async () => {
     const recipient = await Identity.generate();
     const sender = await Identity.generate();
-    const senderOut = await rememberDelivery(sender);
-    await rememberDelivery(recipient);
+    const rns = mockRns();
+    const senderOut = await rememberDelivery(sender, rns.transport);
+    await rememberDelivery(recipient, rns.transport);
 
-    const router = new LXMRouter(recipient, mockRns());
+    const router = new LXMRouter(recipient, rns);
     await router.init();
 
     const msg = new Message({
@@ -160,10 +162,11 @@ describe("inbound dedup — _dispatchMessage / hasMessage", () => {
   test("distinct messages dispatch separately", async () => {
     const recipient = await Identity.generate();
     const sender = await Identity.generate();
-    const senderOut = await rememberDelivery(sender);
-    await rememberDelivery(recipient);
+    const rns = mockRns();
+    const senderOut = await rememberDelivery(sender, rns.transport);
+    await rememberDelivery(recipient, rns.transport);
 
-    const router = new LXMRouter(recipient, mockRns());
+    const router = new LXMRouter(recipient, rns);
     await router.init();
 
     /** @type {Message[]} */
@@ -201,10 +204,11 @@ describe("inbound dedup — propagation sync", () => {
   test("a synced copy of an already-delivered message is not re-dispatched but is acked", async () => {
     const recipient = await Identity.generate();
     const sender = await Identity.generate();
-    const senderOut = await rememberDelivery(sender);
-    const deliveryOut = await rememberDelivery(recipient);
+    const rns = mockRns();
+    const senderOut = await rememberDelivery(sender, rns.transport);
+    const deliveryOut = await rememberDelivery(recipient, rns.transport);
 
-    const router = new LXMRouter(recipient, mockRns());
+    const router = new LXMRouter(recipient, rns);
     await router.init();
     router.setOutboundPropagationNode(rnd(16));
 

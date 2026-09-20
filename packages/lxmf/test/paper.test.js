@@ -23,6 +23,7 @@ import { describe, test } from "node:test";
 import { Destination } from "@reticulum/core/src/core/destination.js";
 import { Identity } from "@reticulum/core/src/core/identity.js";
 import { DestType } from "@reticulum/core/src/core/packet.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import {
   base64UrlToBytes,
   bytesToBase64Url,
@@ -233,11 +234,9 @@ describe("LXMRouter.ingestUri", () => {
     /** @type {any} */
     const interfaceLayer = {
       registerDestination: () => {},
-      transport: Object.assign(new EventTarget(), {
-        bindLocalDestination: () => {},
-        addLink: () => {},
-        sendPacket: async () => {},
-      }),
+      // A real TransportCore (no interfaces) so instance-scoped cache
+      // calls (work doc #37) work.
+      transport: new TransportCore(),
     };
 
     const recipientIdentity = await Identity.generate();
@@ -257,7 +256,7 @@ describe("LXMRouter.ingestUri", () => {
     );
     // Remember the sender so the recipient can verify the signature.
     const senderSourceHash = senderRouter.deliveryDest.destinationHash;
-    await Destination.remember(
+    await interfaceLayer.transport.rememberIdentity(
       senderIdentity.identityHash,
       senderSourceHash,
       senderIdentity.publicKey,
@@ -294,11 +293,9 @@ describe("LXMRouter.ingestUri", () => {
     /** @type {any} */
     const interfaceLayer = {
       registerDestination: () => {},
-      transport: Object.assign(new EventTarget(), {
-        bindLocalDestination: () => {},
-        addLink: () => {},
-        sendPacket: async () => {},
-      }),
+      // A real TransportCore (no interfaces) so instance-scoped cache
+      // calls (work doc #37) work.
+      transport: new TransportCore(),
     };
     const recipientIdentity = await Identity.generate();
     const router = new LXMRouter(recipientIdentity, interfaceLayer);

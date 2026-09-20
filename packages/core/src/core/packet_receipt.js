@@ -18,7 +18,6 @@
 
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
-import { Destination } from "./destination.js";
 import { Identity } from "./identity.js";
 
 /**
@@ -45,14 +44,6 @@ const PROOF_IMPLICIT_LENGTH = 64;
  */
 export class PacketReceipt {
   /**
-   * Outstanding receipts, keyed by the hex of the 16-byte truncated packet
-   * hash — the synthetic `dest_hash` an inbound PROOF is addressed to.
-   *
-   * @type {Map<string, PacketReceipt>}
-   */
-  static receipts = new Map();
-
-  /**
    * @param {Uint8Array} packetHash - 32-byte `SHA-256(get_hashable_part(packet))`.
    * @param {Uint8Array} destinationHash - 16-byte destination the proved packet was sent to;
    *   used to recall the verifying identity.
@@ -70,6 +61,14 @@ export class PacketReceipt {
     /** @type {Uint8Array} */
     this.destinationHash = destinationHash;
     this.callbacks = callbacks;
+    /**
+     * Transport core owning this receipt's registry (work doc #37). Set by
+     * `TransportCore.trackReceipt`; routes registry removal and identity
+     * recall through the instance-scoped caches. A receipt without an owner
+     * is not registered anywhere and cannot verify proofs.
+     * @type {import("../transport/transport.js").TransportCore|null}
+     */
+    this.owner = null;
     /** @type {ReceiptStatus} */
     this.status = ReceiptStatus.SENDING;
     this.sentAt = Date.now();
@@ -82,24 +81,14 @@ export class PacketReceipt {
   }
 
   /**
-   * Registers a receipt so an inbound PROOF (whose `dest_hash` equals the
-   * truncated packet hash) can find it via {@link PacketReceipt.find}.
-   *
-   * @param {PacketReceipt} receipt
+   * Removes this receipt from its owner transport's instance-scoped registry
+   * (a no-op for untracked receipts — work doc #37).
+   * @private
    */
-  static track(receipt) {
-    PacketReceipt.receipts.set(toHex(receipt.truncatedHash), receipt);
-  }
-
-  /**
-   * Looks up an outstanding receipt by the 16-byte `dest_hash` of an inbound
-   * PROOF packet.
-   *
-   * @param {Uint8Array} proofDestHash
-   * @returns {PacketReceipt|null}
-   */
-  static find(proofDestHash) {
-    return PacketReceipt.receipts.get(toHex(proofDestHash)) ?? null;
+  _unregister() {
+    if (this.owner) {
+      this.owner.caches.receipts.delete(toHex(this.truncatedHash));
+    }
   }
 
   /**
@@ -146,7 +135,15 @@ export class PacketReceipt {
    * @private
    */
   async _verify(signature, data) {
-    const identity = await Destination.recall(this.destinationHash);
+    if (!this.owner) {
+      log(
+        "PacketReceipt",
+        "cannot verify a proof without the owning transport",
+        LogLevel.DEBUG,
+      );
+      return false;
+    }
+    const identity = await this.owner.recallIdentity(this.destinationHash);
     if (!identity) {
       log(
         "PacketReceipt",
@@ -169,7 +166,7 @@ export class PacketReceipt {
     this.clearTimeout();
     this._timeoutTimer = setTimeout(() => {
       this._timeoutTimer = null;
-      PacketReceipt.receipts.delete(toHex(this.truncatedHash));
+      this._unregister();
       this.setFailed();
     }, timeoutMs);
   }
@@ -215,7 +212,7 @@ export class PacketReceipt {
     this.status = ReceiptStatus.DELIVERED;
     this._settledResolve?.(this.status);
     this._settledResolve = null;
-    PacketReceipt.receipts.delete(toHex(this.truncatedHash));
+    this._unregister();
     if (this.callbacks.delivered) {
       try {
         this.callbacks.delivered(this);

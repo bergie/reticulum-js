@@ -55,9 +55,10 @@
 /**
  * Record namespaces used by the core persistence layer (work doc #16).
  *
- *  - `identities` — learned peer identities (`Destination.knownDestinations`
- *    entries; the 4-element `[timestamp, packet_hash, public_key, app_data]`
- *    msgpack-array form of microReticulum's `Persistence::IdentityEntry`).
+ *  - `identities` — learned peer identities (the transport's instance
+ *    cache entries; the 4-element `[timestamp, packet_hash, public_key,
+ *    app_data]` msgpack-array form of microReticulum's
+ *    `Persistence::IdentityEntry`).
  *  - `ratchets` — per-destination ratchet rings (arrays of X25519 pubs).
  *  - `paths` — transport path-table entries (next-hop routes).
  *

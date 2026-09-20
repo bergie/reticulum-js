@@ -185,8 +185,9 @@ test("end-to-end: an opportunistic DATA packet's PROOF resolves the sender recei
   );
   transport.bindLocalDestination(recvDest);
 
-  // Sender must know the receiver's identity to verify the proof signature.
-  await Destination.remember(
+  // The sender's transport must know the receiver's identity to verify the
+  // proof signature (the receipt recalls it through its owner transport).
+  await transport.rememberIdentity(
     crypto.getRandomValues(new Uint8Array(32)),
     /** @type {Uint8Array} */ (recvDest.destinationHash),
     recvIdentity.publicKey,
@@ -206,7 +207,7 @@ test("end-to-end: an opportunistic DATA packet's PROOF resolves the sender recei
   // Capture the tracked receipt by reference (registered synchronously in
   // sendPacket) and let the async proof round-trip complete.
   const dataHash = await dataPacket.getHash();
-  const receipt = PacketReceipt.find(dataHash.slice(0, 16));
+  const receipt = transport.findReceipt(dataHash.slice(0, 16));
   assert.ok(receipt, "sendPacket should track a PacketReceipt");
 
   await new Promise((resolve) => setTimeout(resolve, 50));
@@ -217,7 +218,7 @@ test("end-to-end: an opportunistic DATA packet's PROOF resolves the sender recei
     "the receiver's PROOF should have resolved the receipt",
   );
   assert.strictEqual(
-    PacketReceipt.find(dataHash.slice(0, 16)),
+    transport.findReceipt(dataHash.slice(0, 16)),
     null,
     "a delivered receipt is removed from the registry",
   );
@@ -236,7 +237,7 @@ test("end-to-end: explicit-form PROOFs also resolve the sender receipt", async (
     /** @type {any} */ (rns),
   );
   transport.bindLocalDestination(recvDest);
-  await Destination.remember(
+  await transport.rememberIdentity(
     crypto.getRandomValues(new Uint8Array(32)),
     /** @type {Uint8Array} */ (recvDest.destinationHash),
     recvIdentity.publicKey,
@@ -253,7 +254,7 @@ test("end-to-end: explicit-form PROOFs also resolve the sender receipt", async (
   await transport.sendPacket(dataPacket);
 
   const dataHash = await dataPacket.getHash();
-  const receipt = PacketReceipt.find(dataHash.slice(0, 16));
+  const receipt = transport.findReceipt(dataHash.slice(0, 16));
   assert.ok(receipt);
 
   await new Promise((resolve) => setTimeout(resolve, 50));

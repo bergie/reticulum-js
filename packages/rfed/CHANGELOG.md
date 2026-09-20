@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Cache access is now instance-scoped (work doc #37): `RFedNode` / `RFedClient`
+  recall identities via `rns.transport` instead of the removed `Destination`
+  class statics, and `unwrapChannelMessage` now **requires** an `rns`
+  (passed by `RFedClient`) so sender-identity caching travels through the
+  `Reticulum` instance — a fragmented install (two physical copies of
+  `@reticulum/core` in one process) shares one state. Both constructors
+  warn (`warnIfFragmented`) when bundled against a different physical copy
+  of core than the provided `Reticulum` instance.
 
 ## [0.8.2] - 2026-09-19
 ### Changed

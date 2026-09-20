@@ -24,6 +24,7 @@ import {
 import { PacketReceipt, ReceiptStatus } from "../../src/core/packet_receipt.js";
 import { Reticulum } from "../../src/core/reticulum.js";
 import { PathState } from "../../src/transport/router.js";
+import { TransportCore } from "../../src/transport/transport.js";
 
 /** Network MTU / base per-hop timeout mirrored from RNS.Reticulum (protocol-fixed). */
 const MTU = 500;
@@ -231,6 +232,7 @@ test("mediumPathTimeout: clamps sub-minimum bitrate to MINIMUM_BITRATE", () => {
 });
 
 test("PacketReceipt.startTimeout fires setFailed and leaves the registry", async () => {
+  const transport = new TransportCore();
   const packetHash = crypto.getRandomValues(new Uint8Array(32));
   const destinationHash = crypto.getRandomValues(new Uint8Array(16));
   let failed = 0;
@@ -239,13 +241,13 @@ test("PacketReceipt.startTimeout fires setFailed and leaves the registry", async
       failed += 1;
     },
   });
-  PacketReceipt.track(receipt);
+  transport.trackReceipt(receipt);
   receipt.startTimeout(40);
 
   await new Promise((r) => setTimeout(r, 70));
   assert.strictEqual(receipt.status, ReceiptStatus.FAILED);
   assert.strictEqual(failed, 1);
-  assert.strictEqual(PacketReceipt.find(receipt.truncatedHash), null);
+  assert.strictEqual(transport.findReceipt(receipt.truncatedHash), null);
 });
 
 test("a validated PROOF flips the path state RESPONSIVE", async () => {
@@ -261,7 +263,7 @@ test("a validated PROOF flips the path state RESPONSIVE", async () => {
     /** @type {any} */ (rns),
   );
   transport.bindLocalDestination(recvDest);
-  await Destination.remember(
+  await transport.rememberIdentity(
     crypto.getRandomValues(new Uint8Array(32)),
     /** @type {Uint8Array} */ (recvDest.destinationHash),
     recvIdentity.publicKey,
@@ -332,7 +334,7 @@ test("a proof that times out flips the path state UNRESPONSIVE", async () => {
   // firing by clearing the real timer and driving the failed path directly,
   // so the test stays under the per-test timeout.
   const dataHash = await dataPacket.getHash();
-  const tracked = PacketReceipt.find(dataHash.slice(0, 16));
+  const tracked = transport.findReceipt(dataHash.slice(0, 16));
   assert.ok(tracked, "sendPacket should track a PacketReceipt");
   tracked.clearTimeout();
   tracked.setFailed();

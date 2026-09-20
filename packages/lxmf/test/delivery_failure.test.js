@@ -16,6 +16,7 @@ import { Destination } from "@reticulum/core/src/core/destination.js";
 import { Identity } from "@reticulum/core/src/core/identity.js";
 import { DestType } from "@reticulum/core/src/core/packet.js";
 import { PacketReceipt } from "@reticulum/core/src/core/packet_receipt.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "../src/message.js";
 import { LXMRouter } from "../src/router.js";
@@ -31,9 +32,8 @@ async function makeRouter(onReceipt = () => {}) {
   /** @type {any} */
   const interfaceLayer = {
     registerDestination: () => {},
-    transport: Object.assign(new EventTarget(), {
-      bindLocalDestination: () => {},
-      addLink: () => {},
+    transport: Object.assign(new TransportCore(), {
+      // Test override: hand back controllable receipts instead of real ones.
       sendPacket: async () => {
         const receipt = new PacketReceipt(
           crypto.getRandomValues(new Uint8Array(32)),
@@ -57,17 +57,16 @@ test("opportunistic send resolves once the recipient proves the packet", async (
     recipientIdentity,
     { registerDestination: () => {} },
   );
-  await Destination.remember(
-    recipientIdentity.identityHash,
-    /** @type {Uint8Array} */ (recipientDest.destinationHash),
-    recipientIdentity.publicKey,
-  );
-
   const { router, identity } = await makeRouter((receipt) => {
     // The receiver proves promptly: deliver within the wait window.
     receipt.startTimeout(5_000);
     setTimeout(() => receipt.setDelivered(), 10);
   });
+  await router.rns.transport.rememberIdentity(
+    recipientIdentity.identityHash,
+    /** @type {Uint8Array} */ (recipientDest.destinationHash),
+    recipientIdentity.publicKey,
+  );
 
   const message = new Message({
     sourceHash: router.deliveryDest.destinationHash,
@@ -87,16 +86,15 @@ test("opportunistic send rejects when no delivery proof arrives in time", async 
     recipientIdentity,
     { registerDestination: () => {} },
   );
-  await Destination.remember(
-    recipientIdentity.identityHash,
-    /** @type {Uint8Array} */ (recipientDest.destinationHash),
-    recipientIdentity.publicKey,
-  );
-
   const { router, identity } = await makeRouter((receipt) => {
     // Nobody ever proves: the proof-wait times out quickly.
     receipt.startTimeout(25);
   });
+  await router.rns.transport.rememberIdentity(
+    recipientIdentity.identityHash,
+    /** @type {Uint8Array} */ (recipientDest.destinationHash),
+    recipientIdentity.publicKey,
+  );
 
   const message = new Message({
     sourceHash: router.deliveryDest.destinationHash,
@@ -118,9 +116,8 @@ test("_requestAndAwaitPath re-solicits an UNRESPONSIVE-but-present path", async 
   /** @type {any} */
   const interfaceLayer = {
     registerDestination: () => {},
-    transport: Object.assign(new EventTarget(), {
-      bindLocalDestination: () => {},
-      addLink: () => {},
+    transport: Object.assign(new TransportCore(), {
+      // Test overrides: controllable path-health state.
       sendPacket: async () => null,
       hasPath: () => true,
       pathIsUnresponsive: () => unresponsive,

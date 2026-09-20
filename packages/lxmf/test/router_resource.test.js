@@ -23,6 +23,7 @@ import {
   PacketType,
 } from "@reticulum/core/src/core/packet.js";
 import { Link, LinkStatus } from "@reticulum/core/src/transport/link.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "../src/message.js";
 import { LXMRouter } from "../src/router.js";
@@ -33,9 +34,21 @@ import { LXMRouter } from "../src/router.js";
  * for) and DATA packets to the addressed link. Delivery is deferred to a
  * separate microtask so inbound packets never process re-entrantly.
  */
+// A real TransportCore mixed in for the instance-scoped cache API (work doc
+// #37): its methods alias the same statics these tests populate.
+const _core = new TransportCore();
+const _cacheApi = {
+  rememberIdentity: _core.rememberIdentity.bind(_core),
+  recallIdentity: _core.recallIdentity.bind(_core),
+  rememberRatchet: _core.rememberRatchet.bind(_core),
+  recallRatchet: _core.recallRatchet.bind(_core),
+  trackReceipt: _core.trackReceipt.bind(_core),
+  findReceipt: _core.findReceipt.bind(_core),
+};
 class LoopbackTransport extends EventTarget {
   constructor() {
     super();
+    Object.assign(this, _cacheApi);
     /** @type {Map<string, Link>} */
     this.activeLinks = new Map();
     /** @type {Map<string, Destination>} */
@@ -113,7 +126,7 @@ describe("LXMRouter large-message delivery via Resource (§5.2/§10.1)", () => {
 
     // Make the sender's identity known to the responder so the signature
     // verifies without parking on a LINKIDENTIFY round-trip.
-    await Destination.remember(
+    await responder.rns.transport.rememberIdentity(
       sender.identity.identityHash,
       sender.identity.identityHash,
       sender.identity.publicKey,
@@ -196,7 +209,7 @@ describe("LXMRouter large-message delivery via Resource (§5.2/§10.1)", () => {
 
     const responderRouter = new LXMRouter(responder.identity, responder.rns);
     await responderRouter.init();
-    await Destination.remember(
+    await responder.rns.transport.rememberIdentity(
       sender.identity.identityHash,
       sender.identity.identityHash,
       sender.identity.publicKey,

@@ -109,7 +109,7 @@ test("sendPacket expires an UNRESPONSIVE route instead of routing into it", asyn
   // A settleable receipt was handed back for opportunistic DATA.
   assert.ok(receipt instanceof PacketReceipt);
   assert.strictEqual(
-    PacketReceipt.find(receipt.truncatedHash),
+    rns.transport.findReceipt(receipt.truncatedHash),
     receipt,
     "the receipt must be tracked so an inbound PROOF can resolve it",
   );

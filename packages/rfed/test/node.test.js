@@ -23,6 +23,29 @@ import {
   PacketType,
   PacketType as PT,
 } from "@reticulum/core/src/core/packet.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
+
+/**
+ * Remembers an (identity) entry on every transport of a test mesh. The
+ * pre-#37 class statics made identities globally visible; mesh tests seed the
+ * same announce-equivalent knowledge on each node's instance cache.
+ *
+ * @param {any[]} meshes - `{ identity, rns }` fixture objects.
+ * @param {Uint8Array} destHash
+ * @param {Uint8Array} publicKey
+ * @param {Uint8Array|null} [appData]
+ */
+async function rememberOnAll(meshes, destHash, publicKey, appData = null) {
+  for (const m of meshes) {
+    await m.rns.transport.rememberIdentity(
+      rnd(16),
+      destHash,
+      publicKey,
+      appData,
+    );
+  }
+}
+
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { MicroMsgPack } from "@reticulum/core/src/utils/msgpack.js";
 import { Message } from "@reticulum/lxmf/src/message.js";
@@ -59,9 +82,21 @@ class Wire {
   }
 }
 
+// A real TransportCore mixed in for the instance-scoped cache API (work doc
+// #37): its methods alias the same statics these tests populate.
+const _core = new TransportCore();
+const _cacheApi = {
+  rememberIdentity: _core.rememberIdentity.bind(_core),
+  recallIdentity: _core.recallIdentity.bind(_core),
+  rememberRatchet: _core.rememberRatchet.bind(_core),
+  recallRatchet: _core.recallRatchet.bind(_core),
+  trackReceipt: _core.trackReceipt.bind(_core),
+  findReceipt: _core.findReceipt.bind(_core),
+};
 class LoopbackTransport extends EventTarget {
   constructor() {
     super();
+    Object.assign(this, _cacheApi);
     this.wire = null;
     this.activeLinks = new Map();
     this.destinations = new Map();
@@ -161,8 +196,8 @@ async function fixture({ nodeConfig = {} } = {}) {
   ];
   for (const name of nodeNames) {
     const d = await Destination.OUT(name, DestType.SINGLE, nodeRns.identity);
-    await Destination.remember(
-      rnd(16),
+    await rememberOnAll(
+      [nodeRns, clientRns],
       d.destinationHash,
       nodeRns.identity.publicKey,
       null,
@@ -185,11 +220,16 @@ async function fixture({ nodeConfig = {} } = {}) {
   return { node, nodeHash, client, clientDeliveryHash };
 }
 
+/** Minimal Reticulum shell so unwrapChannelMessage's instance-scoped cache
+ * (work doc #37) has a transport to remember identities into. */
+const unwrapRns = { transport: new TransportCore() };
+
 /** Unwraps a pulled/raw inner blob for a channel name. */
 async function unwrapForChannelName(innerBlob, channelName) {
   const channel = await deriveChannel(channelName);
   const deliveryHash = await deliveryHashFor(channel.identity);
   return unwrapChannelMessage({
+    rns: unwrapRns,
     innerBlob,
     channelIdentity: channel.identity,
     channelDeliveryHash: deliveryHash,
@@ -248,8 +288,8 @@ describe("RFedNode — serves a JS client (live fanout)", () => {
       "rfed.channel.pull",
     ]) {
       const d = await Destination.OUT(name, DestType.SINGLE, nodeRns.identity);
-      await Destination.remember(
-        rnd(16),
+      await rememberOnAll(
+        [nodeRns, subRns, pubRns],
         d.destinationHash,
         nodeRns.identity.publicKey,
         null,
@@ -649,8 +689,8 @@ describe("RFedNode — peer sync (Phase 4)", () => {
         "rfed.channel.pull",
       ]) {
         const d = await Destination.OUT(name, DestType.SINGLE, rns.identity);
-        await Destination.remember(
-          rnd(16),
+        await rememberOnAll(
+          [aRns, bRns, pubRns, subRns],
           d.destinationHash,
           rns.identity.publicKey,
           null,
@@ -732,8 +772,8 @@ describe("RFedNode — peer sync (Phase 4)", () => {
         "rfed.channel.publish",
       ]) {
         const d = await Destination.OUT(name, DestType.SINGLE, rns.identity);
-        await Destination.remember(
-          rnd(16),
+        await rememberOnAll(
+          [aRns, bRns],
           d.destinationHash,
           rns.identity.publicKey,
           null,
@@ -793,8 +833,8 @@ describe("RFedNode — peer sync (Phase 4)", () => {
         "rfed.channel.pull",
       ]) {
         const d = await Destination.OUT(name, DestType.SINGLE, rns.identity);
-        await Destination.remember(
-          rnd(16),
+        await rememberOnAll(
+          [aRns, bRns, pubRns, subRns],
           d.destinationHash,
           rns.identity.publicKey,
           null,
@@ -900,8 +940,8 @@ describe("RFedNode — notify wake-ups (Phase 5)", () => {
       "rfed.notify.unregister",
     ]) {
       const d = await Destination.OUT(name, DestType.SINGLE, nodeRns.identity);
-      await Destination.remember(
-        rnd(16),
+      await rememberOnAll(
+        [nodeRns, subRns, pubRns, relayRns],
         d.destinationHash,
         nodeRns.identity.publicKey,
         null,
@@ -930,8 +970,8 @@ describe("RFedNode — notify wake-ups (Phase 5)", () => {
     relayRns.transport.bindLocalDestination(relayDest);
     // Make the relay identity recallable by its rfed.notify hash (the node
     // builds an OUT dest from it on wake dispatch).
-    await Destination.remember(
-      rnd(16),
+    await rememberOnAll(
+      [nodeRns, subRns, pubRns, relayRns],
       relayHash,
       relayRns.identity.publicKey,
       null,
@@ -1140,8 +1180,8 @@ describe("RFedNode — backup failover (Phase 6)", () => {
     for (const rns of [primaryRns, backupRns]) {
       for (const name of ["rfed.node", "rfed.channel.subscribe"]) {
         const d = await Destination.OUT(name, DestType.SINGLE, rns.identity);
-        await Destination.remember(
-          rnd(16),
+        await rememberOnAll(
+          [primaryRns, backupRns],
           d.destinationHash,
           rns.identity.publicKey,
           null,

@@ -174,10 +174,12 @@ function decodeRoute(bytes) {
  * @typedef {Object} PersistorOptions
  * @property {import("./storage.js").StorageAdapter|null} [adapter] Backend, or
  *   null to disable persistence (all methods become no-ops).
- * @property {Map<string, import("../core/destination.js").KnownDestination>} [knownDestinations] Defaults to
- *   `Destination.knownDestinations`.
- * @property {Map<string, {ratchet: Uint8Array, received: number}>} [knownRatchets] Defaults to
- *   `Destination.knownRatchets`.
+ * @property {Map<string, import("../core/destination.js").KnownDestination>} [knownDestinations] The
+ *   transport instance's identity cache map. Must be the same map the owning
+ *   `TransportCore` uses (`rns.transport.caches.knownDestinations`) so the
+ *   Persistor observes what the transport writes (work doc #37).
+ * @property {Map<string, {ratchet: Uint8Array, received: number}>} [knownRatchets] The
+ *   transport instance's ratchet cache map (same aliasing requirement).
  * @property {{ routes: Map<string, any> }} [routingTable] Transport path table;
  *   its `routes` map is read/written directly.
  * @property {number} [debounceMs] Coalesce window for writes triggered by
@@ -201,8 +203,20 @@ export class Persistor {
     debounceMs = 3000,
   } = {}) {
     this.adapter = adapter ?? null;
-    this.knownDestinations = knownDestinations ?? Destination.knownDestinations;
-    this.knownRatchets = knownRatchets ?? Destination.knownRatchets;
+    // Work doc #37: the transport owns the caches — the Persistor must be
+    // wired to the same maps the owning `TransportCore` uses
+    // (`rns.transport.caches.*`), so what it persists is what the transport
+    // learned. There is no default: constructing a bare Persistor without
+    // maps would silently persist nothing.
+    if (!knownDestinations || !knownRatchets) {
+      throw new Error(
+        "Persistor requires the owning transport's cache maps " +
+          "(knownDestinations/knownRatchets, e.g. rns.transport.caches) — " +
+          "there is no default shared state (work doc #37)",
+      );
+    }
+    this.knownDestinations = knownDestinations;
+    this.knownRatchets = knownRatchets;
     this.routingTable = routingTable ?? null;
     this.debounceMs = debounceMs;
     /**

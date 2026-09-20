@@ -95,6 +95,8 @@ describe("TransportCore.sendPacket — communicate-with marking (#16)", () => {
     const persistor = new Persistor({
       adapter: new MemoryStorageAdapter(),
       routingTable: transport.routingTable,
+      knownDestinations: transport.caches.knownDestinations,
+      knownRatchets: transport.caches.knownRatchets,
       debounceMs: 0,
     });
     transport.persistor = persistor;
@@ -130,6 +132,8 @@ describe("TransportCore.sendPacket — communicate-with marking (#16)", () => {
     const persistor = new Persistor({
       adapter: new MemoryStorageAdapter(),
       routingTable: transport.routingTable,
+      knownDestinations: transport.caches.knownDestinations,
+      knownRatchets: transport.caches.knownRatchets,
       debounceMs: 0,
     });
     transport.persistor = persistor;
@@ -168,6 +172,8 @@ describe("TransportCore.sendPacket — communicate-with marking (#16)", () => {
     const persistor = new Persistor({
       adapter: new MemoryStorageAdapter(),
       routingTable: transport.routingTable,
+      knownDestinations: transport.caches.knownDestinations,
+      knownRatchets: transport.caches.knownRatchets,
       debounceMs: 0,
     });
     transport.persistor = persistor;

@@ -131,8 +131,8 @@ function appDataEquals(a, b) {
 }
 
 /**
- * An identity learned from a validated announce, cached in
- * `Destination.knownDestinations` (the JS analog of microReticulum's
+ * An identity learned from a validated announce, cached in a transport's
+ * instance-scoped `IdentityCache` (the JS analog of microReticulum's
  * `Persistence::IdentityEntry`).
  *
  * @typedef {Object} KnownDestination
@@ -148,23 +148,6 @@ function appDataEquals(a, b) {
  * @extends EventTarget
  */
 export class Destination extends EventTarget {
-  /**
-   * Storage for known destinations, keyed by hex destination hash.
-   * @type {Map<string, KnownDestination>}
-   */
-  static knownDestinations = new Map();
-
-  /**
-   * Known ratchet X25519 public key per peer destination (SPEC.md §4.5 step
-   * 6.2, §7.4) — the single newest ratchet learned from that peer's validated
-   * announces. Maps hex destination hash → `{ ratchet, received }`. Only the
-   * newest ratchet is retained (a newer announce overwrites); entries expire
-   * after {@link Destination.RATCHET_EXPIRY_MS}. Consumed by the outbound
-   * encrypt path for forward secrecy.
-   * @type {Map<string, {ratchet: Uint8Array, received: number}>}
-   */
-  static knownRatchets = new Map();
-
   /**
    * Default ratchet rotation interval (Destination.RATCHET_INTERVAL = 30 min).
    * A destination with ratchets enabled rotates its key at most this often.
@@ -1199,22 +1182,24 @@ export class Destination extends EventTarget {
   }
 
   /**
-   * Remember a destination — caches or refreshes a {@link KnownDestination}
-   * entry (the JS analog of microReticulum's `Persistence::IdentityEntry`
-   * cache).
+   * Caches a learned identity into an explicit map (work doc #37). Called by
+   * `TransportCore.rememberIdentity` with its instance-scoped cache.
+   *
+   * @param {Map<string, KnownDestination>} knownDestinations
    * @param {Uint8Array} packetHash
    * @param {Uint8Array} destinationHash
    * @param {Uint8Array} publicKey
    * @param {Uint8Array|null} appData
    */
-  static async remember(
+  static async rememberInto(
+    knownDestinations,
     packetHash,
     destinationHash,
     publicKey,
     appData = null,
   ) {
     const key = toHex(destinationHash);
-    const existing = Destination.knownDestinations.get(key);
+    const existing = knownDestinations.get(key);
     if (existing) {
       log("Destination", `Updating destination ${key}`, LogLevel.DEBUG);
       if (!bytesEqual(existing.packetHash, packetHash)) {
@@ -1234,7 +1219,7 @@ export class Destination extends EventTarget {
       if (!appDataEquals(existing.appData, appData)) {
         log("Destination", `  - appData changed`, LogLevel.DEBUG);
       }
-      Destination.knownDestinations.set(key, {
+      knownDestinations.set(key, {
         timestamp: Date.now() / 1000,
         packetHash,
         publicKey,
@@ -1242,7 +1227,7 @@ export class Destination extends EventTarget {
       });
     } else {
       log("Destination", `Saving new destination ${key}`, LogLevel.DEBUG);
-      Destination.knownDestinations.set(key, {
+      knownDestinations.set(key, {
         timestamp: Date.now() / 1000,
         packetHash,
         publicKey,
@@ -1252,14 +1237,21 @@ export class Destination extends EventTarget {
   }
 
   /**
-   * Recall an identity for a destination or identity hash.
+   * Recalls a learned identity from an explicit map (work doc #37). Called by
+   * `TransportCore.recallIdentity` with its instance-scoped cache.
+   *
+   * @param {Map<string, KnownDestination>} knownDestinations
    * @param {Uint8Array} targetHash
    * @param {boolean} fromIdentityHash
    * @returns {Promise<Identity|null>}
    */
-  static async recall(targetHash, fromIdentityHash = false) {
+  static async recallFrom(
+    knownDestinations,
+    targetHash,
+    fromIdentityHash = false,
+  ) {
     if (fromIdentityHash) {
-      for (const entry of Destination.knownDestinations.values()) {
+      for (const entry of knownDestinations.values()) {
         const identity = await Identity.fromPublicKey(entry.publicKey);
 
         if (bytesEqual(targetHash, identity.identityHash)) {
@@ -1271,7 +1263,7 @@ export class Destination extends EventTarget {
       }
       return null;
     } else {
-      const entry = Destination.knownDestinations.get(toHex(targetHash));
+      const entry = knownDestinations.get(toHex(targetHash));
       if (entry) {
         const identity = await Identity.fromPublicKey(entry.publicKey);
         identity.appData = entry.appData
@@ -1284,39 +1276,42 @@ export class Destination extends EventTarget {
   }
 
   /**
-   * Remembers a ratchet X25519 public key announced for a destination (SPEC.md
-   * §4.5 step 6.2). Called only for validated announces where `context_flag`
-   * was set and the ratchet is non-empty. Only the single newest ratchet is
-   * retained per destination; re-announcing the SAME ratchet is a no-op (the
-   * `received` time is not refreshed), matching `RNS.Identity._remember_ratchet`.
+   * Caches an announced ratchet public key into an explicit map (work doc
+   * #37). Called by `TransportCore.rememberRatchet` with its instance-scoped
+   * cache.
+   *
+   * @param {Map<string, {ratchet: Uint8Array, received: number}>} knownRatchets
    * @param {Uint8Array} destinationHash
    * @param {Uint8Array} ratchet - 32-byte ratchet X25519 public key.
    */
-  static rememberRatchet(destinationHash, ratchet) {
+  static rememberRatchetInto(knownRatchets, destinationHash, ratchet) {
     if (!ratchet || ratchet.length === 0) return;
     const key = toHex(destinationHash);
     const copy = new Uint8Array(ratchet);
-    const existing = Destination.knownRatchets.get(key);
+    const existing = knownRatchets.get(key);
     if (existing && bytesEqual(existing.ratchet, copy)) return;
-    Destination.knownRatchets.set(key, {
+    knownRatchets.set(key, {
       ratchet: copy,
       received: Date.now(),
     });
   }
 
   /**
-   * Recalls the newest non-expired ratchet public key for a destination, or
-   * null. Expired entries (past {@link Destination.RATCHET_EXPIRY_MS}) are
-   * dropped on read. Consumed by the outbound encrypt path (§7.4).
+   * Recalls the newest non-expired ratchet public key from an explicit map
+   * (work doc #37). Called by `TransportCore.recallRatchet` with its
+   * instance-scoped cache.
+   *
+   * @param {Map<string, {ratchet: Uint8Array, received: number}>} knownRatchets
    * @param {Uint8Array} destinationHash
    * @returns {Uint8Array|null}
    */
-  static recallRatchet(destinationHash) {
+  static recallRatchetFrom(knownRatchets, destinationHash) {
+    if (!knownRatchets) return null;
     const key = toHex(destinationHash);
-    const entry = Destination.knownRatchets.get(key);
+    const entry = knownRatchets.get(key);
     if (!entry) return null;
     if (Date.now() > entry.received + Destination.RATCHET_EXPIRY_MS) {
-      Destination.knownRatchets.delete(key);
+      knownRatchets.delete(key);
       return null;
     }
     return entry.ratchet;
@@ -1329,16 +1324,13 @@ export class Destination extends EventTarget {
    * {@link Destination.RATCHET_EXPIRY_MS} or its destination is no longer in
    * `knownDestinations` (the peer was forgotten).
    *
-   * @param {Map<string, {ratchet: Uint8Array, received: number}>} [knownRatchets]
-   *   Defaults to `Destination.knownRatchets`.
-   * @param {Map<string, KnownDestination>} [knownDestinations] Defaults to
-   *   `Destination.knownDestinations`.
+   * @param {Map<string, {ratchet: Uint8Array, received: number}>} knownRatchets
+   *   The ratchet map to clean (a transport's instance cache).
+   * @param {Map<string, KnownDestination>} knownDestinations The
+   *   corresponding identity map.
    * @returns {number} the number of entries removed.
    */
-  static cleanKnownRatchets(
-    knownRatchets = Destination.knownRatchets,
-    knownDestinations = Destination.knownDestinations,
-  ) {
+  static cleanKnownRatchets(knownRatchets, knownDestinations) {
     let removed = 0;
     const now = Date.now();
     for (const [key, entry] of knownRatchets) {
@@ -1364,10 +1356,29 @@ export class Destination extends EventTarget {
     // §7.4: encrypt to the recipient's newest known ratchet public key for
     // forward secrecy when one was learned from an announce; otherwise fall
     // back to the long-term X25519 key (Identity.encrypt handles ratchet=null).
-    const ratchet = this.destinationHash
-      ? Destination.recallRatchet(this.destinationHash)
-      : null;
+    const caches = this._cacheMaps();
+    const ratchet =
+      caches && this.destinationHash
+        ? Destination.recallRatchetFrom(
+            caches.knownRatchets,
+            this.destinationHash,
+          )
+        : null;
     return await this.identity.encrypt(data, ratchet);
+  }
+
+  /**
+   * The cache maps this destination reads (ratchets) from: the transport's
+   * instance-scoped caches of the attached interface layer (work doc #37).
+   * Standalone destinations (no layer) have no learned ratchets — `encrypt`
+   * falls back to the long-term key, matching a destination that never heard
+   * an announce.
+   * @returns {{knownRatchets: Map<string, {ratchet: Uint8Array, received: number}>}|null}
+   * @private
+   */
+  _cacheMaps() {
+    const iface = /** @type {any} */ (this.interfaceLayer);
+    return iface?.transport?.caches ?? null;
   }
 
   /**

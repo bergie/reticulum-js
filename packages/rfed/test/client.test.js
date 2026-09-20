@@ -22,6 +22,7 @@ import {
   Packet,
   PacketType,
 } from "@reticulum/core/src/core/packet.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "@reticulum/lxmf/src/message.js";
 import { parseSendPayload, unwrapRawChannelMessage } from "../src/blob.js";
@@ -57,9 +58,21 @@ class Wire {
   }
 }
 
+// A real TransportCore mixed in for the instance-scoped cache API (work doc
+// #37): its methods alias the same statics these tests populate.
+const _core = new TransportCore();
+const _cacheApi = {
+  rememberIdentity: _core.rememberIdentity.bind(_core),
+  recallIdentity: _core.recallIdentity.bind(_core),
+  rememberRatchet: _core.rememberRatchet.bind(_core),
+  recallRatchet: _core.recallRatchet.bind(_core),
+  trackReceipt: _core.trackReceipt.bind(_core),
+  findReceipt: _core.findReceipt.bind(_core),
+};
 class LoopbackTransport extends EventTarget {
   constructor() {
     super();
+    Object.assign(this, _cacheApi);
     this.wire = null;
     this.activeLinks = new Map();
     this.destinations = new Map();
@@ -369,7 +382,9 @@ async function fixture({ stampCost = null } = {}) {
     "rfed.channel.pull",
   ]) {
     const dest = await Destination.OUT(name, DestType.SINGLE, nodeRns.identity);
-    await Destination.remember(
+    // The client's transport recalls the node's identity (work doc #37:
+    // instance-scoped caches — remember on the client's transport).
+    await clientRns.rns.transport.rememberIdentity(
       rnd(16),
       dest.destinationHash,
       nodeRns.identity.publicKey,
@@ -391,7 +406,7 @@ async function fixture({ stampCost = null } = {}) {
   });
   // Make the client's delivery identity recallable so the node can fan out.
   const clientDeliveryHash = await deliveryHashFor(clientRns.identity);
-  await Destination.remember(
+  await nodeRns.rns.transport.rememberIdentity(
     rnd(16),
     clientDeliveryHash,
     clientRns.identity.publicKey,
@@ -506,6 +521,7 @@ describe("rfed client — pull paging", () => {
     const contents = [];
     for (const item of items) {
       const d = await unwrapChannelMessage({
+        rns: client.rns,
         innerBlob: item.blob,
         channelIdentity: channel.identity,
         channelDeliveryHash: deliveryHash,

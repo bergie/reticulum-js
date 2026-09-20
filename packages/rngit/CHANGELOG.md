@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Identity recalls during `connect()` go through `rns.transport` instead of
+  the deprecated `Destination` class statics, and `connect()` warns
+  (`warnIfFragmented`) when the client was bundled against a different
+  physical copy of `@reticulum/core` than the provided `Reticulum` instance
+  (work doc #37, split-brain safety).
 ### Added
 - Initial `@reticulum/rngit` package: an rngit-compatible client and
   isomorphic-git transport for Git repositories over Reticulum.

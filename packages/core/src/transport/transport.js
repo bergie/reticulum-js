@@ -26,6 +26,7 @@ import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { aspectNameHash } from "./discovery.js";
+import { IdentityCache } from "./identity-cache.js";
 import { PathState, RoutingTable } from "./router.js";
 
 /**
@@ -58,9 +59,25 @@ export class TransportCore extends EventTarget {
 
   /**
    * Creates an empty transport core with no interfaces, links or routes.
+   * @param {Object} [options]
+   * @param {import("./identity-cache.js").IdentityCache} [options.caches] -
+   *   Instance-scoped identity/ratchet/receipt caches (work doc #37). Defaults
+   *   to a cache aliasing the deprecated class-level static maps, so behavior
+   *   is unchanged for existing callers and the static APIs keep observing
+   *   the same state during migration. Pass a fresh `IdentityCache` for hard
+   *   isolation between `Reticulum` instances in one process.
    */
-  constructor() {
+  constructor({ caches } = {}) {
     super();
+    /**
+     * Instance-scoped caches (work doc #37): learned peer identities,
+     * announced ratchets and outstanding proof receipts. Dependent packages
+     * reach these through the {@link import("../core/reticulum.js").Reticulum}
+     * instance they already hold (`rns.transport.recallIdentity(…)`) instead
+     * of the deprecated class-level statics.
+     * @type {import("./identity-cache.js").IdentityCache}
+     */
+    this.caches = caches ?? new IdentityCache();
     this.interfaces = new Set();
     this.localDestinations = new Map();
     this.activeLinks = new Map();
@@ -302,6 +319,98 @@ export class TransportCore extends EventTarget {
     log("Transport", `[-] Unbinding local destination: ${destHex}`);
   }
 
+  // ---------------------------------------------------------------------
+  // Instance-scoped caches (work doc #37)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Caches or refreshes a learned peer identity (the former
+   * `Destination.remember`, now instance-scoped). Dependent packages should call this through the
+   * `Reticulum` instance (`rns.transport.rememberIdentity(…)`) instead of the
+   * deprecated static so a fragmented install (two physical core copies)
+   * still shares one state.
+   * @param {Uint8Array} packetHash
+   * @param {Uint8Array} destinationHash
+   * @param {Uint8Array} publicKey
+   * @param {Uint8Array|null} [appData]
+   * @returns {Promise<void>}
+   */
+  async rememberIdentity(packetHash, destinationHash, publicKey, appData) {
+    await Destination.rememberInto(
+      this.caches.knownDestinations,
+      packetHash,
+      destinationHash,
+      publicKey,
+      appData,
+    );
+  }
+
+  /**
+   * Recalls a learned identity by destination or identity hash
+   * (the former `Destination.recall`, now instance-scoped).
+   * @param {Uint8Array} targetHash
+   * @param {boolean} [fromIdentityHash] Match on identity hash instead of
+   *   destination hash.
+   * @returns {Promise<import("../core/identity.js").Identity|null>}
+   */
+  async recallIdentity(targetHash, fromIdentityHash = false) {
+    return Destination.recallFrom(
+      this.caches.knownDestinations,
+      targetHash,
+      fromIdentityHash,
+    );
+  }
+
+  /**
+   * Caches an announced ratchet public key for a destination
+   * (the former `Destination.rememberRatchet`, now instance-scoped).
+   * @param {Uint8Array} destinationHash
+   * @param {Uint8Array} ratchet
+   * @returns {void}
+   */
+  rememberRatchet(destinationHash, ratchet) {
+    Destination.rememberRatchetInto(
+      this.caches.knownRatchets,
+      destinationHash,
+      ratchet,
+    );
+  }
+
+  /**
+   * Recalls the newest non-expired ratchet public key for a destination
+   * (the former `Destination.recallRatchet`, now instance-scoped), or
+   * `null`.
+   * @param {Uint8Array} destinationHash
+   * @returns {Uint8Array|null}
+   */
+  recallRatchet(destinationHash) {
+    return Destination.recallRatchetFrom(
+      this.caches.knownRatchets,
+      destinationHash,
+    );
+  }
+
+  /**
+   * Registers an outstanding proof receipt so an inbound PROOF can find it
+   * (the former `PacketReceipt.track`, now instance-scoped).
+   * @param {import("../core/packet_receipt.js").PacketReceipt} receipt
+   * @returns {void}
+   */
+  trackReceipt(receipt) {
+    receipt.owner = this;
+    this.caches.receipts.set(toHex(receipt.truncatedHash), receipt);
+  }
+
+  /**
+   * Looks up an outstanding receipt by the 16-byte `dest_hash` of an inbound
+   * PROOF (the former `PacketReceipt.find`, now instance-scoped).
+   * @param {Uint8Array} proofDestHash
+   * @returns {import("../core/packet_receipt.js").PacketReceipt|null}
+   */
+  findReceipt(proofDestHash) {
+    return this.caches.receipts.get(toHex(proofDestHash)) ?? null;
+  }
+
   /**
    * Dispatches an inbound packet to the matching local destination or link,
    * or drops it if no route exists.
@@ -480,7 +589,7 @@ export class TransportCore extends EventTarget {
     // a hash-collision / spoofing attempt and rejected even though the
     // signature is otherwise valid. (In practice this requires a 2^128 hash
     // collision, so it should never fire — but the defense is non-optional.)
-    const existing = Destination.knownDestinations.get(destHex);
+    const existing = this.caches.knownDestinations.get(destHex);
     if (existing && !bytesEqual(existing.publicKey, identity.publicKey)) {
       log(
         "Transport",
@@ -492,14 +601,14 @@ export class TransportCore extends EventTarget {
 
     // §4.5 step 6 — cache the announce contents.
     const packetHash = await packet.getHash();
-    await Destination.remember(
+    await this.rememberIdentity(
       packetHash,
       packet.destinationHash,
       identity.publicKey,
       appData,
     );
     if (ratchet) {
-      Destination.rememberRatchet(packet.destinationHash, ratchet);
+      this.rememberRatchet(packet.destinationHash, ratchet);
     }
 
     // §7 path-table population: remember how to reach this destination. The
@@ -561,7 +670,7 @@ export class TransportCore extends EventTarget {
    * @private
    */
   async _handleProof(packet) {
-    const receipt = PacketReceipt.find(packet.destinationHash);
+    const receipt = this.findReceipt(packet.destinationHash);
     if (!receipt || receipt.status !== ReceiptStatus.SENDING) {
       log(
         "Transport",
@@ -976,7 +1085,7 @@ export class TransportCore extends EventTarget {
       // §Bitrate-adaptive timeout: a slow next hop gets a proportionally
       // longer proof wait.
       receipt.startTimeout(this.firstHopTimeout(packet.destinationHash) * 1000);
-      PacketReceipt.track(receipt);
+      this.trackReceipt(receipt);
       return receipt;
     }
     return null;

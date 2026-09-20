@@ -21,6 +21,7 @@ import { strict as assert } from "node:assert";
 import { describe, test } from "node:test";
 import { Destination } from "@reticulum/core/src/core/destination.js";
 import { Identity } from "@reticulum/core/src/core/identity.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "../src/message.js";
 import { LXMRouter } from "../src/router.js";
@@ -63,9 +64,21 @@ class Wire {
  * to peers is deferred to a fresh microtask so inbound packets never process
  * re-entrantly.
  */
+// A real TransportCore mixed in for the instance-scoped cache API (work doc
+// #37): its methods alias the same statics these tests populate.
+const _core = new TransportCore();
+const _cacheApi = {
+  rememberIdentity: _core.rememberIdentity.bind(_core),
+  recallIdentity: _core.recallIdentity.bind(_core),
+  rememberRatchet: _core.rememberRatchet.bind(_core),
+  recallRatchet: _core.recallRatchet.bind(_core),
+  trackReceipt: _core.trackReceipt.bind(_core),
+  findReceipt: _core.findReceipt.bind(_core),
+};
 class LoopbackTransport extends EventTarget {
   constructor() {
     super();
+    Object.assign(this, _cacheApi);
     /** @type {Wire|null} */
     this.wire = null;
     /** @type {Map<string, any>} */
@@ -110,6 +123,18 @@ class LoopbackTransport extends EventTarget {
 }
 
 /** @returns {Promise<{identity: Identity, rns: any, transport: LoopbackTransport}>} */
+/** Remembers an (destination, public key, appData) tuple on every transport. */
+async function rememberEverywhere(nodes, destHash, publicKey, appData) {
+  for (const n of nodes) {
+    await n.rns.transport.rememberIdentity(
+      rnd(16),
+      destHash,
+      publicKey,
+      appData,
+    );
+  }
+}
+
 async function makeNode() {
   const identity = await Identity.generate();
   const transport = new LoopbackTransport();
@@ -129,7 +154,8 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
     const node = await makeNode();
     const sender = await makeNode();
     const recipient = await makeNode();
-    for (const n of [node, sender, recipient]) wire.attach(n.transport);
+    const nodes = [node, sender, recipient];
+    for (const n of nodes) wire.attach(n.transport);
 
     // --- NODE: stand up delivery + propagation destinations ---
     const nodeRouter = new LXMRouter(node.identity, node.rns);
@@ -142,8 +168,8 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
     const nodePropHash = nodeRouter.propagationDest.destinationHash;
     // Make the node's propagation destination globally recallable (pubkey +
     // advertised app_data) so clients can open links and read the stamp cost.
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      nodes,
       nodePropHash,
       node.identity.publicKey,
       nodeRouter.propagationDest.appData,
@@ -155,8 +181,8 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
     const recipientDeliveryHash = recipientRouter.deliveryDest.destinationHash;
     // Make the recipient's delivery destination recallable so the sender can
     // encrypt the propagation blob to it.
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      nodes,
       recipientDeliveryHash,
       recipient.identity.publicKey,
       null,
@@ -166,8 +192,8 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
     //     recipient can verify the message signature on sync ---
     const senderRouter = new LXMRouter(sender.identity, sender.rns);
     await senderRouter.init();
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      nodes,
       senderRouter.deliveryDest.destinationHash,
       sender.identity.publicKey,
       null,
@@ -237,14 +263,15 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
     const node = await makeNode();
     const sender = await makeNode();
     const recipient = await makeNode();
-    for (const n of [node, sender, recipient]) wire.attach(n.transport);
+    const nodes = [node, sender, recipient];
+    for (const n of nodes) wire.attach(n.transport);
 
     const nodeRouter = new LXMRouter(node.identity, node.rns);
     await nodeRouter.init();
     await nodeRouter.enablePropagation({ stampCost: 0, name: "JS PN 2" });
     const nodePropHash = nodeRouter.propagationDest.destinationHash;
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      nodes,
       nodePropHash,
       node.identity.publicKey,
       nodeRouter.propagationDest.appData,
@@ -253,8 +280,8 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
     const recipientRouter = new LXMRouter(recipient.identity, recipient.rns);
     await recipientRouter.init();
     const recipientDeliveryHash = recipientRouter.deliveryDest.destinationHash;
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      nodes,
       recipientDeliveryHash,
       recipient.identity.publicKey,
       null,
@@ -262,8 +289,8 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
 
     const senderRouter = new LXMRouter(sender.identity, sender.rns);
     await senderRouter.init();
-    await Destination.remember(
-      rnd(16),
+    await rememberEverywhere(
+      nodes,
       senderRouter.deliveryDest.destinationHash,
       sender.identity.publicKey,
       null,

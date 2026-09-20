@@ -8,6 +8,7 @@
 import assert from "node:assert";
 import { describe, test } from "node:test";
 import { Identity } from "@reticulum/core/src/core/identity.js";
+import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import { Message } from "@reticulum/lxmf/src/message.js";
 import {
@@ -26,6 +27,10 @@ import {
   STAMP_SIZE,
 } from "../src/constants.js";
 import { validateChannelStamp } from "../src/stamp.js";
+
+/** Minimal Reticulum shell so unwrapChannelMessage's instance-scoped cache
+ * (work doc #37) has a transport to remember identities into. */
+const testRns = { transport: new TransportCore() };
 
 const CHANNEL_NAME = "public.test";
 
@@ -93,6 +98,7 @@ describe("rfed wrapChannelMessage (no stamp)", () => {
       lxmMessage: new Message({ content: "addr check" }),
     });
     const decoded = await unwrapChannelMessage({
+      rns: testRns,
       innerBlob: wrapped.innerBlob,
       channelIdentity: f.channelIdentity,
       channelDeliveryHash: f.channelDeliveryHash,
@@ -177,6 +183,7 @@ describe("rfed unwrapChannelMessage (round-trip)", () => {
       lxmMessage: new Message({ content: "round-trip body", title: "t" }),
     });
     const decoded = await unwrapChannelMessage({
+      rns: testRns,
       innerBlob: wrapped.innerBlob,
       channelIdentity: f.channelIdentity,
       channelDeliveryHash: f.channelDeliveryHash,
@@ -206,6 +213,7 @@ describe("rfed unwrapChannelMessage (round-trip)", () => {
     const tamperedBlob = await f.channelIdentity.encrypt(plaintext);
 
     const decoded = await unwrapChannelMessage({
+      rns: testRns,
       innerBlob: tamperedBlob,
       channelIdentity: f.channelIdentity,
       channelDeliveryHash: f.channelDeliveryHash,
@@ -224,6 +232,7 @@ describe("rfed unwrapChannelMessage (round-trip)", () => {
     const wrongChannel = await deriveChannel("public.wrong");
     await assert.rejects(
       unwrapChannelMessage({
+        rns: testRns,
         innerBlob: wrapped.innerBlob,
         channelIdentity: wrongChannel.identity,
         channelDeliveryHash: await deliveryHashFor(wrongChannel.identity),
@@ -242,6 +251,7 @@ describe("rfed unwrapChannelMessage (round-trip)", () => {
 
     await assert.rejects(
       unwrapChannelMessage({
+        rns: testRns,
         innerBlob,
         channelIdentity: f.channelIdentity,
         channelDeliveryHash: f.channelDeliveryHash,

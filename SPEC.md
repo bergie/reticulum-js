@@ -94,6 +94,53 @@ first): the `Reticulum({ logLevel })` constructor option, the
 number), and the `NOTICE` default. The exported `setLogLevel()` /
 `getLogLevel()` adjust it at runtime; both accept a name or number.
 
+### 1.3 No singletons (instance-scoped state)
+
+**No module-level or class-level mutable state.** All mutable state —
+caches, registries, tables, schedulers — lives on an instance reached by
+constructor injection (`Reticulum` → `TransportCore` → `IdentityCache`,
+`Persistor`, interface set), never on a class static or a module-level
+variable.
+
+The rule exists because of a real failure mode, not aesthetics: Node (and
+most ESM environments) dedupe modules by **resolved file path**, not by
+version. An install tree with two physical copies of `@reticulum/core` (a
+stale hoisted copy blocking npm dedupe, plus nested fresh copies under each
+dependent) runs **two module instances** in one process, each evaluating the
+classes twice — so class-level statics silently diverge (the "split-brain"
+outage documented in work doc #37: a production node ingested announces
+into one copy's identity cache while a dependent package read a
+forever-empty cache from the other). Instance scoping makes module
+duplication harmless: two copies of a stateless class share everything
+through the one `Reticulum` instance the embedding app passes around.
+
+Concretely:
+
+- **Core internal state** (`TransportCore`: path table, hashlist, dedup
+  tags, identity/ratchet/receipt caches via `IdentityCache`) is instance
+  state; each `TransportCore` owns fresh maps, so two `Reticulum` instances
+  in one process are fully isolated. The historical class statics
+  (`Destination.knownDestinations` / `knownRatchets`,
+  `PacketReceipt.receipts`) are **removed**. Callers reach the caches
+  through the transport instance: `rns.transport.recallIdentity(hash)`,
+  `rememberIdentity(...)`, `recallRatchet(hash)`, `rememberRatchet(...)`,
+  `findReceipt(hash)`, `trackReceipt(receipt)`.
+- **Dependent packages** (`@reticulum/lxmf`, `@reticulum/rfed`, …) never
+  touch core class statics; they hold the `Reticulum` instance they were
+  constructed with and use its transport's instance methods.
+- **A per-copy module token** (`CORE_INSTANCE_TOKEN`, a fresh object per
+  physical module evaluation) plus `warnIfFragmented(name, myToken,
+  rns.coreInstanceToken)` lets a dependent detect — and loudly warn about
+  — a fragmented install at first boot, even though instance scoping means
+  it is no longer fatal for shared state.
+- **Tests** that need cache isolation just construct separate
+  `TransportCore`/`Reticulum` instances — isolation is the default.
+
+When adding new state, the checklist is: if it must outlive a single call,
+it belongs on an instance that is handed to whoever needs it. A class
+static is acceptable only for immutable constants (protocol values,
+well-known names).
+
 ---
 
 ## 2. Package Structure
