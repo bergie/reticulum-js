@@ -382,10 +382,10 @@ export class Interface extends EventTarget {
   static PR_FREQ_DECAY = 10;
   /**
    * Interface age in seconds below which the stricter "new interface"
-   * burst thresholds apply (`IC_NEW_TIME` = 2 h).
+   * burst thresholds apply (`IC_NEW_TIME_SECS` = 2 h).
    * @type {number}
    */
-  static IC_NEW_TIME = 2 * 60 * 60;
+  static IC_NEW_TIME_SECS = 2 * 60 * 60;
   /** Announce burst threshold for new interfaces, Hz (`IC_BURST_FREQ_NEW`). */
   static IC_BURST_FREQ_NEW = 3;
   /** Announce burst threshold for established interfaces, Hz (`IC_BURST_FREQ`). */
@@ -401,17 +401,17 @@ export class Interface extends EventTarget {
    * limiter" — the announce limiter has no cooldown.
    * @type {number}
    */
-  static IC_PR_BURST_COOLDOWN = 3;
-  /** Seconds a burst stays latched after activation (`IC_BURST_HOLD`). */
-  static IC_BURST_HOLD = 15;
-  /** Seconds before held announces may release after a burst (`IC_BURST_PENALTY`). */
-  static IC_BURST_PENALTY = 15;
+  static IC_PR_BURST_COOLDOWN_SECS = 3;
+  /** Seconds a burst stays latched after activation (`IC_BURST_HOLD_SECS`). */
+  static IC_BURST_HOLD_SECS = 15;
+  /** Seconds before held announces may release after a burst (`IC_BURST_PENALTY_SECS`). */
+  static IC_BURST_PENALTY_SECS = 15;
   /**
    * Seconds between held-announce releases once draining
-   * (`IC_HELD_RELEASE_INTERVAL`).
+   * (`IC_HELD_RELEASE_INTERVAL_SECS`).
    * @type {number}
    */
-  static IC_HELD_RELEASE_INTERVAL = 5;
+  static IC_HELD_RELEASE_INTERVAL_SECS = 5;
   /**
    * Maximum held announces buffered per interface while an announce burst
    * is latched (`MAX_HELD_ANNOUNCES`). A held table at this size silently
@@ -434,7 +434,7 @@ export class Interface extends EventTarget {
    */
   ingressControl = true;
   /** @type {number} */
-  icNewTime = Interface.IC_NEW_TIME;
+  icNewTime = Interface.IC_NEW_TIME_SECS;
   /** @type {number} */
   icBurstFreqNew = Interface.IC_BURST_FREQ_NEW;
   /** @type {number} */
@@ -444,11 +444,11 @@ export class Interface extends EventTarget {
   /** @type {number} */
   icPrBurstFreq = Interface.IC_PR_BURST_FREQ;
   /** @type {number} */
-  icBurstHold = Interface.IC_BURST_HOLD;
+  icBurstHold = Interface.IC_BURST_HOLD_SECS;
   /** @type {number} */
-  icBurstPenalty = Interface.IC_BURST_PENALTY;
+  icBurstPenalty = Interface.IC_BURST_PENALTY_SECS;
   /** @type {number} */
-  icHeldReleaseInterval = Interface.IC_HELD_RELEASE_INTERVAL;
+  icHeldReleaseInterval = Interface.IC_HELD_RELEASE_INTERVAL_SECS;
   /** @type {number} */
   icMaxHeldAnnounces = Interface.MAX_HELD_ANNOUNCES;
   /** @type {number} */
@@ -827,7 +827,7 @@ export class Interface extends EventTarget {
    * age-dependent threshold ({@link icPrBurstFreqNew} during the first
    * {@link icNewTime} seconds, {@link icPrBurstFreq} after). Once latched,
    * stays limiting for at least {@link icBurstHold} seconds; after the hold,
-   * unlatching takes {@link Interface.IC_PR_BURST_COOLDOWN}+1 consecutive
+   * unlatching takes {@link Interface.IC_PR_BURST_COOLDOWN_SECS}+1 consecutive
    * below-threshold evaluations — any above-threshold evaluation resets the
    * cooldown (anti-flapping at the boundary). Consumers: `TransportCore`
    * drops unique-tag path requests while a burst is latched (work doc #31
@@ -853,7 +853,7 @@ export class Interface extends EventTarget {
           this.icPrBurstCooldown -= 1;
         }
       } else {
-        this.icPrBurstCooldown = Interface.IC_PR_BURST_COOLDOWN;
+        this.icPrBurstCooldown = Interface.IC_PR_BURST_COOLDOWN_SECS;
       }
       return true;
     }
@@ -861,7 +861,7 @@ export class Interface extends EventTarget {
     if (ipFreq > freqThreshold) {
       this.icPrBurstActive = true;
       this.icPrBurstActivated = Date.now() / 1000;
-      this.icPrBurstCooldown = Interface.IC_PR_BURST_COOLDOWN;
+      this.icPrBurstCooldown = Interface.IC_PR_BURST_COOLDOWN_SECS;
       this.prBurstCount += 1;
       return true;
     }

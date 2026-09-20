@@ -91,9 +91,9 @@ export async function linkIdFromLrPacket(packet) {
   const lowFlags = packet.raw[0] & 0x0f;
   const offset = packet.headerType === HeaderType.HEADER_2 ? 18 : 2;
   let body = packet.raw.subarray(offset);
-  // Strip trailing signalling if the LINKREQUEST body is longer than ECPUBSIZE.
-  if (packet.payload.length > Link.ECPUBSIZE) {
-    const diff = packet.payload.length - Link.ECPUBSIZE;
+  // Strip trailing signalling if the LINKREQUEST body is longer than EC_PUBLIC_KEY_SIZE.
+  if (packet.payload.length > Link.EC_PUBLIC_KEY_SIZE) {
+    const diff = packet.payload.length - Link.EC_PUBLIC_KEY_SIZE;
     body = body.subarray(0, body.length - diff);
   }
   const hashable = new Uint8Array(1 + body.length);
@@ -139,10 +139,10 @@ export class ResourceResponse {
  */
 export class Link extends EventTarget {
   /** Combined size of the two initiator ephemeral public keys (X25519 + Ed25519). */
-  static ECPUBSIZE = 64;
+  static EC_PUBLIC_KEY_SIZE = 64;
 
   /** Size of the optional MTU/mode signalling trailer on LINKREQUEST/LRPROOF. */
-  static LINK_MTU_SIZE = 3;
+  static SIGNALLING_SIZE = 3;
 
   /** Default link mode (the only enabled mode in upstream RNS). */
   static MODE_AES256_CBC = 0x01;
@@ -151,9 +151,9 @@ export class Link extends EventTarget {
   static DEFAULT_MTU = 500;
 
   // Keepalive cadence constants (matching the Python reference's Link)
-  static KEEPALIVE_MAX = 360;
-  static KEEPALIVE_MIN = 5;
-  static KEEPALIVE_MAX_RTT = 1.75;
+  static KEEPALIVE_MAX_SECS = 360;
+  static KEEPALIVE_MIN_SECS = 5;
+  static KEEPALIVE_MAX_RTT_SECS = 1.75;
   static STALE_FACTOR = 2;
 
   /**
@@ -175,7 +175,7 @@ export class Link extends EventTarget {
    * (PROTOCOL-SPEC.md §11.5). Mirrors
    * `RNS.Resource.RESPONSE_MAX_GRACE_TIME` — the same caveat applies.
    */
-  static RESPONSE_MAX_GRACE_TIME = 4.0;
+  static RESPONSE_MAX_GRACE_TIME_SECS = 4.0;
 
   /** Fixed multiplier on the response grace term (PROTOCOL-SPEC.md §11.5). */
   static RESPONSE_GRACE_FACTOR = 1.125;
@@ -187,7 +187,7 @@ export class Link extends EventTarget {
   rtt = 0;
 
   /** @type {number} */
-  keepaliveInterval = Link.KEEPALIVE_MAX;
+  keepaliveInterval = Link.KEEPALIVE_MAX_SECS;
 
   /**
    * Wall-clock ms of the last keepalive *sent* on this link. Purely an
@@ -200,7 +200,7 @@ export class Link extends EventTarget {
   lastKeepaliveTime = 0;
 
   /** @type {number} */
-  staleTime = Link.STALE_FACTOR * Link.KEEPALIVE_MAX;
+  staleTime = Link.STALE_FACTOR * Link.KEEPALIVE_MAX_SECS;
 
   /** @type {Token|null} */
   token = null;
@@ -418,7 +418,7 @@ export class Link extends EventTarget {
         // links that were ACTIVE (a graceful teardown of a working link).
         // Guarded so test/lightweight transports without the path-health API
         // (and responder links whose destination is local) are unaffected.
-        // The re-request uses the automated gate (PATH_REQUEST_MI = 20 s per
+        // The re-request uses the automated gate (PATH_REQUEST_MIN_INTERVAL_SECS = 20 s per
         // destination, the reference rediscovery discipline) so an app
         // retry loop over dead links cannot emit a PR per failure.
         const dh = this.destination?.destinationHash;
@@ -550,10 +550,10 @@ export class Link extends EventTarget {
     );
 
     // LINKREQUEST body: initiator_X25519(32) || initiator_Ed25519(32) || signalling(3)
-    const body = new Uint8Array(Link.ECPUBSIZE + Link.LINK_MTU_SIZE);
+    const body = new Uint8Array(Link.EC_PUBLIC_KEY_SIZE + Link.SIGNALLING_SIZE);
     body.set(x25519Pub, 0);
     body.set(ed25519Pub, 32);
-    body.set(signalling, Link.ECPUBSIZE);
+    body.set(signalling, Link.EC_PUBLIC_KEY_SIZE);
 
     const packet = new Packet({
       headerType: HeaderType.HEADER_1,
@@ -620,8 +620,8 @@ export class Link extends EventTarget {
     const initiatorEd25519Pub = data.slice(32, 64);
     let mtu = Link.DEFAULT_MTU;
     let mode = Link.MODE_AES256_CBC;
-    if (data.length === Link.ECPUBSIZE + Link.LINK_MTU_SIZE) {
-      const signalling = data.subarray(Link.ECPUBSIZE);
+    if (data.length === Link.EC_PUBLIC_KEY_SIZE + Link.SIGNALLING_SIZE) {
+      const signalling = data.subarray(Link.EC_PUBLIC_KEY_SIZE);
       mode = (signalling[0] & 0xe0) >> 5;
       mtu =
         (((signalling[0] << 16) + (signalling[1] << 8) + signalling[2]) &
@@ -896,7 +896,7 @@ export class Link extends EventTarget {
     /** @type {Uint8Array} */
     let signalling = new Uint8Array(0);
     let confirmedMtu = this.mtu;
-    if (data.length === 64 + 32 + Link.LINK_MTU_SIZE) {
+    if (data.length === 64 + 32 + Link.SIGNALLING_SIZE) {
       signalling = data.subarray(64 + 32);
       confirmedMtu =
         (((signalling[0] << 16) + (signalling[1] << 8) + signalling[2]) &
@@ -1357,7 +1357,7 @@ export class Link extends EventTarget {
    *   directly — do NOT pre-pack it.
    * @param {object} [options]
    * @param {number} [options.timeout] - Response timeout in ms (defaults to
-   *   `rtt * TRAFFIC_TIMEOUT_FACTOR + RESPONSE_MAX_GRACE_TIME * 1.125`).
+   *   `rtt * TRAFFIC_TIMEOUT_FACTOR + RESPONSE_MAX_GRACE_TIME_SECS * 1.125`).
    * @param {(metadata: any) => void} [options.onMetadata] - Called with the
    *   decoded response metadata when the responder answers with a
    *   metadata-carrying Resource (§10.4 `x` flag). Invoked before the
@@ -1489,14 +1489,14 @@ export class Link extends EventTarget {
 
   /**
    * Default REQUEST response timeout (PROTOCOL-SPEC.md §11.5):
-   * `rtt * traffic_timeout_factor + RESPONSE_MAX_GRACE_TIME * 1.125`.
+   * `rtt * traffic_timeout_factor + RESPONSE_MAX_GRACE_TIME_SECS * 1.125`.
    * @returns {number} milliseconds.
    * @private
    */
   _defaultRequestTimeoutMs() {
     return (
       (this.rtt * Link.TRAFFIC_TIMEOUT_FACTOR +
-        Link.RESPONSE_MAX_GRACE_TIME * Link.RESPONSE_GRACE_FACTOR) *
+        Link.RESPONSE_MAX_GRACE_TIME_SECS * Link.RESPONSE_GRACE_FACTOR) *
       1000
     );
   }
@@ -2360,10 +2360,11 @@ export class Link extends EventTarget {
    * @private
    */
   _updateKeepalive() {
-    const interval = this.rtt * (Link.KEEPALIVE_MAX / Link.KEEPALIVE_MAX_RTT);
+    const interval =
+      this.rtt * (Link.KEEPALIVE_MAX_SECS / Link.KEEPALIVE_MAX_RTT_SECS);
     this.keepaliveInterval = Math.max(
-      Math.min(interval, Link.KEEPALIVE_MAX),
-      Link.KEEPALIVE_MIN,
+      Math.min(interval, Link.KEEPALIVE_MAX_SECS),
+      Link.KEEPALIVE_MIN_SECS,
     );
     this.staleTime = this.keepaliveInterval * Link.STALE_FACTOR;
   }

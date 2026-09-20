@@ -51,11 +51,11 @@ import {
 import { AutoInterfacePeer } from "./auto_peer.js";
 
 /**
- * SHA-256 length in bytes: the discovery token is the full hash, and the first
- * `HASHLENGTH // 8` bytes of an inbound datagram are compared against it
- * (256 bits, matching the reference).
+ * SHA-256 length in bytes: the discovery token is the full hash, and the
+ * first {@link FULL_HASH_LENGTH} bytes of an inbound datagram are compared
+ * against it (256 bits, matching the reference).
  */
-const HASHLENGTH_BYTES = 32;
+const FULL_HASH_LENGTH = 32;
 
 /** HW MTU, matching the Python reference. (Reserved for the Phase 2 data path.) */
 const HW_MTU = 1196;
@@ -66,7 +66,7 @@ const HW_MTU = 1196;
  * within the TTL is dropped.
  */
 const MULTI_IF_DEQUE_LEN = 48;
-const MULTI_IF_DEQUE_TTL = 0.75;
+const MULTI_IF_DEQUE_TTL_SECS = 0.75;
 
 /**
  * Maps a human-readable discovery scope name to its IPv6 multicast scope nibble,
@@ -351,7 +351,7 @@ export class AutoInterface extends Interface {
     /**
      * Multi-interface dedup deque: recent data-packet hashes with their expiry.
      * Capped at {@link MULTI_IF_DEQUE_LEN} entries; a hit within
-     * {@link MULTI_IF_DEQUE_TTL} drops a duplicate seen on another interface.
+     * {@link MULTI_IF_DEQUE_TTL_SECS} drops a duplicate seen on another interface.
      * @type {Array<{ hash: Uint8Array; expiresAt: number }>}
      */
     this.mifDeque = [];
@@ -690,7 +690,7 @@ export class AutoInterface extends Interface {
 
   /**
    * Multi-interface dedup check. Returns true (and remembers nothing) if the
-   * packet hash was seen within {@link MULTI_IF_DEQUE_TTL}; otherwise remembers
+   * packet hash was seen within {@link MULTI_IF_DEQUE_TTL_SECS}; otherwise remembers
    * it and returns false, matching the Python reference's multi-interface
    * dedup.
    * @param {Uint8Array} hash - `SHA-256` of the raw datagram bytes.
@@ -702,7 +702,7 @@ export class AutoInterface extends Interface {
       (entry) => entry.expiresAt > now && this._bytesEqual(entry.hash, hash),
     );
     if (isHit) return true;
-    this.mifDeque.push({ hash, expiresAt: now + MULTI_IF_DEQUE_TTL });
+    this.mifDeque.push({ hash, expiresAt: now + MULTI_IF_DEQUE_TTL_SECS });
     while (this.mifDeque.length > MULTI_IF_DEQUE_LEN) this.mifDeque.shift();
     return false;
   }
@@ -1045,7 +1045,7 @@ export class AutoInterface extends Interface {
 
   /**
    * Authenticates an inbound discovery datagram and, on success, records the
-   * peer. Verifies that the first {@link HASHLENGTH_BYTES} bytes equal
+   * peer. Verifies that the first {@link FULL_HASH_LENGTH} bytes equal
    * `SHA-256(group_id || src_addr)`, exactly as the Python reference does.
    * Self-multicast-echoes (src is one of our own link-local addresses)
    * feed the carrier watchdog state instead of adding a peer.
@@ -1065,9 +1065,9 @@ export class AutoInterface extends Interface {
     const expected = await Identity.fullHash(
       this._concat(this.groupId, new TextEncoder().encode(srcAddr)),
     );
-    const offered = data.subarray(0, HASHLENGTH_BYTES);
+    const offered = data.subarray(0, FULL_HASH_LENGTH);
     if (
-      offered.length !== HASHLENGTH_BYTES ||
+      offered.length !== FULL_HASH_LENGTH ||
       !this._bytesEqual(offered, expected)
     ) {
       log(

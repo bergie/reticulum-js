@@ -38,7 +38,12 @@ import { LogLevel, log } from "../utils/log.js";
  * @description Identity creation, signing, and verification
  */
 export class Identity extends EventTarget {
-  static TRUNCATED_HASHLENGTH = 128;
+  /**
+   * Truncated-hash length in bytes. Destination, identity, and address
+   * hashes are the first 16 bytes of a SHA-256 digest (the Python reference
+   * expresses this as `RNS.Reticulum.TRUNCATED_HASHLENGTH//8`, in bits).
+   */
+  static TRUNCATED_HASH_LENGTH = 16;
 
   appData = new Uint8Array();
 
@@ -177,11 +182,11 @@ export class Identity extends EventTarget {
    */
   static async truncatedHash(data) {
     const fullHash = await Identity.fullHash(data);
-    return fullHash.slice(0, Identity.TRUNCATED_HASHLENGTH / 8);
+    return fullHash.slice(0, Identity.TRUNCATED_HASH_LENGTH);
   }
 
   /**
-   * Returns 16 fresh random bytes (`TRUNCATED_HASHLENGTH//8`).
+   * Returns `Identity.TRUNCATED_HASH_LENGTH` (16) fresh random bytes.
    *
    * Mirrors `RNS.Identity.get_random_hash()`. Despite the name this is plain
    * randomness, not a hash of anything. It is the source of the random half
@@ -192,7 +197,7 @@ export class Identity extends EventTarget {
    */
   static getRandomHash() {
     return crypto.getRandomValues(
-      new Uint8Array(Identity.TRUNCATED_HASHLENGTH / 8),
+      new Uint8Array(Identity.TRUNCATED_HASH_LENGTH),
     );
   }
 

@@ -27,7 +27,7 @@ import { PathState } from "../../src/transport/router.js";
 
 /** Network MTU / base per-hop timeout mirrored from RNS.Reticulum (protocol-fixed). */
 const MTU = 500;
-const DEFAULT_PER_HOP_TIMEOUT = 6;
+const DEFAULT_PER_HOP_TIMEOUT_SECS = 6;
 
 /**
  * Loopback interface that routes every written packet straight back into the
@@ -51,7 +51,7 @@ function attachLoopback(transport, bitrate = 1_000_000) {
   return iface;
 }
 
-test("firstHopTimeout: MTU*8/bitrate + DEFAULT_PER_HOP_TIMEOUT for a known route", async () => {
+test("firstHopTimeout: MTU*8/bitrate + DEFAULT_PER_HOP_TIMEOUT_SECS for a known route", async () => {
   const rns = new Reticulum();
   const transport = rns.transport;
   const iface = attachLoopback(transport, 1000);
@@ -72,13 +72,13 @@ test("firstHopTimeout: MTU*8/bitrate + DEFAULT_PER_HOP_TIMEOUT for a known route
   assert.strictEqual(rns.getFirstHopTimeout(hash), 10);
 });
 
-test("firstHopTimeout: falls back to DEFAULT_PER_HOP_TIMEOUT with no route / bitrate", () => {
+test("firstHopTimeout: falls back to DEFAULT_PER_HOP_TIMEOUT_SECS with no route / bitrate", () => {
   const rns = new Reticulum();
   const transport = rns.transport;
   const unknown = crypto.getRandomValues(new Uint8Array(16));
   assert.strictEqual(
     transport.firstHopTimeout(unknown),
-    DEFAULT_PER_HOP_TIMEOUT,
+    DEFAULT_PER_HOP_TIMEOUT_SECS,
   );
 
   // A route whose interface has no bitrate also falls back.
@@ -93,7 +93,10 @@ test("firstHopTimeout: falls back to DEFAULT_PER_HOP_TIMEOUT with no route / bit
       1,
     ),
   });
-  assert.strictEqual(transport.firstHopTimeout(hash), DEFAULT_PER_HOP_TIMEOUT);
+  assert.strictEqual(
+    transport.firstHopTimeout(hash),
+    DEFAULT_PER_HOP_TIMEOUT_SECS,
+  );
 });
 
 test("establishmentTimeout: firstHopTimeout + PER_HOP * max(1, hops)", async () => {
@@ -126,7 +129,7 @@ test("establishmentTimeout: firstHopTimeout + PER_HOP * max(1, hops)", async () 
   });
   assert.strictEqual(
     transport.establishmentTimeout(oneHop),
-    10 + DEFAULT_PER_HOP_TIMEOUT * 1,
+    10 + DEFAULT_PER_HOP_TIMEOUT_SECS * 1,
   );
 });
 
@@ -206,7 +209,7 @@ test("mediumPathTimeout: 0 with no online bitrate", () => {
   assert.strictEqual(transport.mediumPathTimeout(), 0);
 });
 
-test("mediumPathTimeout: 2*(MTU*8/rate) + DEFAULT_PER_HOP_TIMEOUT", () => {
+test("mediumPathTimeout: 2*(MTU*8/rate) + DEFAULT_PER_HOP_TIMEOUT_SECS", () => {
   const rns = new Reticulum();
   const transport = rns.transport;
   transport.addInterface(onlineIface(1000));

@@ -5,7 +5,7 @@
  * helper.
  */
 
-/** Destination hash length in hex characters (`TRUNCATED_HASHLENGTH//8*2`). */
+/** Destination hash length in hex characters (16 bytes × 2). */
 export const DESTINATION_HASH_HEX_LENGTH = 32;
 
 /**

@@ -89,7 +89,7 @@ export class Resource extends EventTarget {
    * `RNS.Packet.HEADER_MAXSIZE` — worst-case header after relay HEADER_1→HEADER_2
    * conversion: flags(1) + hops(1) + transport_id(16) + dest_hash(16) + context(1).
    */
-  static HEADER_MAXSIZE = 35;
+  static HEADER_MAX_SIZE = 35;
 
   /** Initial receiver request window (§10.10). */
   static WINDOW = 4;
@@ -229,7 +229,7 @@ export class Resource extends EventTarget {
    */
   get sdu() {
     if (!this.link) return 0;
-    return this.link.mtu - Resource.HEADER_MAXSIZE - Resource.IFAC_MIN_SIZE;
+    return this.link.mtu - Resource.HEADER_MAX_SIZE - Resource.IFAC_MIN_SIZE;
   }
 
   /**
@@ -761,7 +761,7 @@ export class Resource extends EventTarget {
     //   - it can never exceed `t` (each part carries at least one byte), and
     //   - it must be consistent with the negotiated link SDU (both ends share
     //     the link MTU), within a 1-part rounding margin.
-    const sdu = link.mtu - Resource.HEADER_MAXSIZE - Resource.IFAC_MIN_SIZE;
+    const sdu = link.mtu - Resource.HEADER_MAX_SIZE - Resource.IFAC_MIN_SIZE;
     const expectedParts = sdu > 0 ? Math.ceil(adv.t / sdu) : 0;
     const partCountInsane =
       adv.n <= 0 ||

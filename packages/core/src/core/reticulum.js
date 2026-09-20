@@ -29,7 +29,7 @@ export class Reticulum {
    * added on top of the bitrate-derived term in
    * {@link TransportCore.firstHopTimeout} / {@link TransportCore.establishmentTimeout}.
    */
-  static DEFAULT_PER_HOP_TIMEOUT = 6;
+  static DEFAULT_PER_HOP_TIMEOUT_SECS = 6;
   /**
    * The default interface gravity applied when an interface doesn't specify one
    * (`RNS.Interfaces.Interface.Interface.DEFAULT_GRAVITY`). Higher gravity =
@@ -239,7 +239,7 @@ export class Reticulum {
    * The bitrate-adaptive proof timeout for a single hop toward the destination,
    * in seconds (`RNS.Reticulum.get_first_hop_timeout`). Delegates to
    * {@link TransportCore.firstHopTimeout}; falls back to
-   * {@link Reticulum.DEFAULT_PER_HOP_TIMEOUT} when no route / bitrate is known.
+   * {@link Reticulum.DEFAULT_PER_HOP_TIMEOUT_SECS} when no route / bitrate is known.
    * @param {Uint8Array} destinationHash
    * @returns {number} seconds
    */

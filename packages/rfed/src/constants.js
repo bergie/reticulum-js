@@ -20,7 +20,7 @@ export const MAGIC_LENGTH = 4;
 /** Length of an Identity public key bundle (X25519 ‖ Ed25519). */
 export const PUBLIC_KEY_LENGTH = 64;
 
-/** Length of a 16-byte channel/destination hash (`TRUNCATED_HASHLENGTH / 8`). */
+/** Length of a channel/destination hash in bytes (the truncated hash length). */
 export const HASH_LENGTH = 16;
 
 /**

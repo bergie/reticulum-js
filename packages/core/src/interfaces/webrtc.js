@@ -28,9 +28,9 @@ import { Interface } from "./base.js";
 
 /**
  * Minimum RNS header size in bytes (`RNS.Reticulum.HEADER_MINSIZE`):
- * `2 + 1 + (TRUNCATED_HASHLENGTH / 8)` = `2 + 1 + 16` = 19. A defensive
- * floor applied before handing a frame to the transport; anything this
- * small or smaller is silently dropped.
+ * `2 + 1 + 16` = 19, the 16 being `Identity.TRUNCATED_HASH_LENGTH`. A
+ * defensive floor applied before handing a frame to the transport; anything
+ * this small or smaller is silently dropped.
  */
 const HEADER_MINSIZE = 19;
 

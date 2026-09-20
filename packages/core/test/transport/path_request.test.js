@@ -412,12 +412,12 @@ test("a retransmitted PR reuses the cached announce payload (path_responses)", a
   );
 });
 
-test("path-response cache entries expire after PR_TAG_WINDOW", async () => {
+test("path-response cache entries expire after PR_TAG_WINDOW_SECS", async () => {
   const { dest } = await prFixture();
 
   // Plant a stale entry and prune.
   dest.pathResponses.set("deadbeef", {
-    time: Date.now() / 1000 - (Destination.PR_TAG_WINDOW + 5),
+    time: Date.now() / 1000 - (Destination.PR_TAG_WINDOW_SECS + 5),
     announceData: new Uint8Array(1),
     hasRatchet: false,
   });
@@ -427,7 +427,7 @@ test("path-response cache entries expire after PR_TAG_WINDOW", async () => {
 
 // ---------------------------------------------------------------------
 // Egress discipline (work doc #31 step 4 — Python path_requests table,
-// PATH_REQUEST_MI automated-request gate, outbound-PR tracking)
+// PATH_REQUEST_MIN_INTERVAL_SECS automated-request gate, outbound-PR tracking)
 // ---------------------------------------------------------------------
 
 test("requestPath records the timestamp and outbound-PR samples", async () => {
@@ -469,7 +469,7 @@ test("requestPathAuto skips while a path is known", async () => {
   assert.strictEqual(captured.length, 0, "known path → no request");
 });
 
-test("requestPathAuto enforces the PATH_REQUEST_MI minimum interval", async () => {
+test("requestPathAuto enforces the PATH_REQUEST_MIN_INTERVAL_SECS minimum interval", async () => {
   const transport = new TransportCore();
   /** @type {Packet[]} */ const captured = [];
   transport.broadcast = (/** @type {Packet} */ pkt) => captured.push(pkt);
@@ -492,13 +492,13 @@ test("the sweep culls path-request timestamps past the gate timeout", async () =
   const target = crypto.getRandomValues(new Uint8Array(16));
   transport.pathRequests.set(
     toHex(target),
-    Date.now() / 1000 - (TransportCore.PATH_REQUEST_GATE_TIMEOUT + 10),
+    Date.now() / 1000 - (TransportCore.PATH_REQUEST_GATE_TIMEOUT_SECS + 10),
   );
   await transport._sweepTick();
   assert.strictEqual(
     transport.pathRequests.size,
     0,
-    "stale timestamp culled (PATH_REQUEST_GATE_TIMEOUT)",
+    "stale timestamp culled (PATH_REQUEST_GATE_TIMEOUT_SECS)",
   );
 });
 
@@ -507,13 +507,13 @@ test("the sweep culls in-flight path requests past the gate timeout", async () =
   const target = crypto.getRandomValues(new Uint8Array(16));
   transport.inflightPathRequests.set(
     toHex(target),
-    Date.now() / 1000 - (TransportCore.PATH_REQUEST_GATE_TIMEOUT + 10),
+    Date.now() / 1000 - (TransportCore.PATH_REQUEST_GATE_TIMEOUT_SECS + 10),
   );
   await transport._sweepTick();
   assert.strictEqual(
     transport.inflightPathRequests.size,
     0,
-    "stale in-flight PR culled (PATH_REQUEST_GATE_TIMEOUT)",
+    "stale in-flight PR culled (PATH_REQUEST_GATE_TIMEOUT_SECS)",
   );
 });
 

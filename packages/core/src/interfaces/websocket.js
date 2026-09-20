@@ -30,7 +30,7 @@ import { Interface, reconnectSchemaProperties } from "./base.js";
 
 /**
  * Minimum RNS header size in bytes (`RNS.Reticulum.HEADER_MINSIZE`):
- * `2 + 1 + (TRUNCATED_HASHLENGTH / 8)` = `2 + 1 + 16` = 19.
+ * `2 + 1 + 16` = 19, the 16 being `Identity.TRUNCATED_HASH_LENGTH`.
  *
  * A defensive floor applied in read loops before handing a frame to the
  * transport: frames no larger than this are silently dropped.

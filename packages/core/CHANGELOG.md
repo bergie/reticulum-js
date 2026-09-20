@@ -1,6 +1,25 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Renamed constants to match house style (real words, explicit units).
+  Values and behavior are unchanged, except
+  `Identity.TRUNCATED_HASHLENGTH` (128, bits) which is now
+  `Identity.TRUNCATED_HASH_LENGTH` (16, **bytes**) — use sites no longer
+  divide by 8. Other renames:
+  - `Link.ECPUBSIZE` → `Link.EC_PUBLIC_KEY_SIZE`, `Link.LINK_MTU_SIZE` →
+    `Link.SIGNALLING_SIZE`
+  - Time-valued constants gained a `_SECS` suffix: `Link.KEEPALIVE_MAX`,
+    `Link.KEEPALIVE_MIN`, `Link.KEEPALIVE_MAX_RTT`,
+    `Link.RESPONSE_MAX_GRACE_TIME`, `Reticulum.DEFAULT_PER_HOP_TIMEOUT`,
+    `TransportCore.PATH_REQUEST_MI` (also spelled out as
+    `PATH_REQUEST_MIN_INTERVAL_SECS`), `TransportCore.PATH_REQUEST_GATE_TIMEOUT`,
+    `Destination.PR_TAG_WINDOW`, and the `Interface` ingress-control timings
+    (`IC_NEW_TIME`, `IC_BURST_HOLD`, `IC_BURST_PENALTY`,
+    `IC_PR_BURST_COOLDOWN`, `IC_HELD_RELEASE_INTERVAL`)
+  - `Resource.HEADER_MAXSIZE` → `Resource.HEADER_MAX_SIZE`
+  - `RNodeInterface.REQUIRED_FW_VER_MAJ` / `REQUIRED_FW_VER_MIN` →
+    `RNodeInterface.REQUIRED_FIRMWARE_MAJOR` / `REQUIRED_FIRMWARE_MINOR`
 ### Added
 - Resource responses with metadata (§10.4 `x` flag), matching Python
   reference implementation: the sender option `metadata` on `Resource`

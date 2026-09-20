@@ -22,7 +22,7 @@ import {
 } from "@reticulum/core";
 import { PAPER_MDU, URI_SCHEMA } from "./constants.js";
 
-const DESTINATION_LENGTH = 16; // TRUNCATED_HASHLENGTH//8
+const DESTINATION_LENGTH = Identity.TRUNCATED_HASH_LENGTH;
 const SIGNATURE_LENGTH = 64; // SIGLENGTH//8
 
 /**

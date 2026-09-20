@@ -604,9 +604,9 @@ async function buildDiscoveredInfo(unpacked, announcedIdentity, meta) {
     }
   }
 
-  // §RNS 1.5.0 OP_ADDR: optional operator LXMF address. `nil` or a 16-byte
-  // (TRUNCATED_HASHLENGTH/8) destination hash; anything else is a protocol
-  // violation.
+  // §RNS 1.5.0 OP_ADDR: optional operator LXMF address. `nil` or a
+  // 16-byte (truncated-hash-length) destination hash; anything else is a
+  // protocol violation.
   /** @type {Uint8Array|null} */
   let operatorLxmfAddress = null;
   if (unpacked[String(OP_ADDR)] !== undefined) {
@@ -617,7 +617,7 @@ async function buildDiscoveredInfo(unpacked, announcedIdentity, meta) {
       );
     }
     if (opAddr instanceof Uint8Array) {
-      if (opAddr.length !== Identity.TRUNCATED_HASHLENGTH / 8) {
+      if (opAddr.length !== Identity.TRUNCATED_HASH_LENGTH) {
         throw new Error(
           "Invalid data in operator LXMF address field of announce",
         );

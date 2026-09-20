@@ -23,7 +23,7 @@ test("applyIngressConfig assigns only provided keys", () => {
   assert.strictEqual(iface.icPrBurstFreqNew, 1.5);
   // Absent keys keep the class constants.
   assert.strictEqual(iface.icBurstFreqNew, Interface.IC_BURST_FREQ_NEW);
-  assert.strictEqual(iface.icBurstHold, Interface.IC_BURST_HOLD);
+  assert.strictEqual(iface.icBurstHold, Interface.IC_BURST_HOLD_SECS);
   assert.strictEqual(iface.icPrBurstFreq, Interface.IC_PR_BURST_FREQ);
 });
 

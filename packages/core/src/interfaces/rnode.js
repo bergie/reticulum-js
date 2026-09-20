@@ -394,9 +394,9 @@ export class RNodeInterface extends Interface {
   /** RSSI offset applied to raw radio RSSI readings. */
   static RSSI_OFFSET = 157;
   /** Minimum required firmware major version. */
-  static REQUIRED_FW_VER_MAJ = 1;
+  static REQUIRED_FIRMWARE_MAJOR = 1;
   /** Minimum required firmware minor version. */
-  static REQUIRED_FW_VER_MIN = 52;
+  static REQUIRED_FIRMWARE_MINOR = 52;
   /** Framebuffer width in pixels. */
   static FB_PIXEL_WIDTH = FB_PIXEL_WIDTH;
   /** Framebuffer bits per pixel. */
@@ -1134,14 +1134,14 @@ export class RNodeInterface extends Interface {
    */
   _validateFirmware() {
     this.firmwareOk =
-      this.majVersion > RNodeInterface.REQUIRED_FW_VER_MAJ ||
-      (this.majVersion >= RNodeInterface.REQUIRED_FW_VER_MAJ &&
-        this.minVersion >= RNodeInterface.REQUIRED_FW_VER_MIN);
+      this.majVersion > RNodeInterface.REQUIRED_FIRMWARE_MAJOR ||
+      (this.majVersion >= RNodeInterface.REQUIRED_FIRMWARE_MAJOR &&
+        this.minVersion >= RNodeInterface.REQUIRED_FIRMWARE_MINOR);
     if (!this.firmwareOk) {
       throw new Error(
         `RNode firmware ${this.majVersion}.${this.minVersion} on ${this.name} ` +
           `is too old; requires >= ` +
-          `${RNodeInterface.REQUIRED_FW_VER_MAJ}.${RNodeInterface.REQUIRED_FW_VER_MIN}.`,
+          `${RNodeInterface.REQUIRED_FIRMWARE_MAJOR}.${RNodeInterface.REQUIRED_FIRMWARE_MINOR}.`,
       );
     }
   }

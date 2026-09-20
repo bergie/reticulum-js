@@ -5,7 +5,7 @@
  * Constants and latch/hold semantics mirror the Python reference
  * (`RNS/Interfaces/Interface.py`): burst latches when the incoming
  * announce/PR frequency exceeds the age-dependent threshold, stays latched
- * for IC_BURST_HOLD seconds, and unlatches once the frequency drops back
+ * for IC_BURST_HOLD_SECS seconds, and unlatches once the frequency drops back
  * below the threshold (the unlatching call still reports limited).
  */
 import assert from "node:assert";
@@ -15,7 +15,7 @@ import { Interface } from "../../src/interfaces/base.js";
 /** Wall-clock seconds, matching the deque timebase. */
 const nowSec = () => Date.now() / 1000;
 
-/** Marks an interface as established (age > IC_NEW_TIME = 2 h). */
+/** Marks an interface as established (age > IC_NEW_TIME_SECS = 2 h). */
 function agedInterface() {
   const iface = new Interface();
   iface.created = Date.now() - 3 * 60 * 60 * 1000;
@@ -39,7 +39,7 @@ test("an announce burst latches on an established interface above 10/s", () => {
   assert.strictEqual(iface.shouldIngressLimit(), true);
   assert.strictEqual(iface.icBurstActive, true);
   // Burst activation arms the held-announce release penalty
-  // (IC_BURST_HOLD + IC_BURST_PENALTY semantics live in Python's
+  // (IC_BURST_HOLD_SECS + IC_BURST_PENALTY_SECS semantics live in Python's
   // should_ingress_limit; here we just record the arm time).
   assert.ok(iface.icHeldRelease > nowSec() + 14);
 });
@@ -69,7 +69,7 @@ test("a PR burst latches above 8/s and holds despite frequency dropping", () => 
   assert.strictEqual(iface.shouldIngressLimitPr(), true);
   assert.strictEqual(iface.icPrBurstActive, true);
 
-  // Frequency collapses (samples decay), but IC_BURST_HOLD (15 s) hasn't
+  // Frequency collapses (samples decay), but IC_BURST_HOLD_SECS (15 s) hasn't
   // elapsed — still limiting.
   iface.ipFreqDeque = [nowSec() - 0.2];
   assert.strictEqual(iface.shouldIngressLimitPr(), true);
@@ -97,7 +97,7 @@ test("a PR burst unlatches after the hold once quiet, via the cooldown", () => {
   iface.ipFreqDeque = []; // no samples at all (PR unlatch has no min-sample check)
 
   // Upstream cooldown hysteresis ("Improved PR ingress limiter"): after the
-  // hold, unlatching takes IC_PR_BURST_COOLDOWN+1 consecutive quiet
+  // hold, unlatching takes IC_PR_BURST_COOLDOWN_SECS+1 consecutive quiet
   // evaluations; each quiet call still reports limited.
   for (let i = 0; i < 3; i++) {
     assert.strictEqual(iface.shouldIngressLimitPr(), true);

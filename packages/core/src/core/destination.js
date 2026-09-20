@@ -262,7 +262,7 @@ export class Destination extends EventTarget {
     // §Path responses: tag → { time, announceData, hasRatchet } cache so
     // retransmitted `path?` requests with a seen tag reuse the signed
     // announce payload instead of re-signing (and re-rotating ratchets) per
-    // retransmission. Pruned to the {@link Destination.PR_TAG_WINDOW} on
+    // retransmission. Pruned to the {@link Destination.PR_TAG_WINDOW_SECS} on
     // every path response.
     /** @type {Map<string, {time: number, announceData: Uint8Array, hasRatchet: boolean}>} */
     this.pathResponses = new Map();
@@ -283,7 +283,7 @@ export class Destination extends EventTarget {
    * `path?` requests with the same tag.
    * @type {number}
    */
-  static PR_TAG_WINDOW = 30;
+  static PR_TAG_WINDOW_SECS = 30;
 
   /**
    * Broadcasts an Announce packet advertising this destination's public key,
@@ -304,7 +304,7 @@ export class Destination extends EventTarget {
    * validates identically under §4.5; only the context byte distinguishes it.
    *
    * When called with the requesting PR's `tag`, the signed announce payload
-   * is cached for {@link PR_TAG_WINDOW} seconds and retransmissions with the
+   * is cached for {@link PR_TAG_WINDOW_SECS} seconds and retransmissions with the
    * same tag reuse it — a path-response cache keeps PR floods from forcing a
    * fresh signature (and ratchet rotation) per retransmitted request.
    *
@@ -451,7 +451,7 @@ export class Destination extends EventTarget {
    *
    * A tagged PATH_RESPONSE consults the {@link pathResponses} cache first and
    * reuses the cached payload when the tag was answered within
-   * {@link Destination.PR_TAG_WINDOW} seconds — the defence against PR floods
+   * {@link Destination.PR_TAG_WINDOW_SECS} seconds — the defence against PR floods
    * forcing a fresh signature (and ratchet rotation) per retransmission.
    * Generation from scratch otherwise, and a
    * fresh tagged response is cached.
@@ -594,13 +594,13 @@ export class Destination extends EventTarget {
 
   /**
    * Drops {@link pathResponses} entries older than
-   * {@link Destination.PR_TAG_WINDOW} seconds (a stale-entry sweep).
+   * {@link Destination.PR_TAG_WINDOW_SECS} seconds (a stale-entry sweep).
    * @private
    */
   _prunePathResponses() {
     const now = Date.now() / 1000;
     for (const [key, entry] of this.pathResponses) {
-      if (now > entry.time + Destination.PR_TAG_WINDOW) {
+      if (now > entry.time + Destination.PR_TAG_WINDOW_SECS) {
         this.pathResponses.delete(key);
       }
     }

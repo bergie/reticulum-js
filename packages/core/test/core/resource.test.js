@@ -197,7 +197,7 @@ async function runTransfer({ size, compress = false }) {
 }
 
 describe("Resource sizing (§10.2/§10.4)", () => {
-  test("SDU = mtu - HEADER_MAXSIZE(35) - IFAC_MIN_SIZE(1) = 464 at mtu 500", async () => {
+  test("SDU = mtu - HEADER_MAX_SIZE(35) - IFAC_MIN_SIZE(1) = 464 at mtu 500", async () => {
     const { initiator } = await makePair();
     const r = new Resource({ data: new Uint8Array(1), link: initiator });
     assert.strictEqual(r.sdu, 464);

@@ -1278,7 +1278,7 @@ export class LXMRouter extends EventTarget {
     log("LXMF", `DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
     log("LXMF", `DEBUG: Sending to ${toHex(message.destinationHash)}`);
 
-    const DESTINATION_LENGTH = 16; // RNS TRUNCATED_HASHLENGTH//8
+    const DESTINATION_LENGTH = Identity.TRUNCATED_HASH_LENGTH;
 
     // No link provided: deliver over a DIRECT link to the recipient — Python's
     // default DIRECT method (LXMRouter.process_outbound) and the channel mobile
@@ -1380,7 +1380,7 @@ export class LXMRouter extends EventTarget {
    * @private
    */
   async _sendOpportunistic(message, wireData) {
-    const DESTINATION_LENGTH = 16; // RNS TRUNCATED_HASHLENGTH//8
+    const DESTINATION_LENGTH = Identity.TRUNCATED_HASH_LENGTH;
     const peerIdentity = await Destination.recall(message.destinationHash);
     if (!peerIdentity) {
       throw new Error(

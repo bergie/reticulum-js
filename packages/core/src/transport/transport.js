@@ -38,7 +38,7 @@ const MTU = 500;
  * Base per-hop timeout in seconds (protocol-fixed). See {@link MTU} note on
  * why it's mirrored here.
  */
-const DEFAULT_PER_HOP_TIMEOUT = 6;
+const DEFAULT_PER_HOP_TIMEOUT_SECS = 6;
 /**
  * Minimum acceptable interface bitrate in bits/s (protocol-fixed). See
  * {@link MTU} note on why it's mirrored here.
@@ -112,8 +112,8 @@ export class TransportCore extends EventTarget {
 
     // §Path requests: timestamp (seconds) of the last `path?` request this
     // node sent per destination. Feeds the
-    // PATH_REQUEST_MI minimum-interval gate for automated re-requests in
-    // {@link requestPathAuto}. Entries older than PATH_REQUEST_GATE_TIMEOUT
+    // PATH_REQUEST_MIN_INTERVAL_SECS minimum-interval gate for automated re-requests in
+    // {@link requestPathAuto}. Entries older than PATH_REQUEST_GATE_TIMEOUT_SECS
     // are culled by the sweep.
     /** @type {Map<string, number>} */
     this.pathRequests = new Map();
@@ -121,7 +121,7 @@ export class TransportCore extends EventTarget {
     // §In-flight path requests (RNS 1.5.0): destinations with a `path?`
     // request *outstanding and unanswered*. Set by {@link requestPath},
     // cleared on a matching announce or when we answer a PR ourselves for a
-    // local dest, culled at PATH_REQUEST_GATE_TIMEOUT. This is the
+    // local dest, culled at PATH_REQUEST_GATE_TIMEOUT_SECS. This is the
     // held-announce waiting-request exemption (an announce for a dest we
     // asked about must never be delayed past its freshness window) — kept
     // *separate* from {@link pathRequests} so the egress MI gate (which only
@@ -621,12 +621,12 @@ export class TransportCore extends EventTarget {
    * — the reference implementations apply the same discipline only in their
    * automated rediscovery paths.
    */
-  static PATH_REQUEST_MI = 20;
+  static PATH_REQUEST_MIN_INTERVAL_SECS = 20;
   /**
    * Seconds after which a `path?`-request timestamp is forgotten. Bounds the
    * waiting-request exemption window for held announces.
    */
-  static PATH_REQUEST_GATE_TIMEOUT = 120;
+  static PATH_REQUEST_GATE_TIMEOUT_SECS = 120;
 
   /**
    * Sends a `path?` request for a destination we have no route to (§7.1).
@@ -637,7 +637,7 @@ export class TransportCore extends EventTarget {
    * suppressed as duplicates.
    *
    * Not rate-limited per se; automated callers should use
-   * {@link requestPathAuto}, which enforces the `PATH_REQUEST_MI` minimum
+   * {@link requestPathAuto}, which enforces the `PATH_REQUEST_MIN_INTERVAL_SECS` minimum
    * interval per destination.
    *
    * @param {Uint8Array} destinationHash - 16-byte destination to discover.
@@ -671,11 +671,11 @@ export class TransportCore extends EventTarget {
     }
     this.broadcast(packet);
     // §Transport.path_requests: remember when we last asked for this
-    // destination — feeds the PATH_REQUEST_MI gate in requestPathAuto.
+    // destination — feeds the PATH_REQUEST_MIN_INTERVAL_SECS gate in requestPathAuto.
     this.pathRequests.set(toHex(destinationHash), Date.now() / 1000);
     // §In-flight path requests: this PR is now outstanding and unanswered.
     // Cleared by a matching announce (or the sweep, at
-    // PATH_REQUEST_GATE_TIMEOUT). Feeds the held-announce waiting-request
+    // PATH_REQUEST_GATE_TIMEOUT_SECS). Feeds the held-announce waiting-request
     // exemption — an announce for a dest we asked about must never be held.
     this.inflightPathRequests.set(toHex(destinationHash), Date.now() / 1000);
     this._ensureSweep();
@@ -684,7 +684,7 @@ export class TransportCore extends EventTarget {
   /**
    * Automated path (re-)request with the reference implementations' rediscovery
    * discipline: skipped entirely while a usable path is already known, and
-   * rate-limited to one request per {@link TransportCore.PATH_REQUEST_MI}
+   * rate-limited to one request per {@link TransportCore.PATH_REQUEST_MIN_INTERVAL_SECS}
    * seconds per destination. Use for machine-triggered re-discovery (link
    * failures, delivery retries); user-initiated discovery uses
    * {@link requestPath} directly.
@@ -706,7 +706,10 @@ export class TransportCore extends EventTarget {
     }
     const destHex = toHex(destinationHash);
     const last = this.pathRequests.get(destHex) ?? 0;
-    if (Date.now() / 1000 - last < TransportCore.PATH_REQUEST_MI) {
+    if (
+      Date.now() / 1000 - last <
+      TransportCore.PATH_REQUEST_MIN_INTERVAL_SECS
+    ) {
       return false;
     }
     await this.requestPath(destinationHash);
@@ -1030,8 +1033,8 @@ export class TransportCore extends EventTarget {
   /**
    * The bitrate-adaptive proof timeout for a single hop toward the
    * destination, in seconds.
-   * `MTU * (8 / next_hop_bitrate) + DEFAULT_PER_HOP_TIMEOUT`, falling back to
-   * `DEFAULT_PER_HOP_TIMEOUT` when the route or its interface bitrate is
+   * `MTU * (8 / next_hop_bitrate) + DEFAULT_PER_HOP_TIMEOUT_SECS`, falling back to
+   * `DEFAULT_PER_HOP_TIMEOUT_SECS` when the route or its interface bitrate is
    * unknown. Used as the proof-wait timeout for an outbound DATA packet.
    * @param {Uint8Array} destinationHash
    * @returns {number} seconds
@@ -1039,14 +1042,14 @@ export class TransportCore extends EventTarget {
   firstHopTimeout(destinationHash) {
     const bitrate =
       this.routingTable.getRoute(destinationHash)?.interface?.bitrate;
-    if (!bitrate) return DEFAULT_PER_HOP_TIMEOUT;
-    return MTU * (8 / bitrate) + DEFAULT_PER_HOP_TIMEOUT;
+    if (!bitrate) return DEFAULT_PER_HOP_TIMEOUT_SECS;
+    return MTU * (8 / bitrate) + DEFAULT_PER_HOP_TIMEOUT_SECS;
   }
 
   /**
    * The link-establishment timeout for a destination, in seconds. Combines
    * {@link firstHopTimeout} with a per-hop term: `first_hop_timeout +
-   * DEFAULT_PER_HOP_TIMEOUT * max(1, hops)`, so a slow or multi-hop path gets
+   * DEFAULT_PER_HOP_TIMEOUT_SECS * max(1, hops)`, so a slow or multi-hop path gets
    * a proportionally longer handshake wait.
    * @param {Uint8Array} destinationHash
    * @returns {number} seconds
@@ -1055,7 +1058,7 @@ export class TransportCore extends EventTarget {
     const hops = this.routingTable.getRoute(destinationHash)?.hops ?? 1;
     return (
       this.firstHopTimeout(destinationHash) +
-      DEFAULT_PER_HOP_TIMEOUT * Math.max(1, hops)
+      DEFAULT_PER_HOP_TIMEOUT_SECS * Math.max(1, hops)
     );
   }
 
@@ -1103,7 +1106,7 @@ export class TransportCore extends EventTarget {
    * A full round trip for an MTU on the slowest currently-online interface,
    * plus per-hop grace:
    * `2 * (MTU * 8 / max(lowest_bitrate, MINIMUM_BITRATE)) +
-   * DEFAULT_PER_HOP_TIMEOUT`, or `0` when no online interface bitrate is known.
+   * DEFAULT_PER_HOP_TIMEOUT_SECS`, or `0` when no online interface bitrate is known.
    *
    * Used where the relevant medium isn't a single known next hop but "whatever
    * the network can reach us over" — most notably path-request / discovery
@@ -1114,7 +1117,7 @@ export class TransportCore extends EventTarget {
     const lowest = this.lowestInterfaceBitrate;
     if (!lowest) return 0;
     const rate = Math.max(lowest, MINIMUM_BITRATE);
-    return 2 * ((MTU * 8) / rate) + DEFAULT_PER_HOP_TIMEOUT;
+    return 2 * ((MTU * 8) / rate) + DEFAULT_PER_HOP_TIMEOUT_SECS;
   }
 
   /**
@@ -1230,7 +1233,7 @@ export class TransportCore extends EventTarget {
    * quiet-frequency gate) and re-injects it into the normal inbound pipeline
    * — the hop count increments again on re-entry, and a re-latched burst
    * simply re-holds it. Also culls `path?`-request timestamps older than
-   * {@link TransportCore.PATH_REQUEST_GATE_TIMEOUT}.
+   * {@link TransportCore.PATH_REQUEST_GATE_TIMEOUT_SECS}.
    *
    * Exposed as a method so embedders and tests can drive it deterministically;
    * {@link _ensureSweep} schedules it on a 5 s interval (the reference
@@ -1262,14 +1265,14 @@ export class TransportCore extends EventTarget {
     // Cull stale path-request timestamps (jobs-table culling).
     const now = Date.now() / 1000;
     for (const [destHex, t] of this.pathRequests) {
-      if (now > t + TransportCore.PATH_REQUEST_GATE_TIMEOUT) {
+      if (now > t + TransportCore.PATH_REQUEST_GATE_TIMEOUT_SECS) {
         this.pathRequests.delete(destHex);
       }
     }
 
     // Cull stale in-flight path requests (RNS 1.5.0).
     for (const [destHex, t] of this.inflightPathRequests) {
-      if (now > t + TransportCore.PATH_REQUEST_GATE_TIMEOUT) {
+      if (now > t + TransportCore.PATH_REQUEST_GATE_TIMEOUT_SECS) {
         this.inflightPathRequests.delete(destHex);
       }
     }
