@@ -32,6 +32,7 @@ import {
   encodePktLine,
   FLUSH,
 } from "./pktline.js";
+import { MAX_EFFICIENT_SIZE } from "./segment.js";
 import { fromPlaceholderHttpUrl, RemoteUrlError } from "./url.js";
 
 /** Max side-band-64k payload per pkt-line (65519 data bytes + 1 band byte). */
@@ -51,6 +52,54 @@ export class UnsupportedFeatureError extends Error {
     super(message);
     this.name = "UnsupportedFeatureError";
   }
+}
+
+/**
+ * Builds a progress forwarder from the Link's Resource transfer info into
+ * isomorphic-git's `onProgress` events (`{ phase, loaded, total }`).
+ *
+ * Only the `direction` given (the one that actually moves bulk bytes in the
+ * operation — downloads for fetch, uploads for push) is reported; the
+ * opposite direction (e.g. a have-list request upload during fetch) is
+ * dropped so user-facing progress stays monotonic.
+ *
+ * Split resources report per-segment positions; since segments transfer
+ * strictly one at a time, the forwarder accumulates completed segments and
+ * estimates the remaining ones as full MAX_EFFICIENT_SIZE segments. The
+ * estimate converges to the exact size while the last segment transfers.
+ *
+ * Events are throttled to whole-percent steps (plus completion) so a
+ * multi-thousand-part transfer does not spam the callback.
+ *
+ * @param {((event: any) => void) | undefined} userOnProgress - The
+ *   isomorphic-git onProgress callback from the http plugin request.
+ * @param {string} phase - Progress phase label (e.g. "Receiving objects").
+ * @param {"request"|"response"} direction - Which transfer direction to
+ *   report.
+ * @returns {((info: any) => void) | undefined}
+ */
+function progressForwarder(userOnProgress, phase, direction) {
+  if (!userOnProgress) return undefined;
+  let completedBytes = 0;
+  let lastSegment = 0;
+  let lastSegmentTotal = 0;
+  let lastPercent = -1;
+  return (info) => {
+    if (info.direction !== direction) return;
+    if (info.segmentIndex > lastSegment) {
+      completedBytes += lastSegmentTotal;
+      lastSegment = info.segmentIndex;
+    }
+    lastSegmentTotal = info.total;
+    const loaded = completedBytes + info.loaded;
+    const remaining = info.segmentTotal - info.segmentIndex;
+    const total = completedBytes + info.total + remaining * MAX_EFFICIENT_SIZE;
+    const percent = total > 0 ? Math.floor((loaded / total) * 100) : 100;
+    if (percent !== lastPercent || loaded >= total) {
+      lastPercent = percent;
+      userOnProgress({ phase, loaded, total });
+    }
+  };
 }
 
 /**
@@ -436,7 +485,15 @@ export function createRngitTransport(client, options = {}) {
           return badRequest(url, method, "Empty upload-pack request");
         }
         const refs = wantsToRefs(wants);
-        const bundle = await client.fetch({ refs, have: haves });
+        const bundle = await client.fetch({
+          refs,
+          have: haves,
+          onProgress: progressForwarder(
+            req.onProgress,
+            "Receiving objects",
+            "response",
+          ),
+        });
         // Thin bundles (the node excluded the client's have-objects) must be
         // fattened against the local store before being stored.
         const pack = bundle
@@ -485,7 +542,16 @@ export function createRngitTransport(client, options = {}) {
             [{ sha: command.new, ref: command.ref }],
             pack,
           );
-          await client.push({ ref: command.ref, bundle, force });
+          await client.push({
+            ref: command.ref,
+            bundle,
+            force,
+            onProgress: progressForwarder(
+              req.onProgress,
+              "Writing objects",
+              "request",
+            ),
+          });
         } else {
           // Everything reachable already exists on the node — a direct
           // ref update needs no bundle transfer.

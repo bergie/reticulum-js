@@ -11,6 +11,7 @@
  */
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs, { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -502,11 +503,11 @@ describe("rngit transport against isomorphic-git (loopback)", () => {
     const cloneDir = mkdtempSync(join(tmpdir(), "rngit-big-"));
     try {
       // A ~2.5 MiB incompressible file pushes the bundle over the
-      // MAX_EFFICIENT_SIZE segment boundary (1 MiB - 1).
-      const big = Buffer.alloc(2.5 * 1024 * 1024);
-      for (let i = 0; i < big.length; i++) {
-        big[i] = (i * 2654435761) & 0xff;
-      }
+      // MAX_EFFICIENT_SIZE segment boundary (1 MiB - 1). Deterministic
+      // arithmetic patterns with a short period compress to almost
+      // nothing — use real random bytes so the bundle genuinely spans
+      // multiple segments.
+      const big = randomBytes(2.5 * 1024 * 1024);
       fs.writeFileSync(join(src.dir, "blob.bin"), big);
       runGit(src.dir, "add", ".");
       runGit(src.dir, "commit", "-q", "-m", "big file");
@@ -531,6 +532,82 @@ describe("rngit transport against isomorphic-git (loopback)", () => {
       assert.ok(Buffer.compare(round, big) === 0, "big file intact");
     } finally {
       removeTree(src.dir);
+      removeTree(cloneDir);
+    }
+  });
+
+  test("clone and push report isomorphic-git progress events", async () => {
+    const src = makeSourceRepo();
+    const bareDir = mkdtempSync(join(tmpdir(), "rngit-prog-"));
+    runGit(bareDir, "init", "-q", "--bare", "-b", "main", ".");
+    runGit(src.dir, "push", "-q", bareDir, "main", "refs/tags/v1.0");
+    // Make the clone bundle span multiple segments (random bytes —
+    // deterministic patterns compress away).
+    const big = randomBytes(1.5 * 1024 * 1024);
+    fs.writeFileSync(join(src.dir, "blob.bin"), big);
+    runGit(src.dir, "add", ".");
+    runGit(src.dir, "commit", "-q", "-m", "big file");
+    runGit(src.dir, "push", "-q", bareDir, "main");
+    const cloneDir = mkdtempSync(join(tmpdir(), "rngit-prog-clone-"));
+    try {
+      const { initiator } = await makeRngitPair(rngitNode(bareDir, {}));
+      const client = new RngitClient({
+        url: `rns://${"66".repeat(16)}/test/repo`,
+        link: initiator,
+      });
+
+      /** @type {any[]} */
+      const downloadEvents = [];
+      await clone({
+        fs,
+        dir: cloneDir,
+        url: `rns://${"66".repeat(16)}/test/repo`,
+        client,
+        onProgress: (/** @type {any} */ e) => downloadEvents.push(e),
+      });
+      const receiving = downloadEvents.filter(
+        (e) => e.phase === "Receiving objects",
+      );
+      // Our transfer events use byte totals over 1 MiB; isomorphic-git
+      // also emits its own "Receiving objects" events with object-count
+      // totals (small numbers), which interleave.
+      const ours = receiving.filter((e) => e.total > 1024 * 1024);
+      assert.ok(ours.length >= 2, "download progress events arrived");
+      // Monotonic across our events (segments accumulate).
+      for (let i = 1; i < ours.length; i++) {
+        assert.ok(ours[i].loaded >= ours[i - 1].loaded);
+      }
+      // The bundle size is covered and the transfer completes.
+      assert.ok(ours[ours.length - 1].loaded > 1024 * 1024);
+      assert.ok(ours[ours.length - 1].loaded <= ours[ours.length - 1].total);
+
+      // Push progress: "Writing objects" while the bundle uploads.
+      fs.writeFileSync(join(cloneDir, "lib.js"), "export const p = 1;\n");
+      runGit(cloneDir, "add", ".");
+      runGit(cloneDir, "config", "user.name", "Test");
+      runGit(cloneDir, "config", "user.email", "test@example.com");
+      runGit(cloneDir, "commit", "-q", "-m", "progress push");
+      /** @type {any[]} */
+      const uploadEvents = [];
+      await push({
+        fs,
+        dir: cloneDir,
+        ref: "main",
+        client,
+        onProgress: (/** @type {any} */ e) => uploadEvents.push(e),
+      });
+      const writing = uploadEvents.filter((e) => e.phase === "Writing objects");
+      assert.ok(writing.length >= 1, "upload progress events arrived");
+      for (let i = 1; i < writing.length; i++) {
+        assert.ok(writing[i].loaded >= writing[i - 1].loaded);
+      }
+      assert.ok(
+        writing[writing.length - 1].loaded > 0,
+        "upload progress reports bytes",
+      );
+    } finally {
+      removeTree(src.dir);
+      removeTree(bareDir);
       removeTree(cloneDir);
     }
   });

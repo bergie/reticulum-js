@@ -321,6 +321,7 @@ export class Resource extends EventTarget {
       Math.min(start + Resource.MAX_EFFICIENT_SIZE, full.length),
     );
     this.uncompressedSize = plaintext.length; // d: per-segment logical size
+    this._sentPartIndices = new Set(); // per-segment sender progress
 
     let body = plaintext;
     this.compressed = false;
@@ -541,6 +542,21 @@ export class Resource extends EventTarget {
         continue;
       }
       await this._sendPart(/** @type {Uint8Array} */ (this.parts[idx]));
+      this._sentPartIndices ??= new Set();
+      this._sentPartIndices.add(idx);
+      // Sender-side progress: unique parts delivered so far. Re-requests for
+      // a lost part do not advance the count.
+      this.dispatchEvent(
+        new CustomEvent("progress", {
+          detail: {
+            sent: this._sentPartIndices.size,
+            total: this.totalParts,
+            progress: this.totalParts
+              ? this._sentPartIndices.size / this.totalParts
+              : 0,
+          },
+        }),
+      );
     }
     if (exhausted) {
       await this._sendHashmapUpdate(/** @type {Uint8Array} */ (lastMapHash));

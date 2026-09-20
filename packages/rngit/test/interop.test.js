@@ -20,6 +20,7 @@
  */
 import { strict as assert } from "node:assert";
 import { execFileSync, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs, { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,10 +67,7 @@ describe("rngit live interop (reference rngit node)", () => {
     // A ~1.5 MiB incompressible file pushes the clone bundle over the
     // reference implementation's segment split boundary (1 MiB - 1), so the
     // live clone exercises multi-segment transfer against the real node.
-    const bigFileBytes = Buffer.alloc(1.5 * 1024 * 1024);
-    for (let i = 0; i < bigFileBytes.length; i++) {
-      bigFileBytes[i] = (i * 2654435761) & 0xff;
-    }
+    const bigFileBytes = randomBytes(1.5 * 1024 * 1024);
     fs.writeFileSync(join(workDir, "blob.bin"), bigFileBytes);
     runGit(workDir, "add", ".");
     runGit(workDir, "commit", "-q", "-m", "big file");

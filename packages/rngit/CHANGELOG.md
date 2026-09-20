@@ -36,6 +36,10 @@
     a `report-status` reply (side-band-64k framed when negotiated).
   - Deletions map to `/git/delete`; zero-object pushes take the direct
     `update_ref` path without a bundle transfer.
+- Transfer progress: `clone`/`fetch` report isomorphic-git progress
+  events (`Receiving objects`) while bundle resources download, `push`
+  reports `Writing objects` while they upload. Split transfers aggregate
+  completed segments with a converging total estimate.
 - Live interop coverage (env-gated): the test suite can clone, fetch, push
   and delete against a real rngit node.
 ### Fixed

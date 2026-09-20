@@ -13,6 +13,16 @@
 - `Link.request()` option `onMetadata(metadata)` — delivers the decoded
   metadata of metadata-carrying resource responses to the caller
 - `Direction` is now re-exported from the package root.
+- `Link.request()` option `onProgress(info)` — transfer progress for
+  Resource-backed request/response bodies:
+  `{ direction: "request"|"response", loaded, total, segmentIndex,
+  segmentTotal }` with approximate logical byte positions, per segment for
+  split transfers. Sender-side Resources now emit `progress` events
+  (unique parts delivered).
+- `ResourceResponse` without metadata now answers through the ordinary
+  msgpack-envelope path (its raw payload as the value) instead of sending
+  metadata-less raw bytes, which the receiving side would have tried to
+  decode as an envelope.
 - Multi-segment (split) Resources (§10.3): payloads over
   `Resource.MAX_EFFICIENT_SIZE` (1 MiB - 1) transfer as sequentially
   advertised segments tied together by the first segment's hash

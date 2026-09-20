@@ -221,12 +221,14 @@ export class RngitClient {
    * Fetches a bundle of the given refs, excluding objects reachable from
    * `have` SHAs (and per-ref `have` ancestors).
    *
-   * @param {{ refs: { sha: string, ref: string, have?: string }[], have?: string[] }} request
+   * @param {{ refs: { sha: string, ref: string, have?: string }[], have?: string[], onProgress?: (info: any) => void }} request
+   *   `onProgress` receives the Link's transfer progress info (download
+   *   direction) while the bundle Resource transfers.
    * @returns {Promise<Uint8Array|null>} Bundle bytes, or `null` when the
    *   server reports every object already available locally.
    * @throws {RngitStatusError} on a non-zero status reply.
    */
-  async fetch({ refs, have }) {
+  async fetch({ refs, have, onProgress }) {
     if (!this.remote) throw new RemoteUrlError("No remote url configured");
     const link = await this._link();
     const request = buildRequest(this.remote.repoPath, {
@@ -242,6 +244,7 @@ export class RngitClient {
     let metadata;
     const response = await link.request(PATH_FETCH, request, {
       timeout: this.fetchTimeoutMs,
+      onProgress,
       onMetadata: (md) => {
         metadata = md;
       },
@@ -283,10 +286,13 @@ export class RngitClient {
    * @param {string} [request.sha] - Target object id for the direct
    *   `update_ref` operation when no bundle is needed.
    * @param {boolean} [request.force=false] - Allow non-fast-forward updates.
+   * @param {(info: any) => void} [request.onProgress] - Receives the Link's
+   *   transfer progress info (upload direction) while the bundle Resource
+   *   transfers.
    * @returns {Promise<void>}
    * @throws {RngitStatusError} on a non-zero status reply.
    */
-  async push({ ref, bundle, sha, force = false }) {
+  async push({ ref, bundle, sha, force = false, onProgress }) {
     if (!this.remote) throw new RemoteUrlError("No remote url configured");
     const link = await this._link();
     const request = bundle
@@ -301,6 +307,7 @@ export class RngitClient {
         });
     const response = await link.request(PATH_PUSH, request, {
       timeout: this.fetchTimeoutMs,
+      onProgress,
     });
     if (!(response instanceof Uint8Array)) {
       throw new Error("Invalid push response from rngit node");

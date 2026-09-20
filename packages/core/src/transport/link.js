@@ -234,7 +234,7 @@ export class Link extends EventTarget {
    * Initiator-side pending REQUESTs keyed by hex(request_id)
    * (PROTOCOL-SPEC.md §11.5). Each entry resolves/rejects its returned Promise
    * when the matching RESPONSE arrives or the timeout fires.
-   * @type {Map<string, {resolve: Function, reject: Function, onMetadata: ((metadata: any) => void)|undefined, timer: ReturnType<typeof setTimeout>}>}
+   * @type {Map<string, {resolve: Function, reject: Function, onMetadata: ((metadata: any) => void)|undefined, onProgress: ((info: any) => void)|undefined, timer: ReturnType<typeof setTimeout>}>}
    */
   pendingRequests = new Map();
 
@@ -1363,6 +1363,13 @@ export class Link extends EventTarget {
    *   metadata-carrying Resource (§10.4 `x` flag). Invoked before the
    *   returned Promise resolves, so callers observe it as soon as the
    *   response is available.
+   * @param {(info: { direction: "request"|"response", loaded: number, total: number, segmentIndex: number, segmentTotal: number }) => void} [options.onProgress]
+   *   - Transfer progress for Resource-backed request/response bodies
+   *   - `direction` tells whether the bytes flow away from (request
+   *     upload) or towards (response download) the caller. `loaded` /
+   *     `total` are approximate logical byte counts for the current
+   *     segment; `segmentIndex` / `segmentTotal` let callers aggregate
+   *     split transfers.
    * @returns {Promise<any>} The decoded RESPONSE value.
    */
   async request(path, data = null, options = {}) {
@@ -1391,6 +1398,7 @@ export class Link extends EventTarget {
         path,
         timeout,
         options.onMetadata,
+        options.onProgress,
       );
       const { Resource } = await import("../core/resource.js");
       const resource = new Resource({
@@ -1400,6 +1408,21 @@ export class Link extends EventTarget {
         requestId,
         bz2: this.bz2,
       });
+      if (options.onProgress) {
+        // Upload progress: unique parts of the request resource delivered
+        // so far, as an approximate byte position over the logical size.
+        resource.addEventListener("progress", (/** @type {any} */ e) => {
+          const { sent, total } = e.detail;
+          const size = resource.uncompressedSize;
+          options.onProgress?.({
+            direction: "request",
+            loaded: total ? Math.round((sent / total) * size) : 0,
+            total: size,
+            segmentIndex: resource.segmentIndex,
+            segmentTotal: resource.totalSegments,
+          });
+        });
+      }
       await resource.advertise();
       return responsePromise;
     }
@@ -1422,6 +1445,7 @@ export class Link extends EventTarget {
       path,
       timeout,
       options.onMetadata,
+      options.onProgress,
     );
     await this.transport.sendPacket(outbound);
     return responsePromise;
@@ -1435,15 +1459,23 @@ export class Link extends EventTarget {
    * @param {string} path
    * @param {number} timeoutMs
    * @param {(metadata: any) => void} [onMetadata]
+   * @param {(info: any) => void} [onProgress]
    * @returns {Promise<any>}
    * @private
    */
-  _registerPendingRequest(requestIdHex, path, timeoutMs, onMetadata) {
+  _registerPendingRequest(
+    requestIdHex,
+    path,
+    timeoutMs,
+    onMetadata,
+    onProgress,
+  ) {
     return new Promise((resolve, reject) => {
       const entry = {
         resolve,
         reject,
         onMetadata,
+        onProgress,
         timer: setTimeout(() => {
           this.pendingRequests.delete(requestIdHex);
           reject(
@@ -1605,8 +1637,14 @@ export class Link extends EventTarget {
 
     // File-with-metadata responses (§10.4 `x` flag) always use the Resource
     // pipeline — even when small — matching how the reference
-    // implementation transfers file-with-metadata replies.
-    if (response instanceof ResourceResponse) {
+    // implementation transfers file-with-metadata replies. Without metadata
+    // the raw-payload form has no meaning on the wire (the receiving side
+    // would expect a msgpack envelope), so such responses take the ordinary
+    // envelope path with their payload as the value.
+    if (
+      response instanceof ResourceResponse &&
+      response.metadata !== undefined
+    ) {
       const { Resource } = await import("../core/resource.js");
       const resource = new Resource({
         data: response.data,
@@ -1621,7 +1659,9 @@ export class Link extends EventTarget {
       return;
     }
 
-    await this._sendResponse(response, requestId, handler.autoCompress);
+    const value =
+      response instanceof ResourceResponse ? response.data : response;
+    await this._sendResponse(value, requestId, handler.autoCompress);
   }
 
   /**
@@ -2124,6 +2164,24 @@ export class Link extends EventTarget {
           maxSize: this.maxResourceSize,
         });
         if (!incoming) break;
+        // Download progress: route the segments' part progress to the
+        // pending REQUEST awaiting this response, if it asked for it.
+        if (incoming.isResponse && incoming.requestId) {
+          const entry = this.pendingRequests.get(toHex(incoming.requestId));
+          if (entry?.onProgress) {
+            incoming.addEventListener("progress", (/** @type {any} */ e) => {
+              const { received, total } = e.detail;
+              const size = incoming.uncompressedSize;
+              entry.onProgress?.({
+                direction: "response",
+                loaded: total ? Math.round((received / total) * size) : 0,
+                total: size,
+                segmentIndex: incoming.segmentIndex,
+                segmentTotal: incoming.totalSegments,
+              });
+            });
+          }
+        }
         if (incoming.totalSegments > 1) {
           // §10.3: split resource — route only the reassembled whole.
           await this._trackSplitSegment(incoming, decrypted);
