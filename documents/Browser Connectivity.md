@@ -8,6 +8,7 @@ Currently supported are:
 
 * **WebSockets**: JavaScript client can connect to a Reticulum daemon supporting the WebSocket interface. Drop-in implementations exist, including https://github.com/nilu96/rnsWebsocketInterface
 * **HTTP POST exchange**: the client polls an HTTP exchange server (a Reticulum "backbone") using plain `POST` requests — no WebSockets, no open ports, no persistent connection. The most firewall- and shared-hosting-friendly option. See [HTTP POST exchange](#http-post-exchange) below.
+* **WebRTC**: peer-to-peer connection between WebRTC-capable Reticulum nodes. Another transport is used for exchanging connectivity details. See [WebRTC Transport docs](WebRTC_Transport.html).
 
 See [Custom Interfaces](https://reticulum.network/manual/examples.html#example-custominterface) in Reticulum documentation.
 
@@ -42,3 +43,4 @@ The exchange server is a Reticulum backbone that browser clients (and other node
 
 If you are planning to release a browser application using reticulum-js, at this stage it is probably a good idea to host at least one server your clients can use as a default connection point — either an `rnsd` instance with the `WebSocketServerInterface`, or an HTTP exchange backbone (`HttpPostServerInterface` in Node.js, or the Reticulum Post PHP router).
 
+Ideal setup would likely be a shipping a list of default servers and having each client connect to a random one off that list initially.
