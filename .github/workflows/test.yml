@@ -12,6 +12,13 @@ jobs:
         with:
           node-version: '24.x'
           cache: npm
+      # Python toolchain for the cross-implementation interop tests
+      # (backbone, WebSocket, LXMF paper/propagation): those tests
+      # self-skip when Python/RNS are unavailable.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install rns lxmf websockets
       - run: npm ci
       - run: npm run lint
       - run: npm run types
