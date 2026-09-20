@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/rngit",
-  "version": "0.1.0",
+  "version": "0.8.2",
   "description": "Git repositories over Reticulum — an rngit-compatible transport and client for isomorphic-git",
   "keywords": [
     "reticulum",

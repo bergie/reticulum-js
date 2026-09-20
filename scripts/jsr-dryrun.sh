@@ -10,7 +10,7 @@
 # Usage:
 #   scripts/jsr-dryrun.sh                 # dry-run every package
 #   scripts/jsr-dryrun.sh core            # dry-run one package
-#                                            (core|lxmf|rfed|node|webrtc-node|websocket-server-node)
+#                                            (core|lxmf|rfed|node|rngit|webrtc-node|websocket-server-node)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -30,7 +30,7 @@ grep -qxF "$NEGLINE" "$GITIGNORE" || printf '\n%s\n' "$NEGLINE" >> "$GITIGNORE"
 
 packages=("$@")
 if [ "${#packages[@]}" -eq 0 ]; then
-  packages=(core lxmf rfed node webrtc-node websocket-server-node)
+  packages=(core lxmf rfed node rngit webrtc-node websocket-server-node)
 fi
 
 for p in "${packages[@]}"; do

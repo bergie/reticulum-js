@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/rngit",
-  "version": "0.1.0",
+  "version": "0.8.2",
   "license": "EUPL-1.2",
   "exports": {
     ".": "./src/index.js"

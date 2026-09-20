@@ -45,6 +45,7 @@ const PACKAGE_ORDER = [
   "lxmf",
   "rfed",
   "node",
+  "rngit",
   "webrtc-node",
   "websocket-server-node",
 ];

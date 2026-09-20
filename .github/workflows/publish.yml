@@ -82,6 +82,9 @@ jobs:
       - name: Publish @reticulum/node to JSR
         working-directory: packages/node
         run: npx -y jsr publish --allow-dirty
+      - name: Publish @reticulum/rngit to JSR
+        working-directory: packages/rngit
+        run: npx -y jsr publish --allow-dirty
       - name: Publish @reticulum/webrtc-node to JSR
         working-directory: packages/webrtc-node
         run: npx -y jsr publish --allow-dirty
