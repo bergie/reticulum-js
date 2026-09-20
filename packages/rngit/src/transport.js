@@ -23,7 +23,7 @@
  * `have` lines forwarded to the node so bundles stay thin.
  */
 
-import { emptyPack, parseBundle } from "./bundle.js";
+import { buildBundle, emptyPack, parseBundle } from "./bundle.js";
 import { fattenPack } from "./pack.js";
 import {
   asyncIteratorFromBytes,
@@ -163,6 +163,105 @@ export function parseUploadPackRequest(body) {
 }
 
 /**
+ * Parses a `git-receive-pack` request body into its update commands and
+ * trailing packfile.
+ *
+ * Layout: pkt-line commands `<old> <new> <ref>[\\0 caps]` then a flush,
+ * followed by raw packfile bytes (absent for deletions). A new oid of
+ * all zeros means deletion.
+ *
+ * @param {Uint8Array} body
+ * @returns {{ commands: { old: string, new: string, ref: string }[], capabilities: string[], pack: Uint8Array|null }}
+ */
+export function parseReceivePackRequest(body) {
+  /** @type {{ old: string, new: string, ref: string }[]} */
+  const commands = [];
+  /** @type {string[]} */
+  const capabilities = [];
+  let offset = 0;
+  let sawFlush = false;
+  const decoder = new TextDecoder();
+  while (offset + 4 <= body.length) {
+    const header = decoder.decode(body.subarray(offset, offset + 4));
+    const length = Number.parseInt(header, 16);
+    if (Number.isNaN(length)) {
+      throw new Error(`Invalid pkt-line header: ${header}`);
+    }
+    if (length === 0) {
+      sawFlush = true;
+      offset += 4;
+      break;
+    }
+    const raw = decoder.decode(body.subarray(offset + 4, offset + length));
+    const nul = raw.indexOf("\0");
+    const line = (nul === -1 ? raw : raw.slice(0, nul)).trim();
+    if (nul !== -1) {
+      capabilities.push(
+        ...raw
+          .slice(nul + 1)
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean),
+      );
+    }
+    const parts = line.split(" ");
+    if (parts.length !== 3) {
+      throw new Error(`Malformed receive-pack command: ${line}`);
+    }
+    commands.push({ old: parts[0], new: parts[1], ref: parts[2] });
+    offset += length;
+  }
+  if (!sawFlush) {
+    throw new Error("receive-pack request missing flush after commands");
+  }
+  const pack = body.subarray(offset);
+  return {
+    commands,
+    capabilities,
+    pack: pack.length > 0 ? pack : null,
+  };
+}
+
+/**
+ * Synthesizes a `report-status` response for a receive-pack request.
+ *
+ * When the client negotiated `side-band-64k`, the status lines ride
+ * band 1 — clients demux the report from the packfile channel.
+ *
+ * @param {{ ref: string, ok: boolean, error?: string }[]} reports
+ * @param {object} [options]
+ * @param {boolean} [options.sideband=false]
+ * @returns {Uint8Array}
+ */
+export function buildReportStatusResponse(reports, options = {}) {
+  /**
+   * Frames one report line. Without side-band the report is a plain
+   * pkt-line stream; with side-band, band 1 carries that same pkt-line
+   * stream as chunks — the client demuxes band 1 and re-parses the
+   * pkt-lines from it.
+   * @param {string} line
+   */
+  const frame = (line) => {
+    const inner = encodePktLine(line);
+    if (!options.sideband) return inner;
+    const payload = new Uint8Array(1 + inner.length);
+    payload[0] = 0x01; // side-band 1
+    payload.set(inner, 1);
+    return encodePktLine(payload);
+  };
+  const parts = [frame("unpack ok\n")];
+  for (const report of reports) {
+    parts.push(
+      report.ok
+        ? frame(`ok ${report.ref}\n`)
+        : frame(`ng ${report.ref} ${report.error ?? "rejected"}\n`),
+    );
+  }
+  parts.push(FLUSH);
+  return concat(...parts);
+}
+
+/**
  * Synthesizes a smart-HTTP `info/refs` advertisement from an rngit list
  * result.
  *
@@ -237,11 +336,13 @@ export function buildUploadPackResponse(pack) {
  *   repository; needed to resolve thin-bundle delta bases from the local
  *   object store before the packfile is handed to isomorphic-git.
  * @param {string} [options.gitdir] - Local git directory.
+ * @param {boolean} [options.force=false] - Allow non-fast-forward ref
+ *   updates on pushes that take the direct `update_ref` path.
  * @returns {{ request: (req: any) => Promise<any> }} An object implementing
  *   isomorphic-git's `HttpClient` interface.
  */
 export function createRngitTransport(client, options = {}) {
-  const { fs, gitdir } = options;
+  const { fs, gitdir, force } = options;
   /** @type {{ head: string|null, refs: Map<string, string> }|null} */
   let listCache = null;
 
@@ -354,11 +455,69 @@ export function createRngitTransport(client, options = {}) {
       }
 
       // endpoint === "receive-pack"
-      return badRequest(
+      if (method !== "POST") {
+        return badRequest(url, method, `${method} not allowed`);
+      }
+      const { commands, pack, capabilities } = parseReceivePackRequest(
+        await collectBody(body),
+      );
+      const sideband = capabilities.some(
+        (/** @type {string} */ cap) => cap.split("=", 1)[0] === "side-band-64k",
+      );
+      if (commands.length !== 1) {
+        return badRequest(
+          url,
+          method,
+          `expected exactly one ref update per push, got ${commands.length}`,
+        );
+      }
+      const command = commands[0];
+      /** @type {{ ref: string, ok: boolean, error?: string }} */
+      let report;
+      try {
+        if (command.new === "0".repeat(40)) {
+          // Deletion.
+          if (pack) throw new Error("unexpected pack bytes for a deletion");
+          await client.deleteRef(command.ref);
+        } else if (pack && packObjectCount(pack) > 0) {
+          // New objects: wrap the pushed pack in a bundle for the node.
+          const bundle = buildBundle(
+            [{ sha: command.new, ref: command.ref }],
+            pack,
+          );
+          await client.push({ ref: command.ref, bundle, force });
+        } else {
+          // Everything reachable already exists on the node — a direct
+          // ref update needs no bundle transfer.
+          await client.push({
+            ref: command.ref,
+            sha: command.new,
+            force,
+          });
+        }
+        report = { ref: command.ref, ok: true };
+      } catch (err) {
+        report = {
+          ref: command.ref,
+          ok: false,
+          error: String(/** @type {Error} */ (err).message ?? err).replace(
+            /\s+/g,
+            " ",
+          ),
+        };
+      }
+      return {
         url,
         method,
-        "Pushing to rngit remotes is not implemented yet (phase 2)",
-      );
+        statusCode: 200,
+        statusMessage: "OK",
+        headers: {
+          "content-type": "application/x-git-receive-pack-result",
+        },
+        body: asyncIteratorFromBytes(
+          buildReportStatusResponse([report], { sideband }),
+        ),
+      };
     },
   };
 }
@@ -379,4 +538,15 @@ function badRequest(url, method, message) {
     headers: { "content-type": "text/plain" },
     body: asyncIteratorFromBytes(new TextEncoder().encode(message)),
   };
+}
+
+/**
+ * Reads the object count from a packfile header (bytes 8-11).
+ *
+ * @param {Uint8Array} pack
+ * @returns {number}
+ */
+function packObjectCount(pack) {
+  if (pack.length < 12) return 0;
+  return (pack[8] << 24) | (pack[9] << 16) | (pack[10] << 8) | pack[11];
 }

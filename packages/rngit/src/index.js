@@ -23,9 +23,9 @@
 
 /* @ts-self-types="../types/src/index.d.ts" */
 
-export { emptyPack, parseBundle } from "./bundle.js";
+export { buildBundle, emptyPack, parseBundle } from "./bundle.js";
 export { createBz2, RngitClient } from "./client.js";
-export { clone, fetch } from "./commands.js";
+export { clone, fetch, push } from "./commands.js";
 export {
   applyDelta,
   buildPack,
@@ -63,7 +63,12 @@ export {
   resultCodeFromMetadata,
 } from "./protocol.js";
 export {
+  buildInfoRefsResponse,
+  buildReportStatusResponse,
+  buildUploadPackResponse,
   createRngitTransport,
+  parseReceivePackRequest,
+  parseUploadPackRequest,
   UnsupportedFeatureError,
 } from "./transport.js";
 export {

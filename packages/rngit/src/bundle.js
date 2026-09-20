@@ -113,3 +113,36 @@ export async function emptyPack() {
   out.set(new Uint8Array(digest), 12);
   return out;
 }
+
+/**
+ * Builds a git bundle v2 from full refs and a packfile. Used for pushing:
+ * the pushed pack (self-contained) is wrapped with a header naming the
+ * pushed ref, and the node fetches `local_ref:remote_ref` from it.
+ *
+ * @param {{ sha: string, ref: string }[]} refs - Refs carried by the bundle.
+ * @param {Uint8Array} pack - Complete packfile bytes (header, objects,
+ *   SHA-1 trailer).
+ * @returns {Uint8Array}
+ */
+export function buildBundle(refs, pack) {
+  const encoder = new TextEncoder();
+  /** @type {Uint8Array[]} */
+  const parts = [encoder.encode(`${BUNDLE_V2_SIGNATURE}\n`)];
+  for (const { sha, ref } of refs) {
+    parts.push(encoder.encode(`${sha} ${ref}\n`));
+  }
+  parts.push(encoder.encode("\n"));
+  parts.push(pack);
+  return concatBytes(...parts);
+}
+
+/** @param {...Uint8Array} chunks */
+function concatBytes(...chunks) {
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
+}

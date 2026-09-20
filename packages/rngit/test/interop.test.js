@@ -94,7 +94,7 @@ announce_interval = 1
 interop = ${join(base, "repos")}
 
 [access]
-interop = r:all
+interop = rw:all
 
 [logging]
 loglevel = 4

@@ -27,8 +27,10 @@ import {
 import {
   ASPECT,
   buildRequest,
+  PATH_DELETE,
   PATH_FETCH,
   PATH_LIST,
+  PATH_PUSH,
   parseListResponse,
   parseStatusResponse,
   RES_OK,
@@ -52,7 +54,28 @@ export async function createBz2() {
   const bz = new BZip2();
   await bz.init();
   return {
-    compress: (data) => bz.compress(data),
+    /**
+     * The wasm module sizes its destination buffer from the input length
+     * and fails with BZ_OUTBUFF_FULL whenever compression would expand
+     * the data (small incompressible payloads — git bundles among them).
+     * That is not an error for the Resource protocol: an expansion simply
+     * means "send uncompressed", which is exactly what the caller falls
+     * back to when `compress` output is not smaller than the input.
+     */
+    compress: (data) => {
+      try {
+        return bz.compress(data);
+      } catch (err) {
+        if (
+          /OUTBUFF_FULL|buffer is full/i.test(
+            String(/** @type {Error} */ (err).message ?? err),
+          )
+        ) {
+          return data;
+        }
+        throw err;
+      }
+    },
     decompress: (data, outputLen) => bz.decompress(data, outputLen),
   };
 }
@@ -244,6 +267,68 @@ export class RngitClient {
     const { status, message } = parseStatusResponse(response);
     if (status === RES_OK) return null;
     throw new RngitStatusError(status, message);
+  }
+
+  /**
+   * Pushes a bundle of `ref` to the node, mirroring the bundle form of the
+   * `/git/push` request: `{local_ref, remote_ref, force, bundle}`. When
+   * every reachable object already exists on the node, pass `sha` instead
+   * of `bundle` and the node updates the ref directly.
+   *
+   * @param {object} request
+   * @param {string} request.ref - Full remote ref name (e.g.
+   *   `refs/heads/main`); the bundle records the same name.
+   * @param {Uint8Array} [request.bundle] - Bundle v2 bytes built by the
+   *   caller.
+   * @param {string} [request.sha] - Target object id for the direct
+   *   `update_ref` operation when no bundle is needed.
+   * @param {boolean} [request.force=false] - Allow non-fast-forward updates.
+   * @returns {Promise<void>}
+   * @throws {RngitStatusError} on a non-zero status reply.
+   */
+  async push({ ref, bundle, sha, force = false }) {
+    if (!this.remote) throw new RemoteUrlError("No remote url configured");
+    const link = await this._link();
+    const request = bundle
+      ? buildRequest(this.remote.repoPath, {
+          local_ref: ref,
+          remote_ref: ref,
+          force,
+          bundle,
+        })
+      : buildRequest(this.remote.repoPath, {
+          operations: [{ action: "update_ref", ref, sha, force }],
+        });
+    const response = await link.request(PATH_PUSH, request, {
+      timeout: this.fetchTimeoutMs,
+    });
+    if (!(response instanceof Uint8Array)) {
+      throw new Error("Invalid push response from rngit node");
+    }
+    const { status, message } = parseStatusResponse(response);
+    if (status !== RES_OK) throw new RngitStatusError(status, message);
+  }
+
+  /**
+   * Deletes a remote ref via `/git/delete`.
+   *
+   * @param {string} ref - Full ref name (e.g. `refs/heads/feature`).
+   * @returns {Promise<void>}
+   * @throws {RngitStatusError} on a non-zero status reply.
+   */
+  async deleteRef(ref) {
+    if (!this.remote) throw new RemoteUrlError("No remote url configured");
+    const link = await this._link();
+    const response = await link.request(
+      PATH_DELETE,
+      buildRequest(this.remote.repoPath, { ref }),
+      { timeout: this.requestTimeoutMs },
+    );
+    if (!(response instanceof Uint8Array)) {
+      throw new Error("Invalid delete response from rngit node");
+    }
+    const { status, message } = parseStatusResponse(response);
+    if (status !== RES_OK) throw new RngitStatusError(status, message);
   }
 
   /**

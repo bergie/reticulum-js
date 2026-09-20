@@ -11,7 +11,7 @@
  */
 import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
-import fs, { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import fs, { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
@@ -27,13 +27,16 @@ import {
   ResourceResponse,
   toHex,
 } from "@reticulum/core";
+import { buildBundle, emptyPack, parseBundle } from "../src/bundle.js";
 import { RngitClient } from "../src/client.js";
-import { clone, fetch } from "../src/commands.js";
+import { clone, fetch, push } from "../src/commands.js";
 import { decodePktLines, encodePktLine, FLUSH } from "../src/pktline.js";
 import { IDX_REPOSITORY } from "../src/protocol.js";
 import {
   buildInfoRefsResponse,
+  buildReportStatusResponse,
   buildUploadPackResponse,
+  parseReceivePackRequest,
   parseUploadPackRequest,
   UnsupportedFeatureError,
 } from "../src/transport.js";
@@ -94,7 +97,9 @@ function makeSourceRepo() {
 function runGit(dir, ...args) {
   return execFileSync("git", ["-C", dir, ...args], {
     env: ENV,
-  }).toString();
+  })
+    .toString()
+    .trim();
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +158,8 @@ class LoopbackTransport {
  * Establishes a loopback Link pair with a scripted rngit node on the
  * responder side.
  *
- * @param {object} handlers - `{ list(data) → response, fetch(data) → response }`
+ * @param {object} handlers - `{ list, fetch, push?, delete? }` request
+ *   handlers, each `(data) → response`.
  * @returns {Promise<{ initiator: Link, responderDest: Destination }>}
  */
 async function makeRngitPair(handlers) {
@@ -180,6 +186,18 @@ async function makeRngitPair(handlers) {
     allow: Allow.ALL,
     responseGenerator: async (_path, data) => handlers.fetch(data),
   });
+  if (handlers.push) {
+    await responderDest.registerRequestHandler("/git/push", {
+      allow: Allow.ALL,
+      responseGenerator: async (_path, data) => handlers.push(data),
+    });
+  }
+  if (handlers.delete) {
+    await responderDest.registerRequestHandler("/git/delete", {
+      allow: Allow.ALL,
+      responseGenerator: async (_path, data) => handlers.delete(data),
+    });
+  }
 
   const initiatorDest = await Destination.create(
     "git.repositories",
@@ -295,10 +313,14 @@ describe("buildUploadPackResponse", () => {
 describe("rngit transport against isomorphic-git (loopback)", () => {
   /**
    * Builds the scripted rngit node handlers backed by a fixture repo.
+   * Supports the full transfer set: list, fetch, push and delete — so
+   * push tests run against a bare repository fixture.
    *
    * @param {string} srcDir
+   * @param {{ lastPush?: any }} [state] - Recording object for assertions
+   *   about which push path the node took.
    */
-  function rngitNode(srcDir) {
+  function rngitNode(srcDir, state = {}) {
     return {
       /** @param {any} data */
       async list(data) {
@@ -340,6 +362,51 @@ describe("rngit transport against isomorphic-git (loopback)", () => {
           new Uint8Array(readFileSync(bundlePath)),
           new Map([[1, 0]]), // IDX_RESULT_CODE = RES_OK
         );
+      },
+
+      /**
+       * Mirrors the node's `/git/push` handling: bundles are fetched into
+       * the repository, direct `update_ref` operations set refs without a
+       * transfer.
+       * @param {any} data
+       */
+      async push(data) {
+        assert.equal(data[IDX_REPOSITORY], "test/repo");
+        if (data.bundle) {
+          state.lastPush = "bundle";
+          const bundlePath = join(srcDir, "push.bundle");
+          writeFileSync(bundlePath, data.bundle);
+          const args = [
+            "fetch",
+            "-q",
+            bundlePath,
+            `${data.local_ref}:${data.remote_ref}`,
+          ];
+          if (data.force) args.push("--force");
+          runGit(srcDir, ...args);
+        } else if (Array.isArray(data.operations)) {
+          state.lastPush = "operations";
+          for (const op of data.operations) {
+            assert.equal(op.action, "update_ref");
+            // The object must exist in the node's repository.
+            runGit(srcDir, "cat-file", "-t", op.sha);
+            runGit(srcDir, "update-ref", op.ref, op.sha);
+          }
+        } else {
+          throw new Error("invalid push request");
+        }
+        return new Uint8Array([0]);
+      },
+
+      /**
+       * Mirrors the node's `/git/delete` handling.
+       * @param {any} data
+       */
+      async delete(data) {
+        assert.equal(data[IDX_REPOSITORY], "test/repo");
+        assert.match(data.ref, /^refs\//);
+        runGit(srcDir, "update-ref", "-d", data.ref);
+        return new Uint8Array([0]);
       },
     };
   }
@@ -464,6 +531,249 @@ describe("rngit transport against isomorphic-git (loopback)", () => {
       assert.ok(Buffer.compare(round, big) === 0, "big file intact");
     } finally {
       removeTree(src.dir);
+      removeTree(cloneDir);
+    }
+  });
+
+  test("parseReceivePackRequest extracts commands, caps and pack", () => {
+    const sha = (n) => `${n}`.repeat(40).slice(0, 40);
+    const caps = "report-status agent=git/isomorphic-git@1.42.2";
+    const pack = new Uint8Array([
+      0x50, 0x41, 0x43, 0x4b, 0, 0, 0, 2, 0, 0, 0, 1, 0xde, 0xad,
+    ]);
+    const body = [
+      encodePktLine(`${sha("0")} ${sha("1")} refs/heads/main\0 ${caps}\n`),
+      FLUSH,
+      pack,
+    ].reduce(joinBytes, new Uint8Array(0));
+    const { commands, pack: extracted } = parseReceivePackRequest(body);
+    assert.equal(commands.length, 1);
+    assert.equal(commands[0].old, sha("0"));
+    assert.equal(commands[0].new, sha("1"));
+    assert.equal(commands[0].ref, "refs/heads/main");
+    assert.deepEqual(Array.from(extracted ?? []), Array.from(pack));
+  });
+
+  test("buildReportStatusResponse frames unpack/ref statuses", () => {
+    const response = buildReportStatusResponse([
+      { ref: "refs/heads/main", ok: true },
+      { ref: "refs/tags/x", ok: false, error: "already exists" },
+    ]);
+    const lines = decodePktLines(response);
+    const text = (/** @type {Uint8Array} */ l) => new TextDecoder().decode(l);
+    assert.equal(text(lines[0]), "unpack ok\n");
+    assert.equal(text(lines[1]), "ok refs/heads/main\n");
+    assert.equal(text(lines[2]), "ng refs/tags/x already exists\n");
+    assert.equal(lines[3], null);
+  });
+
+  test("buildBundle output parses back with parseBundle", async () => {
+    const pack = await emptyPack();
+    const bundle = buildBundle(
+      [{ sha: "a".repeat(40), ref: "refs/heads/main" }],
+      pack,
+    );
+    const parsed = parseBundle(bundle);
+    assert.equal(parsed.refs.get("refs/heads/main"), "a".repeat(40));
+    assert.deepEqual(Array.from(parsed.pack), Array.from(pack));
+  });
+
+  test("push advances the rngit node's repository (bare fixture)", async () => {
+    const src = makeSourceRepo();
+    // Serve from a bare clone so pushes land in a real server-side repo.
+    const bareDir = mkdtempSync(join(tmpdir(), "rngit-bare-"));
+    runGit(bareDir, "init", "-q", "--bare", "-b", "main", ".");
+    runGit(src.dir, "push", "-q", bareDir, "main", "refs/tags/v1.0");
+    const cloneDir = mkdtempSync(join(tmpdir(), "rngit-push-"));
+    try {
+      const state = {};
+      const { initiator } = await makeRngitPair(rngitNode(bareDir, state));
+      const client = new RngitClient({
+        url: `rns://${"77".repeat(16)}/test/repo`,
+        link: initiator,
+      });
+
+      await clone({
+        fs,
+        dir: cloneDir,
+        url: `rns://${"77".repeat(16)}/test/repo`,
+        client,
+      });
+      assert.equal(state.lastPush, undefined);
+
+      // Local commit, then push.
+      fs.writeFileSync(join(cloneDir, "lib.js"), "export const answer = 44;\n");
+      runGit(cloneDir, "add", ".");
+      runGit(cloneDir, "config", "user.name", "Test");
+      runGit(cloneDir, "config", "user.email", "test@example.com");
+      runGit(cloneDir, "commit", "-q", "-m", "local work");
+      const localHead = runGit(cloneDir, "rev-parse", "HEAD").trim();
+
+      const result = await push({ fs, dir: cloneDir, ref: "main", client });
+      assert.equal(result.ok, true);
+      assert.equal(result.refs["refs/heads/main"].ok, true);
+      assert.equal(
+        state.lastPush,
+        "bundle",
+        "bundle path used for new objects",
+      );
+
+      // The node's repository advanced to the pushed commit.
+      assert.equal(
+        runGit(bareDir, "rev-parse", "refs/heads/main").trim(),
+        localHead,
+      );
+      runGit(bareDir, "fsck", "--strict");
+      // The clone's remote-tracking ref moved too.
+      assert.equal(
+        runGit(cloneDir, "rev-parse", "refs/remotes/origin/main").trim(),
+        localHead,
+      );
+    } finally {
+      removeTree(src.dir);
+      removeTree(bareDir);
+      removeTree(cloneDir);
+    }
+  });
+
+  test("push of existing objects uses the direct update path", async () => {
+    const src = makeSourceRepo();
+    const bareDir = mkdtempSync(join(tmpdir(), "rngit-bare-"));
+    runGit(bareDir, "init", "-q", "--bare", "-b", "main", ".");
+    runGit(src.dir, "push", "-q", bareDir, "main", "refs/tags/v1.0");
+    const cloneDir = mkdtempSync(join(tmpdir(), "rngit-push-"));
+    try {
+      const state = {};
+      const { initiator } = await makeRngitPair(rngitNode(bareDir, state));
+      const client = new RngitClient({
+        url: `rns://${"78".repeat(16)}/test/repo`,
+        link: initiator,
+      });
+      await clone({
+        fs,
+        dir: cloneDir,
+        url: `rns://${"78".repeat(16)}/test/repo`,
+        client,
+      });
+
+      // Push an already-present commit under a new branch name: every
+      // object exists on the node, so no bundle transfer is needed.
+      const result = await push({
+        fs,
+        dir: cloneDir,
+        ref: "main",
+        remoteRef: "refs/heads/copy",
+        client,
+      });
+      assert.equal(result.ok, true);
+      assert.equal(state.lastPush, "operations", "direct update path");
+      assert.equal(
+        runGit(bareDir, "rev-parse", "refs/heads/copy").trim(),
+        runGit(bareDir, "rev-parse", "refs/heads/main").trim(),
+      );
+    } finally {
+      removeTree(src.dir);
+      removeTree(bareDir);
+      removeTree(cloneDir);
+    }
+  });
+
+  test("push deletes a remote ref", async () => {
+    const src = makeSourceRepo();
+    const bareDir = mkdtempSync(join(tmpdir(), "rngit-bare-"));
+    runGit(bareDir, "init", "-q", "--bare", "-b", "main", ".");
+    runGit(src.dir, "push", "-q", bareDir, "main", "refs/tags/v1.0");
+    const cloneDir = mkdtempSync(join(tmpdir(), "rngit-del-"));
+    try {
+      const { initiator } = await makeRngitPair(rngitNode(bareDir, {}));
+      const client = new RngitClient({
+        url: `rns://${"79".repeat(16)}/test/repo`,
+        link: initiator,
+      });
+      await clone({
+        fs,
+        dir: cloneDir,
+        url: `rns://${"79".repeat(16)}/test/repo`,
+        client,
+      });
+      assert.match(
+        runGit(bareDir, "rev-parse", "refs/heads/main"),
+        /^[0-9a-f]{40}$/,
+      );
+
+      const result = await push({
+        fs,
+        dir: cloneDir,
+        ref: "main",
+        delete: true,
+        client,
+      });
+      assert.equal(result.ok, true);
+      assert.equal(
+        runGit(
+          bareDir,
+          "for-each-ref",
+          "--format=%(refname)",
+          "refs/heads/main",
+        ),
+        "",
+        "ref deleted on the node",
+      );
+    } finally {
+      removeTree(src.dir);
+      removeTree(bareDir);
+      removeTree(cloneDir);
+    }
+  });
+
+  test("non-fast-forward pushes without force are rejected client-side", async () => {
+    const src = makeSourceRepo();
+    const bareDir = mkdtempSync(join(tmpdir(), "rngit-bare-"));
+    runGit(bareDir, "init", "-q", "--bare", "-b", "main", ".");
+    runGit(src.dir, "push", "-q", bareDir, "main", "refs/tags/v1.0");
+    const cloneDir = mkdtempSync(join(tmpdir(), "rngit-ff-"));
+    try {
+      const { initiator } = await makeRngitPair(rngitNode(bareDir, {}));
+      const client = new RngitClient({
+        url: `rns://${"7a".repeat(16)}/test/repo`,
+        link: initiator,
+      });
+      await clone({
+        fs,
+        dir: cloneDir,
+        url: `rns://${"7a".repeat(16)}/test/repo`,
+        client,
+      });
+      runGit(cloneDir, "config", "user.name", "Test");
+      runGit(cloneDir, "config", "user.email", "test@example.com");
+
+      // Diverge the server.
+      runGit(src.dir, "commit", "--allow-empty", "-q", "-m", "server side");
+      runGit(src.dir, "push", "-q", bareDir, "main");
+      // Diverge the client.
+      runGit(cloneDir, "commit", "--allow-empty", "-q", "-m", "client side");
+
+      await assert.rejects(
+        () => push({ fs, dir: cloneDir, ref: "main", client }),
+        (/** @type {any} */ err) => err.code === "PushRejectedError",
+      );
+
+      // With force, the push lands.
+      const result = await push({
+        fs,
+        dir: cloneDir,
+        ref: "main",
+        force: true,
+        client,
+      });
+      assert.equal(result.ok, true);
+      assert.equal(
+        runGit(bareDir, "rev-parse", "refs/heads/main").trim(),
+        runGit(cloneDir, "rev-parse", "HEAD").trim(),
+      );
+    } finally {
+      removeTree(src.dir);
+      removeTree(bareDir);
       removeTree(cloneDir);
     }
   });

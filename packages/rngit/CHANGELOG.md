@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 ### Added
+- Push support (phase 2), mirroring the reference `git-remote-rns` flows:
+  - `RngitClient.push({ ref, bundle?, sha?, force })` — the bundle form
+    (`{local_ref, remote_ref, force, bundle}`) for new objects, and the
+    direct `update_ref` operations form when everything reachable already
+    exists on the node.
+  - `RngitClient.deleteRef(ref)` — `/git/delete`.
+  - The `push` command wrapper (isomorphic-git `git.push` semantics for
+    `rns://` remotes, including `force` and `delete`).
+  - The transport's receive-pack endpoint: parses the pushed commands and
+    packfile, wraps the pack in a bundle v2 (`buildBundle`), answers with
+    a `report-status` reply (side-band-64k framed when negotiated).
+  - Deletions map to `/git/delete`; zero-object pushes take the direct
+    `update_ref` path without a bundle transfer.
+- Fixed the bundled bz2 adapter failing on payloads that do not compress:
+  the wasm module sizes its destination buffer from the input length and
+  errors with `BZ_OUTBUFF_FULL` whenever compression would expand the
+  data (small incompressible payloads, e.g. short push bundles). The
+  adapter now returns the input unchanged in that case, which the
+  Resource protocol already treats as "send uncompressed".
+- Live interop coverage: the gated test now pushes a new commit to a real
+  rngit node, creates a branch via the direct path, and deletes it.
 - Initial `@reticulum/rngit` package: an rngit-compatible client and
   isomorphic-git transport for Git repositories over Reticulum.
 - `parseRemoteUrl` / `stringifyRemoteUrl` for `rns://<hash>/<group>/<repo>`

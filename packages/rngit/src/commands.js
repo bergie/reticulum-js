@@ -100,6 +100,70 @@ export async function fetch(options) {
 }
 
 /**
+ * @typedef {object} RngitPushOptions
+ * @property {any} fs - An isomorphic-git filesystem client.
+ * @property {string} [dir] - Working tree directory.
+ * @property {string} [gitdir] - Git directory (defaults to `dir/.git`).
+ * @property {string} [remote="origin"] - Remote name to push to.
+ * @property {string} [url] - Explicit `rns://…` URL (overrides the remote's
+ *   configured URL without rewriting it).
+ * @property {string} ref - Local branch or tag to push.
+ * @property {string} [remoteRef] - Target ref on the remote (defaults to
+ *   `ref`).
+ * @property {boolean} [force=false] - Allow non-fast-forward updates.
+ * @property {boolean} [delete=false] - Delete the remote ref instead.
+ * @property {import("./client.js").RngitClient} [client] - Pre-configured
+ *   client. When omitted, one is created for this push and closed after.
+ * @property {(event: any) => void} [onProgress]
+ * @property {(message: string) => void} [onMessage]
+ * @property {object} [cache]
+ */
+
+/**
+ * Pushes to an rngit remote. Mirrors `git.push(options)` from
+ * isomorphic-git (same result object), with `rns://` remote URLs.
+ *
+ * @param {RngitPushOptions} options
+ * @returns {Promise<any>}
+ */
+export async function push(options) {
+  const { fs, dir, gitdir = dir ? `${dir}/.git` : undefined } = options;
+  if (!gitdir) throw new Error("push requires dir or gitdir");
+  const url = await resolveRemoteUrl({
+    fs,
+    gitdir,
+    url: options.url,
+    remote: options.remote,
+  });
+  const ownsClient = !options.client;
+  const client =
+    options.client ?? new RngitClient({ url, ...transportDefaults(options) });
+  try {
+    const http = createRngitTransport(client, {
+      fs,
+      gitdir,
+      force: options.force ?? false,
+    });
+    return await git.push({
+      fs,
+      gitdir,
+      http,
+      remote: options.remote,
+      url: toPlaceholderHttpUrl(url),
+      ref: options.ref,
+      remoteRef: options.remoteRef,
+      force: options.force,
+      delete: options.delete,
+      onProgress: options.onProgress,
+      onMessage: options.onMessage,
+      cache: options.cache,
+    });
+  } finally {
+    if (ownsClient) await client.close();
+  }
+}
+
+/**
  * @typedef {object} RngitCloneOptions
  * @property {any} fs - An isomorphic-git filesystem client.
  * @property {string} dir - Directory to clone into.
