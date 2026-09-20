@@ -254,6 +254,20 @@ export class Link extends EventTarget {
   incomingResources = new Map();
 
   /**
+   * Split-resource assemblers (§10.3) keyed by hex(originalHash) — the first
+   * segment's hash that ties all segments of one logical transfer together.
+   * @type {Map<string, import("../core/resource.js").SplitResourceAssembler>}
+   */
+  splitResources = new Map();
+
+  /**
+   * Original hashes of split resources that failed mid-transfer; late
+   * segments for these are rejected instead of restarting an assembler.
+   * @type {Set<string>}
+   */
+  failedSplitResources = new Set();
+
+  /**
    * Injected bz2 module (PROTOCOL-SPEC.md §10.2 step 2). The library never
    * imports a compression dependency; the application assigns this if it wants
    * Resource compression. When unset, compressed advertisements cannot be
@@ -1838,6 +1852,25 @@ export class Link extends EventTarget {
   }
 
   /**
+   * Removes an outgoing Resource registration (e.g. a split resource
+   * advancing to its next segment, keyed by the previous segment's hash).
+   * @param {Uint8Array} hash
+   * @internal
+   */
+  _unregisterOutgoingResource(hash) {
+    this.outgoingResources.delete(toHex(hash));
+  }
+
+  /**
+   * Removes an incoming Resource registration.
+   * @param {Uint8Array} hash
+   * @internal
+   */
+  _unregisterIncomingResource(hash) {
+    this.incomingResources.delete(toHex(hash));
+  }
+
+  /**
    * Registers an incoming Resource (receiver side) keyed by hex(resource.hash).
    * @param {import("../core/resource.js").Resource} resource
    * @internal
@@ -1846,6 +1879,103 @@ export class Link extends EventTarget {
     if (resource.hash) {
       this.incomingResources.set(toHex(resource.hash), resource);
     }
+  }
+
+  /**
+   * Routes a completed (or split-assembled) Resource to the §11 machinery or
+   * the generic `resource` event, depending on its flags.
+   *
+   * @param {import("../core/resource.js").Resource} resource
+   * @param {import("../core/packet.js").Packet} packet - The advertisement
+   *   packet (or final-segment advertisement) that initiated the transfer.
+   * @private
+   */
+  _routeAssembledResource(resource, packet) {
+    // §11.1/§11.2: a Resource carrying a REQUEST/RESPONSE body is routed
+    // to the §11 machinery on completion instead of the generic event.
+    if (resource.isRequest) {
+      resource
+        .whenComplete()
+        .then(() => this._handleResourceRequest(resource))
+        .catch((/** @type {Error} */ err) =>
+          log(
+            "Link",
+            `Incoming REQUEST resource failed: ${err}`,
+            LogLevel.ERROR,
+          ),
+        );
+    } else if (resource.isResponse) {
+      resource
+        .whenComplete()
+        .then(() => this._handleResourceResponse(resource))
+        .catch((/** @type {Error} */ err) =>
+          log(
+            "Link",
+            `Incoming RESPONSE resource failed: ${err}`,
+            LogLevel.ERROR,
+          ),
+        );
+    } else {
+      this.dispatchEvent(
+        new CustomEvent("resource", {
+          detail: { packet, resource },
+        }),
+      );
+    }
+  }
+
+  /**
+   * Feeds a completed segment of a split Resource into its assembler. When
+   * the final segment completes, the reassembled synthetic Resource is
+   * routed like a single-segment one; a failed segment fails the whole
+   * transfer and rejects any pending REQUEST awaiting it.
+   *
+   * @param {import("../core/resource.js").Resource} segment
+   * @param {import("../core/packet.js").Packet} packet
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _trackSplitSegment(segment, packet) {
+    const { Resource, SplitResourceAssembler } = await import(
+      "../core/resource.js"
+    );
+    const key = toHex(/** @type {Uint8Array} */ (segment.originalHash));
+    if (this.failedSplitResources.has(key)) {
+      // The transfer already failed — reject late segments outright.
+      await Resource._sendReject(
+        this,
+        /** @type {Uint8Array} */ (segment.hash),
+      );
+      return;
+    }
+    let assembler = this.splitResources.get(key);
+    if (!assembler) {
+      assembler = new SplitResourceAssembler(segment);
+      this.splitResources.set(key, assembler);
+    }
+    segment
+      .whenComplete()
+      .then((seg) => {
+        const assembled = assembler.add(seg);
+        if (!assembled) return;
+        this.splitResources.delete(key);
+        this._routeAssembledResource(assembled, packet);
+      })
+      .catch((/** @type {Error} */ err) => {
+        this.splitResources.delete(key);
+        this.failedSplitResources.add(key);
+        log("Link", `Split resource ${key} failed: ${err}`, LogLevel.ERROR);
+        // Propagate the failure to a pending REQUEST awaiting this transfer
+        // instead of letting it run into the response timeout.
+        if (segment.requestId) {
+          const entry = this.pendingRequests.get(toHex(segment.requestId));
+          if (entry) {
+            clearTimeout(entry.timer);
+            this.pendingRequests.delete(toHex(segment.requestId));
+            entry.reject(err);
+          }
+        }
+      });
   }
 
   /**
@@ -1986,42 +2116,19 @@ export class Link extends EventTarget {
 
       case ContextType.RESOURCE_ADV: {
         // §10.4: receiver accepts an incoming transfer and starts requesting.
-        const { Resource } = await import("../core/resource.js");
+        const { Resource, SplitResourceAssembler } = await import(
+          "../core/resource.js"
+        );
         const incoming = await Resource.accept(this, decrypted, {
           bz2: this.bz2,
           maxSize: this.maxResourceSize,
         });
         if (!incoming) break;
-        // §11.1/§11.2: a Resource carrying a REQUEST/RESPONSE body is routed
-        // to the §11 machinery on completion instead of the generic event.
-        if (incoming.isRequest) {
-          incoming
-            .whenComplete()
-            .then(() => this._handleResourceRequest(incoming))
-            .catch((/** @type {Error} */ err) =>
-              log(
-                "Link",
-                `Incoming REQUEST resource failed: ${err}`,
-                LogLevel.ERROR,
-              ),
-            );
-        } else if (incoming.isResponse) {
-          incoming
-            .whenComplete()
-            .then(() => this._handleResourceResponse(incoming))
-            .catch((/** @type {Error} */ err) =>
-              log(
-                "Link",
-                `Incoming RESPONSE resource failed: ${err}`,
-                LogLevel.ERROR,
-              ),
-            );
+        if (incoming.totalSegments > 1) {
+          // §10.3: split resource — route only the reassembled whole.
+          await this._trackSplitSegment(incoming, decrypted);
         } else {
-          this.dispatchEvent(
-            new CustomEvent("resource", {
-              detail: { packet: decrypted, resource: incoming },
-            }),
-          );
+          this._routeAssembledResource(incoming, decrypted);
         }
         await incoming.requestNext();
         break;

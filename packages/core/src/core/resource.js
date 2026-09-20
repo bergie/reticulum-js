@@ -2,9 +2,7 @@
  * @file resource.js
  * @description Resource fragmentation protocol (PROTOCOL-SPEC.md §10).
  *
- * Phase 1+2 scope: single-segment transfers over an ACTIVE link, with optional
- * bz2 compression (only when a bz2 module is injected by the caller — the
- * library never imports a compression dependency itself). Implements:
+ * Implements:
  *
  *   - sender preparation: random prefix, link-encrypt-whole-then-slice,
  *     hashmap construction with COLLISION_GUARD_SIZE collision avoidance.
@@ -17,10 +15,16 @@
  *   - assembly: link-decrypt, strip prefix, optional decompress, hash check.
  *   - RESOURCE_PRF proof handshake (receiver proves, sender validates).
  *   - RESOURCE_ICL / RESOURCE_RCL cancellation.
+ *   - §10.3 multi-segment splitting: payloads over MAX_EFFICIENT_SIZE are
+ *     sent as sequentially-advertised segments tied by the first segment's
+ *     hash (`o`), and reassembled receiver-side by
+ *     {@link SplitResourceAssembler}.
+ *   - §10.4 `x` flag: response metadata traveling inside the hashed/
+ *     compressed/encrypted blob (see {@link Resource.metadata}).
  *
- * Phase 3 (not yet implemented): sliding-window rate adaptation, watchdog /
- * advertisement retransmit, multi-segment splitting (> 1 MiB), and the full
- * decompression-bomb streaming bound (a receive-time `d` cap is enforced now).
+ * Not yet implemented: sliding-window rate adaptation, watchdog /
+ * advertisement retransmit, and the full decompression-bomb streaming bound
+ * (a receive-time `d` cap is enforced now).
  */
 
 import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
@@ -114,6 +118,23 @@ export class Resource extends EventTarget {
 
   /** Max encodable metadata size: 3-byte length prefix limits it to 16 MiB-1. */
   static METADATA_MAX_SIZE = 0xffffff;
+
+  /**
+   * Logical bytes per Resource segment (§10.3). Larger payloads are split
+   * into `l` sequentially-advertised segments tied together by the first
+   * segment's hash (`o`). Segment 1 counts the metadata prefix toward its
+   * budget, so its payload share is smaller by the prefix length.
+   */
+  static MAX_EFFICIENT_SIZE = 1 * 1024 * 1024 - 1;
+
+  /** Sanity ceiling on an advertised total segment count `l`. */
+  static DEFAULT_MAX_SEGMENTS = 4096;
+
+  /**
+   * Ceiling on the reassembled logical size of a split Resource — the
+   * per-segment `t`/`d` caps bound each transfer, this bounds their sum.
+   */
+  static DEFAULT_MAX_TOTAL_SIZE = 256 * 1024 * 1024;
 
   /**
    * @param {Object} options
@@ -253,6 +274,21 @@ export class Resource extends EventTarget {
     const plaintext = this.metadataPrefix
       ? concatBytes(this.metadataPrefix, this.data)
       : this.data;
+
+    if (plaintext.length > Resource.MAX_EFFICIENT_SIZE) {
+      // §10.3: split into segments. Only the first segment is prepared now;
+      // subsequent segments are prepared (and advertised) one by one as each
+      // predecessor's proof arrives, so at most one segment is in flight.
+      this.split = true;
+      this.segmentIndex = 1;
+      this.totalSegments =
+        Math.floor((plaintext.length - 1) / Resource.MAX_EFFICIENT_SIZE) + 1;
+      this._fullPlaintext = plaintext;
+      await this._prepareSegment();
+      this._prepared = true;
+      return;
+    }
+
     this.uncompressedSize = plaintext.length; // d: original uncompressed size
 
     // §10.2 step 2 — optional bz2 compression (only if a module was injected).
@@ -267,6 +303,38 @@ export class Resource extends EventTarget {
 
     await this._buildIntegrityAndParts(plaintext, body);
     this._prepared = true;
+  }
+
+  /**
+   * Prepares the segment at {@link Resource.segmentIndex} of a split
+   * resource: slices the full plaintext, re-evaluates per-segment compression,
+   * and rebuilds integrity material, parts and hashmap.
+   *
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _prepareSegment() {
+    const full = /** @type {Uint8Array} */ (this._fullPlaintext);
+    const start = (this.segmentIndex - 1) * Resource.MAX_EFFICIENT_SIZE;
+    const plaintext = full.subarray(
+      start,
+      Math.min(start + Resource.MAX_EFFICIENT_SIZE, full.length),
+    );
+    this.uncompressedSize = plaintext.length; // d: per-segment logical size
+
+    let body = plaintext;
+    this.compressed = false;
+    if (this.autoCompress && this.bz2) {
+      const compressed = this.bz2.compress(plaintext);
+      if (compressed.length < plaintext.length) {
+        body = compressed;
+        this.compressed = true;
+      }
+    }
+
+    await this._buildIntegrityAndParts(plaintext, body);
+    // `o` ties all segments to the first segment's hash.
+    if (this.segmentIndex === 1) this.originalHash = this.hash;
   }
 
   /**
@@ -394,6 +462,21 @@ export class Resource extends EventTarget {
       throw new Error("Resource already advertised or in progress");
     }
 
+    this.status = ResourceStatus.QUEUED;
+    await this._advertiseSegment();
+    this.status = ResourceStatus.ADVERTISED;
+  }
+
+  /**
+   * Advertises the segment currently prepared on this resource. Split
+   * resources call this once per segment as their predecessors' proofs
+   * arrive; single-segment resources call it once from
+   * {@link Resource.advertise}.
+   *
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _advertiseSegment() {
     let f = 0;
     if (this.encrypted) f |= ResourceFlag.ENCRYPTED;
     if (this.compressed) f |= ResourceFlag.COMPRESSED;
@@ -424,13 +507,15 @@ export class Resource extends EventTarget {
       payload: adv.pack(),
     });
 
-    this.status = ResourceStatus.QUEUED;
     this.link._registerOutgoingResource(this);
     await this.link.send(packet);
-    this.status = ResourceStatus.ADVERTISED;
     log(
       "Resource",
-      `Advertised ${this.totalParts} parts (${this.totalSize}B) h=${toHex(/** @type {Uint8Array} */ (this.hash).subarray(0, 8))}…`,
+      `Advertised ${this.totalParts} parts (${this.totalSize}B)` +
+        (this.split
+          ? ` segment ${this.segmentIndex}/${this.totalSegments}`
+          : "") +
+        ` h=${toHex(/** @type {Uint8Array} */ (this.hash).subarray(0, 8))}…`,
       LogLevel.DEBUG,
     );
   }
@@ -496,6 +581,14 @@ export class Resource extends EventTarget {
       );
       return;
     }
+    // A cancelled/rejected resource must not resume on a stale proof.
+    if (
+      this.status === ResourceStatus.FAILED ||
+      this.status === ResourceStatus.REJECTED ||
+      this.status === ResourceStatus.CORRUPT
+    ) {
+      return;
+    }
     const fullProof = body.subarray(32, 64);
     if (
       !bytesEqual(fullProof, /** @type {Uint8Array} */ (this.expectedProof))
@@ -505,6 +598,27 @@ export class Resource extends EventTarget {
       this._setFailed("Resource proof mismatch");
       return;
     }
+
+    // §10.3: a split resource advertises the next segment only after the
+    // current segment's proof — at most one segment is in flight, and the
+    // transfer completes with the final segment's proof.
+    if (this.split && this.segmentIndex < this.totalSegments) {
+      log(
+        "Resource",
+        `Segment ${this.segmentIndex}/${this.totalSegments} proven; advertising next`,
+        LogLevel.DEBUG,
+      );
+      this.link._unregisterOutgoingResource(
+        /** @type {Uint8Array} */ (this.hash),
+      );
+      this.segmentIndex++;
+      await this._prepareSegment();
+      this.status = ResourceStatus.QUEUED;
+      await this._advertiseSegment();
+      this.status = ResourceStatus.ADVERTISED;
+      return;
+    }
+
     this.status = ResourceStatus.COMPLETE;
     log(
       "Resource",
@@ -601,12 +715,28 @@ export class Resource extends EventTarget {
    *   exceeds this (§10.4 bomb defense). Defaults to 32 MiB.
    * @param {number} [options.maxParts] - Reject advertisements whose part count
    *   `n` exceeds this. Defaults to {@link Resource.DEFAULT_MAX_PARTS}.
+   * @param {number} [options.maxSegments] - Reject split advertisements whose
+   *   total segment count `l` exceeds this. Defaults to
+   *   {@link Resource.DEFAULT_MAX_SEGMENTS}.
    * @returns {Promise<Resource|null>} null if the advertisement was rejected.
    */
   static async accept(link, advertisementPacket, options = {}) {
     const adv = ResourceAdvertisement.unpack(advertisementPacket.payload);
     const maxSize = options.maxSize ?? Resource.DEFAULT_MAX_SIZE;
     const maxParts = options.maxParts ?? Resource.DEFAULT_MAX_PARTS;
+    const maxSegments = options.maxSegments ?? Resource.DEFAULT_MAX_SEGMENTS;
+
+    // §10.3: a split advertisement must bookkeep sanely — a segment index
+    // within bounds and a plausible total count.
+    if (adv.l > 1 && (adv.i < 1 || adv.i > adv.l || adv.l > maxSegments)) {
+      log(
+        "Resource",
+        `Rejecting advertisement: bad segment bookkeeping i=${adv.i} l=${adv.l}`,
+        LogLevel.WARNING,
+      );
+      await Resource._sendReject(link, adv.h);
+      return null;
+    }
 
     // §10.4 bomb defense. An attacker could advertise a tiny `t` (under the
     // size cap) with a huge `n` and OOM the receiver via the
@@ -658,7 +788,10 @@ export class Resource extends EventTarget {
     link._registerIncomingResource(resource);
     log(
       "Resource",
-      `Accepted advertisement: ${resource.totalParts} parts, compressed=${resource.compressed}`,
+      `Accepted advertisement: ${resource.totalParts} parts, compressed=${resource.compressed}` +
+        (resource.totalSegments > 1
+          ? ` segment ${resource.segmentIndex}/${resource.totalSegments}`
+          : ""),
       LogLevel.DEBUG,
     );
     return resource;
@@ -855,8 +988,9 @@ export class Resource extends EventTarget {
       await this._sendProof();
 
       // §10.4 `x` flag: strip `3-byte BE size ‖ msgpack(metadata)` and expose
-      // the decoded value alongside the payload.
-      if (this.hasMetadata) {
+      // the decoded value alongside the payload. Only segment 1 of a split
+      // resource carries the metadata prefix.
+      if (this.hasMetadata && this.segmentIndex === 1) {
         try {
           const metadataSize =
             (plaintext[0] << 16) | (plaintext[1] << 8) | plaintext[2];
@@ -880,6 +1014,11 @@ export class Resource extends EventTarget {
       }
 
       this.status = ResourceStatus.COMPLETE;
+      // The encrypted part slices are no longer needed once assembled.
+      this.parts = [];
+      this.link._unregisterIncomingResource(
+        /** @type {Uint8Array} */ (this.hash),
+      );
       log("Resource", "Incoming resource COMPLETE", LogLevel.DEBUG);
       this.dispatchEvent(
         new CustomEvent("complete", {
@@ -976,10 +1115,11 @@ export class Resource extends EventTarget {
   }
 
   /**
+   * Emits a RESOURCE_RCL rejection for a resource hash.
    * @param {import("../transport/link.js").Link} link
    * @param {Uint8Array} resourceHash
    * @returns {Promise<void>}
-   * @private
+   * @internal
    */
   static async _sendReject(link, resourceHash) {
     const packet = new Packet({
@@ -1036,5 +1176,75 @@ export class Resource extends EventTarget {
   getProgress() {
     if (this.totalParts === 0) return 0;
     return this.receivedCount / this.totalParts;
+  }
+}
+
+/**
+ * Receiver-side accumulator for the segments of a split Resource (§10.3).
+ *
+ * Each segment transfers as an independent Resource (own hash, parts and
+ * proof) tied to its siblings by the first segment's hash (`o`). The
+ * assembler stashes completed segments in order and, when the final segment
+ * arrives, produces a synthetic COMPLETE Resource carrying the reassembled
+ * payload plus the segment-1 metadata — which the Link routes exactly like
+ * a single-segment resource.
+ *
+ * Split resources transfer segments strictly one at a time (the sender
+ * advertises the next only after the current proof), so segments complete
+ * in order.
+ */
+export class SplitResourceAssembler {
+  /**
+   * @param {Resource} firstSegment - The first accepted segment.
+   * @param {object} [options]
+   * @param {number} [options.maxTotalSize] - Cap on the reassembled
+   *   logical size; the per-segment accept checks bound each transfer, this
+   *   bounds their sum.
+   */
+  constructor(firstSegment, options = {}) {
+    this.link = firstSegment.link;
+    this.totalSegments = firstSegment.totalSegments;
+    this.originalHash = firstSegment.originalHash;
+    this.requestId = firstSegment.requestId;
+    this.isRequest = firstSegment.isRequest;
+    this.isResponse = firstSegment.isResponse;
+    this.maxTotalSize = options.maxTotalSize ?? Resource.DEFAULT_MAX_TOTAL_SIZE;
+    /** @type {Uint8Array[]} */ this.segments = [];
+    /** @type {any} */ this.metadata = undefined;
+    this.received = 0;
+    this.bytes = 0;
+  }
+
+  /**
+   * Records a completed segment and returns a synthetic COMPLETE Resource
+   * for the whole transfer when `segment` is the final one, otherwise `null`.
+   *
+   * @param {Resource} segment - A segment whose `whenComplete()` resolved.
+   * @returns {Resource|null}
+   */
+  add(segment) {
+    if (segment.segmentIndex === 1) this.metadata = segment.metadata;
+    const data = /** @type {Uint8Array} */ (segment.data);
+    this.segments.push(data);
+    this.bytes += data.length;
+    this.received++;
+    if (this.bytes > this.maxTotalSize) {
+      throw new Error("Split resource exceeded maximum total size");
+    }
+    if (segment.segmentIndex !== this.totalSegments) return null;
+
+    const assembled = new Resource({ link: this.link });
+    assembled.data = concatBytes(...this.segments);
+    assembled.metadata = this.metadata;
+    assembled.hasMetadata = this.metadata !== undefined;
+    assembled.originalHash = this.originalHash;
+    assembled.requestId = this.requestId;
+    assembled.isRequest = this.isRequest;
+    assembled.isResponse = this.isResponse;
+    assembled.segmentIndex = this.totalSegments;
+    assembled.totalSegments = this.totalSegments;
+    assembled.uncompressedSize = this.bytes;
+    assembled.status = ResourceStatus.COMPLETE;
+    return assembled;
   }
 }

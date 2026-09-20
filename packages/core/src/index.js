@@ -20,7 +20,11 @@ export {
   TransportType,
 } from "./core/packet.js";
 export { PacketReceipt, ReceiptStatus } from "./core/packet_receipt.js";
-export { Resource, ResourceStatus } from "./core/resource.js";
+export {
+  Resource,
+  ResourceStatus,
+  SplitResourceAssembler,
+} from "./core/resource.js";
 export {
   ResourceAdvertisement,
   ResourceFlag,

@@ -13,6 +13,18 @@
 - `Link.request()` option `onMetadata(metadata)` — delivers the decoded
   metadata of metadata-carrying resource responses to the caller
 - `Direction` is now re-exported from the package root.
+- Multi-segment (split) Resources (§10.3): payloads over
+  `Resource.MAX_EFFICIENT_SIZE` (1 MiB - 1) transfer as sequentially
+  advertised segments tied together by the first segment's hash
+  (`o`), with the sender advancing to the next segment only after the
+  current one's proof. The receiver reassembles via
+  `SplitResourceAssembler` (exported) before routing the transfer to the
+  §11 machinery or the `resource` event. A failed segment propagates the
+  rejection to a pending `Link.request()` instead of timing out.
+- Fixed `MicroMsgPack.encode` crashing on multi-megabyte binary values
+  (spread-argument limits); bytes now append in bounded chunks.
+- Fixed a `Resource` receiver-side bookkeeping leak: completed incoming
+  resources stay registered until link teardown.
 
 ## [0.8.2] - 2026-09-19
 ### Changed

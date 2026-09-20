@@ -233,7 +233,7 @@ export class MicroMsgPack {
         len & 0xff,
       ); // str 32
     }
-    bytes.push(...utf8);
+    pushChunked(bytes, utf8);
   }
 
   /**
@@ -256,7 +256,7 @@ export class MicroMsgPack {
         len & 0xff,
       ); // bin 32
     }
-    bytes.push(...value);
+    pushChunked(bytes, value);
   }
 
   /**
@@ -631,5 +631,26 @@ export class MicroMsgPack {
       }
     }
     return map;
+  }
+}
+
+/**
+ * Appends a byte sequence to the encoder's output array in bounded chunks.
+ * `bytes.push(...value)` overflows the call stack for multi-megabyte
+ * payloads (spread arguments are limited), and large resources now encode
+ * multi-MB msgpack values (§10.3 split request/response bodies).
+ *
+ * @param {number[]} bytes - Encoder output (numbers).
+ * @param {Uint8Array} value - Bytes to append.
+ * @private
+ */
+function pushChunked(bytes, value) {
+  const CHUNK = 8192;
+  for (let i = 0; i < value.length; i += CHUNK) {
+    const end = Math.min(i + CHUNK, value.length);
+    const slice = value.subarray(i, end);
+    // Fast path: Array.prototype.push accepts an array argument via apply
+    // with a bounded spread.
+    bytes.push(...slice);
   }
 }
