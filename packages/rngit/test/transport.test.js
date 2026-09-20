@@ -387,8 +387,8 @@ describe("rngit transport against isomorphic-git (loopback)", () => {
       assert.match(config, /rns:\/\/[0-9a-f]+\/test\/repo/);
       assert.ok(!config.includes("http://rngit"));
     } finally {
-      rmSync(src.dir, { recursive: true, force: true });
-      rmSync(cloneDir, { recursive: true, force: true });
+      removeTree(src.dir);
+      removeTree(cloneDir);
     }
   });
 
@@ -425,8 +425,46 @@ describe("rngit transport against isomorphic-git (loopback)", () => {
       );
       runGit(cloneDir, "fsck", "--strict");
     } finally {
-      rmSync(src.dir, { recursive: true, force: true });
-      rmSync(cloneDir, { recursive: true, force: true });
+      removeTree(src.dir);
+      removeTree(cloneDir);
+    }
+  });
+
+  test("multi-segment bundles (over 1 MiB) clone through the transport", async () => {
+    const src = makeSourceRepo();
+    const cloneDir = mkdtempSync(join(tmpdir(), "rngit-big-"));
+    try {
+      // A ~2.5 MiB incompressible file pushes the bundle over the
+      // MAX_EFFICIENT_SIZE segment boundary (1 MiB - 1).
+      const big = Buffer.alloc(2.5 * 1024 * 1024);
+      for (let i = 0; i < big.length; i++) {
+        big[i] = (i * 2654435761) & 0xff;
+      }
+      fs.writeFileSync(join(src.dir, "blob.bin"), big);
+      runGit(src.dir, "add", ".");
+      runGit(src.dir, "commit", "-q", "-m", "big file");
+
+      const { initiator } = await makeRngitPair(rngitNode(src.dir));
+      const client = new RngitClient({
+        url: `rns://${"99".repeat(16)}/test/repo`,
+        link: initiator,
+      });
+
+      const result = await clone({
+        fs,
+        dir: cloneDir,
+        url: `rns://${"99".repeat(16)}/test/repo`,
+        client,
+      });
+      assert.equal(result.fetchHead, src.head());
+      assert.equal(runGit(cloneDir, "rev-parse", "HEAD").trim(), src.head());
+      runGit(cloneDir, "fsck", "--strict");
+      const round = fs.readFileSync(join(cloneDir, "blob.bin"));
+      assert.equal(round.length, big.length);
+      assert.ok(Buffer.compare(round, big) === 0, "big file intact");
+    } finally {
+      removeTree(src.dir);
+      removeTree(cloneDir);
     }
   });
 
@@ -460,8 +498,8 @@ describe("rngit transport against isomorphic-git (loopback)", () => {
       );
       runGit(cloneDir, "fsck", "--strict");
     } finally {
-      rmSync(src.dir, { recursive: true, force: true });
-      rmSync(cloneDir, { recursive: true, force: true });
+      removeTree(src.dir);
+      removeTree(cloneDir);
     }
   });
 });
@@ -472,4 +510,13 @@ function joinBytes(acc, part) {
   out.set(acc);
   out.set(part, acc.length);
   return out;
+}
+
+/** Best-effort recursive removal — cleanup races must not fail a test. */
+function removeTree(path) {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    /* transient */
+  }
 }

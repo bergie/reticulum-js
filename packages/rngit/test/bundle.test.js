@@ -91,7 +91,7 @@ describe("parseBundle", () => {
       assert.ok(parsed.pack.length > 0);
       assert.equal(Buffer.from(parsed.pack.subarray(0, 4)).toString(), "PACK");
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTree(dir);
     }
   });
 
@@ -106,7 +106,7 @@ describe("parseBundle", () => {
       assert.equal([...parsed.refs.values()][0], headSha);
       assert.ok(parsed.pack.length > 0);
     } finally {
-      rmSync(dir, { recursive: true, force: true });
+      removeTree(dir);
     }
   });
 
@@ -133,3 +133,12 @@ describe("emptyPack", () => {
     );
   });
 });
+
+/** Best-effort recursive removal — cleanup races must not fail a test. */
+function removeTree(path) {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    /* transient */
+  }
+}

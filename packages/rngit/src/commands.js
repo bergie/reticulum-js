@@ -78,7 +78,7 @@ export async function fetch(options) {
   const client =
     options.client ?? new RngitClient({ url, ...transportDefaults(options) });
   try {
-    const http = createRngitTransport(client);
+    const http = createRngitTransport(client, { fs, gitdir });
     return await git.fetch({
       fs,
       gitdir,
@@ -141,7 +141,7 @@ export async function clone(options) {
   try {
     await git.init({ fs, dir, gitdir });
     await git.addRemote({ fs, gitdir, remote, url });
-    const http = createRngitTransport(client);
+    const http = createRngitTransport(client, { fs, gitdir });
     const { defaultBranch, fetchHead } = await git.fetch({
       fs,
       gitdir,

@@ -46,7 +46,8 @@ describe("rngit live interop (reference rngit node)", () => {
   /**
    * Builds the fixture: work repo with commits, a bare repo, rngit config.
    *
-   * @returns {string} the rngit config dir
+   * @returns {{ base: string, bigFileBytes: Buffer }} the rngit config dir
+   *   and the big fixture blob for clone verification.
    */
   function makeFixture() {
     const base = mkdtempSync(join(tmpdir(), "rngit-interop-"));
@@ -62,6 +63,16 @@ describe("rngit live interop (reference rngit node)", () => {
     runGit(workDir, "add", ".");
     runGit(workDir, "commit", "-q", "-m", "two");
     runGit(workDir, "tag", "v1.0");
+    // A ~1.5 MiB incompressible file pushes the clone bundle over the
+    // reference implementation's segment split boundary (1 MiB - 1), so the
+    // live clone exercises multi-segment transfer against the real node.
+    const bigFileBytes = Buffer.alloc(1.5 * 1024 * 1024);
+    for (let i = 0; i < bigFileBytes.length; i++) {
+      bigFileBytes[i] = (i * 2654435761) & 0xff;
+    }
+    fs.writeFileSync(join(workDir, "blob.bin"), bigFileBytes);
+    runGit(workDir, "add", ".");
+    runGit(workDir, "commit", "-q", "-m", "big file");
     runGit(
       base,
       "init",
@@ -89,7 +100,7 @@ interop = r:all
 loglevel = 4
 `,
     );
-    return base;
+    return { base, bigFileBytes };
   }
 
   test("clone and incremental fetch from a real rngit node", {
@@ -100,7 +111,7 @@ loglevel = 4
     const { MemoryStorageAdapter, Reticulum } = await import("@reticulum/core");
     const { LocalClientInterface } = await import("@reticulum/node");
 
-    const base = makeFixture();
+    const { base, bigFileBytes } = makeFixture();
     const cloneDir = mkdtempSync(join(tmpdir(), "rngit-interop-clone-"));
     /** @type {import("node:child_process").ChildProcess|null} */
     let server = null;
@@ -178,6 +189,13 @@ loglevel = 4
         fs.readFileSync(join(cloneDir, "lib.js"), "utf8"),
         "export const two = 2;\n",
       );
+      // The ~1.5 MiB blob arrived via a multi-segment resource transfer.
+      const blob = fs.readFileSync(join(cloneDir, "blob.bin"));
+      assert.equal(blob.length, bigFileBytes.length);
+      assert.ok(
+        Buffer.compare(blob, bigFileBytes) === 0,
+        "multi-segment big file intact",
+      );
       const remoteUrl = runGit(cloneDir, "remote", "get-url", "origin");
       assert.equal(remoteUrl, url);
 
@@ -216,8 +234,17 @@ loglevel = 4
     } finally {
       if (server) server.kill("SIGTERM");
       if (rns) await rns.stop();
-      rmSync(base, { recursive: true, force: true });
-      rmSync(cloneDir, { recursive: true, force: true });
+      removeTree(base);
+      removeTree(cloneDir);
     }
   });
 });
+
+/** Best-effort recursive removal — cleanup races must not fail a test. */
+function removeTree(path) {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    /* transient */
+  }
+}

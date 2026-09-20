@@ -24,6 +24,7 @@
  */
 
 import { emptyPack, parseBundle } from "./bundle.js";
+import { fattenPack } from "./pack.js";
 import {
   asyncIteratorFromBytes,
   chunkBytes,
@@ -231,10 +232,16 @@ export function buildUploadPackResponse(pack) {
  *   lazily-connecting) rngit client. One client can serve several
  *   transports; the transport performs `/git/list` on the first `info/refs`
  *   discovery and caches the result per operation.
+ * @param {object} [options]
+ * @param {any} [options.fs] - isomorphic-git filesystem client for the local
+ *   repository; needed to resolve thin-bundle delta bases from the local
+ *   object store before the packfile is handed to isomorphic-git.
+ * @param {string} [options.gitdir] - Local git directory.
  * @returns {{ request: (req: any) => Promise<any> }} An object implementing
  *   isomorphic-git's `HttpClient` interface.
  */
-export function createRngitTransport(client) {
+export function createRngitTransport(client, options = {}) {
+  const { fs, gitdir } = options;
   /** @type {{ head: string|null, refs: Map<string, string> }|null} */
   let listCache = null;
 
@@ -329,7 +336,11 @@ export function createRngitTransport(client) {
         }
         const refs = wantsToRefs(wants);
         const bundle = await client.fetch({ refs, have: haves });
-        const pack = bundle ? parseBundle(bundle).pack : await emptyPack();
+        // Thin bundles (the node excluded the client's have-objects) must be
+        // fattened against the local store before being stored.
+        const pack = bundle
+          ? await fattenPack({ pack: parseBundle(bundle).pack, fs, gitdir })
+          : await emptyPack();
         return {
           url,
           method,

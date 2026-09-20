@@ -27,6 +27,15 @@ export { emptyPack, parseBundle } from "./bundle.js";
 export { createBz2, RngitClient } from "./client.js";
 export { clone, fetch } from "./commands.js";
 export {
+  applyDelta,
+  buildPack,
+  fattenPack,
+  inflateWithBounds,
+  PackObjectType,
+  parsePack,
+  resolvePack,
+} from "./pack.js";
+export {
   asyncIteratorFromBytes,
   chunkBytes,
   concat,

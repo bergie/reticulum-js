@@ -75,6 +75,10 @@ export async function createBz2() {
  * @property {number} [pathTimeoutMs=30000] - Max time to learn the node's
  *   identity (announce recall).
  * @property {number} [requestTimeoutMs=300000] - Per-request timeout.
+ * @property {number} [fetchTimeoutMs=7200000] - Timeout for `/git/fetch`
+ *   requests; bundle transfers of large repositories over slow links can
+ *   legitimately take hours, so fetch defaults to a much longer ceiling
+ *   than ordinary requests.
  * @property {number} [identifyDelayMs=150] - Pause after `identify()` so the
  *   responder records the identity before the first request.
  */
@@ -94,6 +98,7 @@ export class RngitClient {
     this.remote = options.url ? parseRemoteUrl(options.url) : null;
     this.pathTimeoutMs = options.pathTimeoutMs ?? 30000;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 300000;
+    this.fetchTimeoutMs = options.fetchTimeoutMs ?? 7200000;
     this.identifyDelayMs = options.identifyDelayMs ?? 150;
 
     /** @type {import("@reticulum/core").Reticulum|null} */
@@ -213,7 +218,7 @@ export class RngitClient {
     /** @type {any} */
     let metadata;
     const response = await link.request(PATH_FETCH, request, {
-      timeout: this.requestTimeoutMs,
+      timeout: this.fetchTimeoutMs,
       onMetadata: (md) => {
         metadata = md;
       },
