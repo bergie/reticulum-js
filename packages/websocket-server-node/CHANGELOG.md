@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-09-21
 ### Fixed
 - The `wss://` client test no longer fails under **Deno**: it relies on
   `NODE_TLS_REJECT_UNAUTHORIZED = "0"` to skip verification of the self-signed

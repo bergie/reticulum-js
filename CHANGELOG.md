@@ -2,6 +2,205 @@
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-21
+### Added
+- **core**: `Interface.optimiseMtu()` (work doc #34): the reference implementations'
+  bitrate→MTU autoconfiguration table, opt-in via the `Interface.autoconfigureMtu`
+  flag, together with the `Interface.hwMtu` field (`HW_MTU`). Transport-grade
+  interfaces (backbone in `@reticulum/node`) opt in and call it at construct
+  and spawn time, exactly like the reference's `optimise_mtu()` call sites.
+- **core**: Instance-scoped caches (work doc #37, split-brain safety): `TransportCore`
+  now owns the identity, ratchet and proof-receipt caches via `IdentityCache`
+  (fresh maps per instance), with instance methods `rememberIdentity`,
+  `recallIdentity`, `rememberRatchet`, `recallRatchet`, `trackReceipt` and
+  `findReceipt` (`rns.transport.recallIdentity(…)`, …). The class-level
+  statics (`Destination.knownDestinations` / `knownRatchets`,
+  `PacketReceipt.receipts`) and the static cache methods
+  (`Destination.remember`/`recall`/`rememberRatchet`/`recallRatchet`,
+  `PacketReceipt.track`/`find`) are **removed** — a fragmented install (two
+  physical copies of the package, which Node treats as separate module
+  instances with divergent statics) no longer splits state when access goes
+  through the instance. `Persistor` now requires the owning transport's
+  cache maps (`knownDestinations`/`knownRatchets` options), and standalone
+  `Destination.encrypt` with no attached interface layer falls back to the
+  long-term key (no shared ratchet lookup).
+- **core**: `CORE_INSTANCE_TOKEN` (a per-module-copy marker) and
+  `warnIfFragmented(name, dependentToken, rns.coreInstanceToken)` so
+  dependent packages can detect a fragmented install at first boot;
+  `Reticulum#coreInstanceToken` exposes the instance's origin copy.
+- **core**: Resource responses with metadata (§10.4 `x` flag), matching Python
+  reference implementation: the sender option `metadata` on `Resource`
+  prepends a `3-byte BE size ‖ msgpack(metadata)` prefix to the
+  hashed/compressed/encrypted blob, and the receiver exposes the decoded
+  value as `Resource.metadata` and strips it from `Resource.data` after the
+  proof handshake. Needed for rngit `/git/fetch` bundle responses.
+- **core**: `ResourceResponse` — a §11 request-handler response marker that always
+  answers via the Resource pipeline with response metadata
+- **core**: `Link.request()` option `onMetadata(metadata)` — delivers the decoded
+  metadata of metadata-carrying resource responses to the caller
+- **core**: `Direction` is now re-exported from the package root.
+- **core**: `Link.request()` option `onProgress(info)` — transfer progress for
+  Resource-backed request/response bodies:
+  `{ direction: "request"|"response", loaded, total, segmentIndex,
+  segmentTotal }` with approximate logical byte positions, per segment for
+  split transfers. Sender-side Resources now emit `progress` events
+  (unique parts delivered).
+- **core**: `ResourceResponse` without metadata now answers through the ordinary
+  msgpack-envelope path (its raw payload as the value) instead of sending
+  metadata-less raw bytes, which the receiving side would have tried to
+  decode as an envelope.
+- **core**: Multi-segment (split) Resources (§10.3): payloads over
+  `Resource.MAX_EFFICIENT_SIZE` (1 MiB - 1) transfer as sequentially
+  advertised segments tied together by the first segment's hash
+  (`o`), with the sender advancing to the next segment only after the
+  current one's proof. The receiver reassembles via
+  `SplitResourceAssembler` (exported) before routing the transfer to the
+  §11 machinery or the `resource` event. A failed segment propagates the
+  rejection to a pending `Link.request()` instead of timing out.
+- **core**: Fixed `MicroMsgPack.encode` crashing on multi-megabyte binary values
+  (spread-argument limits); bytes now append in bounded chunks.
+- **core**: Fixed a `Resource` receiver-side bookkeeping leak: completed incoming
+  resources stay registered until link teardown.
+- **node**: **`BackboneInterface` / `BackboneClientInterface`** (work doc #34): the
+  high-performance TCP interfaces used between transport nodes, wire-
+  compatible with the Python reference `BackboneInterface` / `BackboneClientInterface`
+  and speaking the same HDLC framing as the TCP interfaces. The backbone
+  *profile* is what's new: a 1 Gbit/s nominal bitrate guess (vs 10 Mbit/s on
+  plain TCP) driving interface prioritization and MTU autoconfiguration
+  (`optimiseMtu()`), a 1 MiB frame-size cap, **fast-flapping protection**
+  (connections from a remote IP that repeatedly live < 20 s are counted;
+  beyond 5 grace flaps the IP is blocked for 12 h — state shared
+  process-wide across all backbone listeners, all knobs configurable via
+  `blockFastFlapping` / `fastFlappingThreshold` / `fastFlappingGrace` /
+  `fastFlappingBlockTime`), and **discovery participation**
+  (`supportsDiscovery = true`). Bind options: `listenIp`/`listenPort`
+  (+ `port` alias), `device` (bind to a kernel interface), `preferIpv6`.
+  Unlike the Python reference (Linux-only due to its `select.epoll`
+  architecture — an implementation artifact, not a protocol requirement),
+  the JS backbone interfaces work on any OS with TCP: the event loop already
+  provides the single-threaded multiplexed I/O model. Registered in the
+  interface registry as `backbone` / `backbone-client`. Python interop
+  tests (both directions, plain and IFAC-protected) live in
+  `test/interfaces/backbone_python.js` and are skipped when Python/RNS are
+  unavailable.
+- **node**: `Interface.optimiseMtu()` in `@reticulum/core`: the reference bitrate→MTU
+  autoconfiguration table (opt-in via `Interface.autoconfigureMtu`),
+  together with the `Interface.hwMtu` field (`HW_MTU`).
+- **rngit**: Initial `@reticulum/rngit` package: an rngit-compatible client and
+  isomorphic-git transport for Git repositories over Reticulum.
+- **rngit**: `parseRemoteUrl` / `stringifyRemoteUrl` for `rns://<hash>/<group>/<repo>`
+  remote URLs.
+- **rngit**: `RngitClient` — connects to an rngit node (`git.repositories`
+  destination), identifies, and speaks the `/git/list` and `/git/fetch`
+  request protocol (msgpack maps with integer keys, status-byte responses,
+  bundle Resources with response metadata).
+- **rngit**: `createRngitTransport` — an isomorphic-git `http` plugin that bridges the
+  git smart-HTTP protocol onto rngit requests, so stock
+  `git.fetch`/`git.clone` work against `rns://` remotes.
+- **rngit**: `fetch` / `clone` command wrappers accepting `rns://` remote URLs.
+- **rngit**: Bundle v2 parsing (refs, prerequisites, packfile extraction).
+- **rngit**: Packfile thin-base resolution: rngit fetch bundles exclude objects
+  reachable from the client's `have` list, so their embedded packfiles can
+  carry deltas against objects that are not part of the pack. Canonical
+  git refuses to keep such thin packs in `objects/pack`, so before the
+  pack is handed to isomorphic-git the transport resolves external delta
+  bases from the local object store and re-emits a self-contained pack
+  (`fattenPack`, `resolvePack`, `buildPack`, `applyDelta` and a minimal
+  inflate decoder `inflateWithBounds`).
+- **rngit**: Push support, mirroring the reference `git-remote-rns` flows:
+  - `RngitClient.push({ ref, bundle?, sha?, force })` — the bundle form
+    (`{local_ref, remote_ref, force, bundle}`) for new objects, and the
+    direct `update_ref` operations form when everything reachable already
+    exists on the node.
+  - `RngitClient.deleteRef(ref)` — `/git/delete`.
+  - The `push` command wrapper (isomorphic-git `git.push` semantics for
+    `rns://` remotes, including `force` and `delete`).
+  - The transport's receive-pack endpoint: parses the pushed commands and
+    packfile, wraps the pack in a bundle v2 (`buildBundle`), answers with
+    a `report-status` reply (side-band-64k framed when negotiated).
+  - Deletions map to `/git/delete`; zero-object pushes take the direct
+    `update_ref` path without a bundle transfer.
+- **rngit**: Transfer progress: `clone`/`fetch` report isomorphic-git progress
+  events (`Receiving objects`) while bundle resources download, `push`
+  reports `Writing objects` while they upload. Split transfers aggregate
+  completed segments with a converging total estimate.
+- **rngit**: Live interop coverage (env-gated): the test suite can clone, fetch, push
+  and delete against a real rngit node.
+### Changed
+- **core**: All internal cache access (transport announce ingestion, proof resolution,
+  the `Persistor` wiring in `Reticulum`, WebRTC signaling) goes through the
+  instance caches; `TransportCore` accepts an injected `IdentityCache` for
+  sharing caches between transport instances.
+- **core**: Renamed constants to match house style (real words, explicit units).
+  Values and behavior are unchanged, except
+  `Identity.TRUNCATED_HASHLENGTH` (128, bits) which is now
+  `Identity.TRUNCATED_HASH_LENGTH` (16, **bytes**) — use sites no longer
+  divide by 8. Other renames:
+  - `Link.ECPUBSIZE` → `Link.EC_PUBLIC_KEY_SIZE`, `Link.LINK_MTU_SIZE` →
+    `Link.SIGNALLING_SIZE`
+  - Time-valued constants gained a `_SECS` suffix: `Link.KEEPALIVE_MAX`,
+    `Link.KEEPALIVE_MIN`, `Link.KEEPALIVE_MAX_RTT`,
+    `Link.RESPONSE_MAX_GRACE_TIME`, `Reticulum.DEFAULT_PER_HOP_TIMEOUT`,
+    `TransportCore.PATH_REQUEST_MI` (also spelled out as
+    `PATH_REQUEST_MIN_INTERVAL_SECS`), `TransportCore.PATH_REQUEST_GATE_TIMEOUT`,
+    `Destination.PR_TAG_WINDOW`, and the `Interface` ingress-control timings
+    (`IC_NEW_TIME`, `IC_BURST_HOLD`, `IC_BURST_PENALTY`,
+    `IC_PR_BURST_COOLDOWN`, `IC_HELD_RELEASE_INTERVAL`)
+  - `Resource.HEADER_MAXSIZE` → `Resource.HEADER_MAX_SIZE`
+  - `RNodeInterface.REQUIRED_FW_VER_MAJ` / `REQUIRED_FW_VER_MIN` →
+    `RNodeInterface.REQUIRED_FIRMWARE_MAJOR` / `REQUIRED_FIRMWARE_MINOR`
+- **lxmf**: Cache access is now instance-scoped (work doc #37): the router and peers
+  recall and remember identities/ratchets via `rns.transport` instead of the
+  deprecated `Destination` class statics, so a fragmented install (two
+  physical copies of `@reticulum/core` in one process) shares one state
+  through the `Reticulum` instance. The router also warns at construction
+  (`warnIfFragmented`) when it was bundled against a different physical copy
+  of core than the provided `Reticulum` instance.
+- **rfed**: Cache access is now instance-scoped (work doc #37): `RFedNode` / `RFedClient`
+  recall identities via `rns.transport` instead of the removed `Destination`
+  class statics, and `unwrapChannelMessage` now **requires** an `rns`
+  (passed by `RFedClient`) so sender-identity caching travels through the
+  `Reticulum` instance — a fragmented install (two physical copies of
+  `@reticulum/core` in one process) shares one state. Both constructors
+  warn (`warnIfFragmented`) when bundled against a different physical copy
+  of core than the provided `Reticulum` instance.
+- **node**: The `@reticulum/node` test suite now also runs under **Bun** (`npm run test:bun` in
+  `packages/node`, included in the root `npm run test:bun`). Two Bun runtime
+  incompatibilities were worked around:
+  - `HttpPostServerInterface` now **drains (and discards) the remainder of an
+    oversized request body before responding `413`** instead of destroying the
+    request mid-stream: Bun's `node:http` server silently drops the response
+    when the request body is left unconsumed (clients see a bogus `200`). The
+    memory-protection goal is unchanged — bytes past the cap are never
+    accumulated.
+  - `LocalClientInterface` tests no longer rely on
+    `server.removeAllListeners("connection")` removing the callback passed to
+    `net.createServer()`, which Bun does not honor (the original listener kept
+    consuming socket data); the adopting server registers its handler via
+    `server.on()` so it can be swapped portably.
+- **rngit**: Identity recalls during `connect()` go through `rns.transport` instead of
+  the deprecated `Destination` class statics, and `connect()` warns
+  (`warnIfFragmented`) when the client was bundled against a different
+  physical copy of `@reticulum/core` than the provided `Reticulum` instance
+  (work doc #37, split-brain safety).
+### Fixed
+- **core**: The discovery-stamp interop test no longer flakes: tampering a single
+  stamp byte left a ~2⁻ᶜᵒˢᵗ chance of the flipped stamp still meeting the
+  proof-of-work target, so the tamper loop now retries until the variant
+  provably fails the cost check before asserting rejection.
+- **rngit**: The bundled bz2 adapter failing on payloads that do not compress: the
+  wasm module sizes its destination buffer from the input length and
+  errors with `BZ_OUTBUFF_FULL` whenever compression would expand the
+  data (small incompressible payloads, e.g. short push bundles). The
+  adapter now returns the input unchanged in that case, which the
+  Resource protocol already treats as "send uncompressed".
+- **websocket-server-node**: The `wss://` client test no longer fails under **Deno**: it relies on
+  `NODE_TLS_REJECT_UNAUTHORIZED = "0"` to skip verification of the self-signed
+  test cert, which is a Node-only escape hatch — Deno's web-platform
+  `WebSocket` has no runtime certificate bypass, so the test is skipped there
+  (the Python-client interop test is unaffected; its fixture opts out of
+  verification itself).
+
 ## [0.8.2] - 2026-09-19
 ### Added
 - **rfed**: Link + Resource support for channel publishes, matching the reference

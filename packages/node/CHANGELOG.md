@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-09-21
 ### Added
 - **`BackboneInterface` / `BackboneClientInterface`** (work doc #34): the
   high-performance TCP interfaces used between transport nodes, wire-

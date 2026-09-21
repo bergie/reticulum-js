@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-09-21
 ### Changed
 - Cache access is now instance-scoped (work doc #37): the router and peers
   recall and remember identities/ratchets via `rns.transport` instead of the

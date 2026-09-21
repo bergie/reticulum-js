@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-09-21
 ### Changed
 - Identity recalls during `connect()` go through `rns.transport` instead of
   the deprecated `Destination` class statics, and `connect()` warns

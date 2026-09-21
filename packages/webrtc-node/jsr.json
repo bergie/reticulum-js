@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/webrtc-node",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "license": "EUPL-1.2",
   "exports": {
     ".": "./src/index.js"

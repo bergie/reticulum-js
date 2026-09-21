@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-09-21
 ### Fixed
 - The discovery-stamp interop test no longer flakes: tampering a single
   stamp byte left a ~2⁻ᶜᵒˢᵗ chance of the flipped stamp still meeting the

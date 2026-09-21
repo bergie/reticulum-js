@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/lxmf",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "LXMF (Lightweight Extensible Message Format) for reticulum-js — one-to-one messages, router, paper messaging, and propagation nodes",
   "keywords": [
     "reticulum",
@@ -40,6 +40,6 @@
     "preversion": "npm run types"
   },
   "dependencies": {
-    "@reticulum/core": "^0.8.2"
+    "@reticulum/core": "^0.9.0"
   }
 }
