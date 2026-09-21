@@ -548,7 +548,7 @@ import sys, tempfile
 import RNS
 from RNS.Interfaces.BackboneInterface import BackboneClientInterface
 
-rns = RNS.Reticulum(configdir=tempfile.mkdtemp(), loglevel=RNS.LOG_ERRORS)
+rns = RNS.Reticulum(configdir=tempfile.mkdtemp(), loglevel=RNS.LOG_ERROR)
 config = {"name": "backbone-client-fixture", "target_host": "127.0.0.1", "target_port": "${server.bindPort}"}
 client = BackboneClientInterface(RNS.Transport, config)
 assert client.online, "Python backbone client failed to connect"

@@ -38,7 +38,7 @@ def main():
     # Minimal but fully started Reticulum: Transport.start() runs, so the
     # spawned BackboneClientInterface's inbound path (owner.inbound) works.
     configdir = tempfile.mkdtemp(prefix="rns-backbone-real-fixture-")
-    reticulum = RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_ERRORS)
+    reticulum = RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_ERROR)
 
     config = {
         "name": "backbone-fixture",
@@ -81,27 +81,27 @@ def main():
     # the reply rides Transport.transmit, i.e. the reference's own IFAC
     # sealing.
     answered = set()
-    original_inbound = RNS.Transport.inbound.__func__
+    original_inbound = RNS.Transport.inbound
 
     def inbound(raw, interface=None, tc=None, ifac_handled=False):
+        # Run the reference's own inbound pipeline first — this is what
+        # unseals IFAC-protected frames and parses the packet.
+        original_inbound(raw, interface, tc, ifac_handled)
         if interface is not None and hasattr(interface, "spawned_at"):
             key = id(interface)
             if key not in answered:
                 answered.add(key)
-                packet = RNS.Packet(None, raw)
-                if packet.unpack():
-                    print(f"RECEIVED {packet.data!r}", flush=True)
-                    dest = RNS.Destination(
-                        None,
-                        RNS.Destination.OUT,
-                        RNS.Destination.PLAIN,
-                        "test",
-                        "echo",
-                    )
-                    reply = RNS.Packet(dest, b"pong from python")
-                    reply.pack()
-                    RNS.Transport.transmit(interface, reply.raw)
-                    print(f"SENT {len(reply.raw)} bytes", flush=True)
+                dest = RNS.Destination(
+                    None,
+                    RNS.Destination.OUT,
+                    RNS.Destination.PLAIN,
+                    "test",
+                    "echo",
+                )
+                reply = RNS.Packet(dest, b"pong from python")
+                reply.pack()
+                RNS.Transport.transmit(interface, reply.raw)
+                print(f"SENT {len(reply.raw)} bytes", flush=True)
 
     RNS.Transport.inbound = staticmethod(inbound)
 
@@ -114,7 +114,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
-        RNS.Transport.inbound = staticmethod(original_inbound)
+        RNS.Transport.inbound = original_inbound
         interface.detach()
 
 
