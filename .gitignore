@@ -18,3 +18,4 @@ PROTOCOL-SPEC.md
 sender-storage/
 echobot-storage/
 rfed-storage/
+__pycache__/

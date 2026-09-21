@@ -544,11 +544,16 @@ tReal(
     // listener: its SYNCHRONOUS_START connect, HDLC framing and inbound
     // receive path all run for real.
     const clientScript = `
-import sys, tempfile
+import sys, tempfile, os
 import RNS
 from RNS.Interfaces.BackboneInterface import BackboneClientInterface
 
-rns = RNS.Reticulum(configdir=tempfile.mkdtemp(), loglevel=RNS.LOG_ERROR)
+# A no-interface config avoids the default AutoInterface/shared-instance
+# sockets (which panic-exit when their ports are taken).
+cfgdir = tempfile.mkdtemp()
+with open(os.path.join(cfgdir, "config"), "w") as f:
+    f.write("[reticulum]\nenable_transport = False\nshare_instance = No\n")
+rns = RNS.Reticulum(configdir=cfgdir, loglevel=RNS.LOG_ERROR)
 config = {"name": "backbone-client-fixture", "target_host": "127.0.0.1", "target_port": "${server.bindPort}"}
 client = BackboneClientInterface(RNS.Transport, config)
 assert client.online, "Python backbone client failed to connect"

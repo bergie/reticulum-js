@@ -21,6 +21,7 @@ knows it is ready.
 Usage: backbone_real_server.py [host] [port] [ifac_netname] [ifac_netkey]
 """
 
+import os
 import sys
 import tempfile
 import time
@@ -37,7 +38,12 @@ def main():
 
     # Minimal but fully started Reticulum: Transport.start() runs, so the
     # spawned BackboneClientInterface's inbound path (owner.inbound) works.
+    # A pre-written no-interface config avoids the default AutoInterface /
+    # shared-instance sockets — those panic-exit the process when their
+    # ports are taken (e.g. a dev machine running rnsd).
     configdir = tempfile.mkdtemp(prefix="rns-backbone-real-fixture-")
+    with open(os.path.join(configdir, "config"), "w") as f:
+        f.write("[reticulum]\nenable_transport = False\nshare_instance = No\n")
     reticulum = RNS.Reticulum(configdir=configdir, loglevel=RNS.LOG_ERROR)
 
     config = {
@@ -51,8 +57,16 @@ def main():
     # interfaces with the global Transport itself.
     interface = BackboneInterface(RNS.Transport, config)
 
-    # Mirror the node setup's interface_post_init for the IFAC attributes
-    # (Reticulum.py:986-1004): the listener carries the derived key, and
+    # Mirror the node setup's interface_post_init (Reticulum.py:935-1010):
+    # incoming_connection copies ALL of these onto every spawned client,
+    # and the class constructors never initialize them — a bare listener
+    # without this would AttributeError on the first accepted connection
+    # (caught, returning False — the socket is closed and the JS side sees
+    # an immediate disconnect).
+    interface.announce_rate_target = 3600
+    interface.announce_rate_grace = 5
+    interface.announce_rate_penalty = 0
+    # The IFAC attributes: the listener carries the derived key, and
     # incoming_connection propagates it to every spawned client.
     if netname is not None or netkey is not None:
         interface.ifac_size = BackboneInterface.DEFAULT_IFAC_SIZE
@@ -74,6 +88,10 @@ def main():
         interface.ifac_signature = interface.ifac_identity.sign(
             RNS.Identity.full_hash(interface.ifac_key)
         )
+    else:
+        interface.ifac_size = 0
+        interface.ifac_netname = None
+        interface.ifac_netkey = None
 
     # Tap the first inbound packet per spawned interface and answer it on
     # the same interface. Wrapping Transport.inbound keeps the reference's
