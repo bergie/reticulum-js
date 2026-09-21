@@ -552,7 +552,7 @@ from RNS.Interfaces.BackboneInterface import BackboneClientInterface
 # sockets (which panic-exit when their ports are taken).
 cfgdir = tempfile.mkdtemp()
 with open(os.path.join(cfgdir, "config"), "w") as f:
-    f.write("[reticulum]\nenable_transport = False\nshare_instance = No\n")
+    f.write("[reticulum]\\nenable_transport = False\\nshare_instance = No\\n")
 rns = RNS.Reticulum(configdir=cfgdir, loglevel=RNS.LOG_ERROR)
 config = {"name": "backbone-client-fixture", "target_host": "127.0.0.1", "target_port": "${server.bindPort}"}
 client = BackboneClientInterface(RNS.Transport, config)
