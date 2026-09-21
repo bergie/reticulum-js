@@ -77,6 +77,14 @@ jobs:
       # summary lists the manual follow-up command. Publish the new package
       # once by hand, register the trusted publisher on npm/JSR, and every
       # later release publishes it automatically too.
+      #
+      # The NPM loop iterates packages/* (order is irrelevant: npm resolves
+      # dep version ranges at install time). The JSR loop uses a
+      # topological order (scripts/jsr-publish-order.mjs), because JSR
+      # resolves its jsr: dependencies at PUBLISH time — a dependent whose
+      # dependency has not been published yet fails with "unresolvable
+      # 'jsr:' dependency" (this bit the 0.9.0 release, where the
+      # alphabetical order published @reticulum/node before @reticulum/rfed).
       - name: Publish all to NPM
         run: |
           set -uo pipefail
@@ -104,8 +112,7 @@ jobs:
         run: |
           set -uo pipefail
           real_failures=0
-          for dir in packages/*/; do
-            [ -f "$dir/jsr.json" ] || continue
+          for dir in $(node scripts/jsr-publish-order.mjs); do
             name=$(node -p "require('./$dir/jsr.json').name")
             echo "::group::jsr publish $name"
             if (cd "$dir" && npx -y jsr publish --allow-dirty); then
