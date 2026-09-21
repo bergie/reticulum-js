@@ -3,7 +3,7 @@
 rngit (Reticulum Git) transport for [isomorphic-git](https://isomorphic-git.org/).
 
 Clone, fetch from and push to `rns://` Git remotes served by an
-[rngit](https://reticulum.network/manual/rngit.html) node — from Node.js,
+[rngit](https://reticulum.network/manual/git.html) node — from Node.js,
 Deno, Bun or the browser.
 
 ## Example: clone, commit, push
