@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The `wss://` client test no longer fails under **Deno**: it relies on
+  `NODE_TLS_REJECT_UNAUTHORIZED = "0"` to skip verification of the self-signed
+  test cert, which is a Node-only escape hatch — Deno's web-platform
+  `WebSocket` has no runtime certificate bypass, so the test is skipped there
+  (the Python-client interop test is unaffected; its fixture opts out of
+  verification itself).
 
 ## [0.8.2] - 2026-09-19
 

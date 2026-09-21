@@ -64,9 +64,19 @@ const opensslAvailable = (() => {
   }
 })();
 
-// The TLS interop test needs both Python (to run the reference server) and
-// openssl (to mint a self-signed cert).
-const tTls = pythonAvailable && opensslAvailable ? test : test.skip;
+/**
+ * Whether the current runtime is Node.js. The TLS interop test relies on
+ * `NODE_TLS_REJECT_UNAUTHORIZED = "0"` to skip verification of the
+ * self-signed test cert, which is a Node-only escape hatch — Deno's
+ * web-platform WebSocket has no runtime certificate bypass (only the
+ * `--unsafely-ignore-certificate-errors` CLI flag), so it is skipped there.
+ */
+const nodeRuntime = typeof globalThis.Deno === "undefined";
+
+// The TLS interop test needs Python (to run the reference server), openssl
+// (to mint a self-signed cert), and a runtime that can be told to trust it.
+const tTls =
+  pythonAvailable && opensslAvailable && nodeRuntime ? test : test.skip;
 
 /**
  * Generates a self-signed certificate (CN=localhost, SAN includes 127.0.0.1)

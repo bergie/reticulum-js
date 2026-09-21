@@ -36,6 +36,11 @@ import {
 import { TransportCore } from "../../src/transport/transport.js";
 import { fromHex, toHex } from "../../src/utils/encoding.js";
 import { MicroMsgPack } from "../../src/utils/msgpack.js";
+import {
+  STAMP_SIZE,
+  stampValid,
+  stampWorkblock,
+} from "../../src/utils/stamper.js";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const FIXTURE_PATH = `${here}../fixtures/discovery_tcp.json`;
@@ -193,9 +198,23 @@ test("a discovery stamp validates at the required cost and is rejected when tamp
     `parsed value ${parsed?.value} should meet cost 8`,
   );
 
-  // Tamper one stamp byte → the parser must reject it.
+  // Tamper the stamp → the parser must reject it. A single flipped byte
+  // gives a fresh random stamp that still has a ~2^-cost chance of meeting
+  // the target, so tamper until the variant provably fails the cost check
+  // (making the rejection assertion deterministic, not a 1-in-256 flake).
   const tampered = new Uint8Array(appData);
-  tampered[tampered.length - 1] ^= 0xff;
+  // Layout is flags(1) || packed || stamp(32); mirror the parser's own
+  // workblock computation exactly.
+  const tamperedPacked = tampered.subarray(1, tampered.length - STAMP_SIZE);
+  const tamperedStamp = tampered.subarray(tampered.length - STAMP_SIZE);
+  const workblock = await stampWorkblock(
+    await Identity.fullHash(tamperedPacked),
+    WORKBLOCK_EXPAND_ROUNDS,
+  );
+  for (let i = 0; await stampValid(tamperedStamp, 8, workblock); i++) {
+    // A per-iteration mask avoids toggling a byte back to its original value.
+    tamperedStamp[tamperedStamp.length - 1 - (i % STAMP_SIZE)] ^= 0xff ^ i;
+  }
   const rejected = await parseDiscoveryAnnounce(tampered, announced, {
     requiredValue: 8,
   });

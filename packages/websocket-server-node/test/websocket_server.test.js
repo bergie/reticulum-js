@@ -36,6 +36,17 @@ const opensslAvailable = (() => {
 })();
 
 /**
+ * Whether the current runtime is Node.js. The wss:// client tests rely on
+ * `NODE_TLS_REJECT_UNAUTHORIZED = "0"` to skip verification of the
+ * self-signed test cert, which is a Node-only escape hatch — Deno's
+ * web-platform WebSocket has no runtime certificate bypass (only the
+ * `--unsafely-ignore-certificate-errors` CLI flag), so they are skipped
+ * there. (Tests where the *Python* client dials our TLS server are fine:
+ * the fixture opts out of verification itself.)
+ */
+const nodeRuntime = typeof globalThis.Deno === "undefined";
+
+/**
  * Generates a self-signed certificate (CN=localhost, SAN includes 127.0.0.1)
  * into a temp dir and returns its paths plus a cleanup helper.
  * @returns {{ certFile: string, keyFile: string, cleanup: () => void }}
@@ -181,6 +192,7 @@ test("WebSocketServer with ssl terminates TLS and accepts a wss:// client", {
   timeout: 15000,
 }, async () => {
   if (!opensslAvailable) return; // skip silently when openssl is absent
+  if (!nodeRuntime) return; // the client-side TLS bypass is Node-only
 
   const { certFile, keyFile, cleanup } = generateSelfSignedCert();
   // The self-signed test cert isn't in the system trust store, so let the

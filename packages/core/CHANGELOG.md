@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The discovery-stamp interop test no longer flakes: tampering a single
+  stamp byte left a ~2⁻ᶜᵒˢᵗ chance of the flipped stamp still meeting the
+  proof-of-work target, so the tamper loop now retries until the variant
+  provably fails the cost check before asserting rejection.
+
 ### Added
 - `Interface.optimiseMtu()` (work doc #34): the reference implementations'
   bitrate→MTU autoconfiguration table, opt-in via the `Interface.autoconfigureMtu`
