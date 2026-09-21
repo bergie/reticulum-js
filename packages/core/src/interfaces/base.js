@@ -427,6 +427,58 @@ export class Interface extends EventTarget {
   static IC_DEQUE_MIN_SAMPLE = 2;
 
   /**
+   * Whether the hardware MTU is autoconfigured from the nominal bitrate by
+   * {@link optimiseMtu} (matching the Python reference's `AUTOCONFIGURE_MTU`).
+   * Off on the base class; transport-grade interfaces (Local, TCP, Backbone)
+   * opt in.
+   * @type {boolean}
+   */
+  autoconfigureMtu = false;
+
+  /**
+   * The hardware MTU of this interface in bytes — the largest frame the
+   * medium can carry in one piece (`HW_MTU` in the reference
+   * implementations; `None`/`null` means unbounded/unknown).
+   *
+   * Unlike the Python reference (a class-level constant re-`optimise`d per
+   * instance), this is an instance field set by {@link optimiseMtu} or the
+   * subclass constructor; interfaces with a fixed medium MTU initialize it
+   * directly (e.g. RNode's 508).
+   * @type {number|null}
+   */
+  hwMtu = null;
+
+  /**
+   * Autoconfigures {@link hwMtu} from the nominal {@link bitrate} when
+   * {@link autoconfigureMtu} is set, using the reference implementations'
+   * bitrate→MTU table (faster media amortize framing overhead over larger
+   * frames). With autoconfiguration off this is a no-op — a subclass that
+   * set a fixed `hwMtu` keeps it.
+   *
+   * Called by interface constructors and by the node setup once the
+   * configured bitrate is known (the Python reference calls `optimise_mtu()`
+   * from `Reticulum._add_interface` and per-connection spawn sites).
+   * @returns {void}
+   */
+  optimiseMtu() {
+    if (!this.autoconfigureMtu) return;
+    const bitrate = this.bitrate;
+    if (bitrate >= 1_000_000_000) this.hwMtu = 524288;
+    else if (bitrate > 750_000_000) this.hwMtu = 262144;
+    else if (bitrate > 400_000_000) this.hwMtu = 131072;
+    else if (bitrate > 200_000_000) this.hwMtu = 65536;
+    else if (bitrate > 100_000_000) this.hwMtu = 32768;
+    else if (bitrate > 10_000_000) this.hwMtu = 16384;
+    else if (bitrate > 5_000_000) this.hwMtu = 8192;
+    else if (bitrate > 2_000_000) this.hwMtu = 4096;
+    else if (bitrate > 1_000_000) this.hwMtu = 2048;
+    else if (bitrate > 62_500) this.hwMtu = 1024;
+    else this.hwMtu = null;
+
+    log(this.name, `Hardware MTU set to ${this.hwMtu}`, LogLevel.PATHING);
+  }
+
+  /**
    * Whether ingress burst control is enabled on this interface. Disabling
    * makes {@link shouldIngressLimit} and {@link shouldIngressLimitPr} always
    * return `false`.

@@ -1,6 +1,33 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- **`BackboneInterface` / `BackboneClientInterface`** (work doc #34): the
+  high-performance TCP interfaces used between transport nodes, wire-
+  compatible with the Python reference `BackboneInterface` / `BackboneClientInterface`
+  and speaking the same HDLC framing as the TCP interfaces. The backbone
+  *profile* is what's new: a 1 Gbit/s nominal bitrate guess (vs 10 Mbit/s on
+  plain TCP) driving interface prioritization and MTU autoconfiguration
+  (`optimiseMtu()`), a 1 MiB frame-size cap, **fast-flapping protection**
+  (connections from a remote IP that repeatedly live < 20 s are counted;
+  beyond 5 grace flaps the IP is blocked for 12 h — state shared
+  process-wide across all backbone listeners, all knobs configurable via
+  `blockFastFlapping` / `fastFlappingThreshold` / `fastFlappingGrace` /
+  `fastFlappingBlockTime`), and **discovery participation**
+  (`supportsDiscovery = true`). Bind options: `listenIp`/`listenPort`
+  (+ `port` alias), `device` (bind to a kernel interface), `preferIpv6`.
+  Unlike the Python reference (Linux-only due to its `select.epoll`
+  architecture — an implementation artifact, not a protocol requirement),
+  the JS backbone interfaces work on any OS with TCP: the event loop already
+  provides the single-threaded multiplexed I/O model. Registered in the
+  interface registry as `backbone` / `backbone-client`. Python interop
+  tests (both directions, plain and IFAC-protected) live in
+  `test/interfaces/backbone_python.js` and are skipped when Python/RNS are
+  unavailable.
+- `Interface.optimiseMtu()` in `@reticulum/core`: the reference bitrate→MTU
+  autoconfiguration table (opt-in via `Interface.autoconfigureMtu`),
+  together with the `Interface.hwMtu` field (`HW_MTU`).
+
 ### Changed
 - The `@reticulum/node` test suite now also runs under **Bun** (`npm run test:bun` in
   `packages/node`, included in the root `npm run test:bun`). Two Bun runtime

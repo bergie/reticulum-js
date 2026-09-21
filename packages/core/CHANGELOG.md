@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 ### Added
+- `Interface.optimiseMtu()` (work doc #34): the reference implementations'
+  bitrate→MTU autoconfiguration table, opt-in via the `Interface.autoconfigureMtu`
+  flag, together with the `Interface.hwMtu` field (`HW_MTU`). Transport-grade
+  interfaces (backbone in `@reticulum/node`) opt in and call it at construct
+  and spawn time, exactly like the reference's `optimise_mtu()` call sites.
 - Instance-scoped caches (work doc #37, split-brain safety): `TransportCore`
   now owns the identity, ratchet and proof-receipt caches via `IdentityCache`
   (fresh maps per instance), with instance methods `rememberIdentity`,

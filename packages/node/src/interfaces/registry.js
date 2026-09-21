@@ -10,6 +10,7 @@ import { HttpPostClientInterface } from "@reticulum/core/src/interfaces/http.js"
 import { WebRTCInterface } from "@reticulum/core/src/interfaces/webrtc.js";
 import { WebSocketClientInterface } from "@reticulum/core/src/interfaces/websocket.js";
 import { AutoInterface } from "./auto.js";
+import { BackboneClientInterface, BackboneInterface } from "./backbone.js";
 import { HttpPostServerInterface } from "./http_server.js";
 import { LocalClientInterface } from "./local_client.js";
 import { RNodeSerialInterface } from "./rnode-serial.js";
@@ -36,6 +37,8 @@ import { UDPInterface } from "./udp.js";
 /** @type {Map<string, InterfaceConstructor>} */
 const registry = new Map();
 registry.set("auto", AutoInterface);
+registry.set("backbone", BackboneInterface);
+registry.set("backbone-client", BackboneClientInterface);
 registry.set("http-client", HttpPostClientInterface);
 registry.set("http-server", HttpPostServerInterface);
 registry.set("local-client", LocalClientInterface);
