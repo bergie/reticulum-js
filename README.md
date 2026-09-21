@@ -30,7 +30,7 @@ Start with [`@reticulum/core`](packages/core/README.md) — the companions just 
 
 The web platform has a very strong commitment and tradition for backwards compatibility. The fact that this implementation relies only on features of the web platform means it will likely remain functional and maintainable for years or even decades to come.
 
-**Note:** This library uses the standard Web Crypto API for all cryptographic operations. Web Crypto is available only in a [Secure Context](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts) (`https://`, `localhost`).
+**Note:** This library uses the standard Web Crypto API for all cryptographic operations. Web Crypto is available in browsers only in a [Secure Context](https://developer.mozilla.org/en-US/docs/Web/Security/Defenses/Secure_Contexts) (`https://`, `localhost`).
 
 ## Status
 
