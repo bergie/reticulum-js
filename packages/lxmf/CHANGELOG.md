@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `LXMRouter.send()` no longer leaks inbound `data`/`resource` listeners on a
+  reused cached DIRECT delivery link. The backchannel listeners
+  (`_attachLinkMessageListeners`) were re-attached on every send to a cached
+  link, growing the listener set until Node's EventTarget emitted
+  `MaxListenersExceededWarning` (11 `data` listeners) and re-dispatching each
+  inbound message once per attached copy. Listeners are now attached once per
+  link and tracked in an `attachedLinks` set alongside the existing
+  `identifiedLinks`/`directLinks` caches, and evicted when the link closes.
 
 ## [0.9.0] - 2026-09-21
 ### Changed

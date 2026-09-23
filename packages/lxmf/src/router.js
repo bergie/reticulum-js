@@ -120,6 +120,11 @@ export class LXMRouter extends EventTarget {
     // Tracks outbound links (by hex link_id) we have already sent LINKIDENTIFY
     // on, so we identify once per link rather than on every message.
     this.identifiedLinks = new Set();
+    // Tracks outbound links (by hex link_id) that already have the inbound
+    // `data`/`resource` listeners attached, so a reused cached DIRECT link
+    // isn't re-attached on every send (which would leak listeners and
+    // dispatch each inbound message once per attached copy).
+    this.attachedLinks = new Set();
     // --- Outbound DIRECT delivery links (the Python reference's direct
     // links), cached by recipient destination hash so repeated sends reuse one link. ---
     /** @type {Map<string, import("@reticulum/core").Link>} */
@@ -1310,8 +1315,15 @@ export class LXMRouter extends EventTarget {
       if (directLink) {
         // Backchannel: a DIRECT link we initiated must also *receive* — Python
         // calls delivery_link_established on outbound direct links after
-        // delivery so replies are dispatched instead of dropped.
-        this._attachLinkMessageListeners(directLink);
+        // delivery so replies are dispatched instead of dropped. Attach the
+        // inbound listeners once per link — a reused cached link already has
+        // them, re-attaching would leak `data`/`resource` listeners and
+        // re-dispatch each inbound message once per copy.
+        const linkKey = toHex(directLink.linkId);
+        if (!this.attachedLinks.has(linkKey)) {
+          this._attachLinkMessageListeners(directLink);
+          this.attachedLinks.add(linkKey);
+        }
         linkId = directLink.linkId;
       }
     }
@@ -1558,11 +1570,14 @@ export class LXMRouter extends EventTarget {
       // Evict from the cache when the link comes down so the next send
       // re-establishes a fresh one (matching the Python reference, which
       // drops the cached link on close).
+      const newLinkKey = toHex(link.linkId);
       link.addEventListener("statuschange", (/** @type {any} */ ev) => {
         if (ev.detail.status === LinkStatus.CLOSED) {
           if (this.directLinks.get(destHex) === link) {
             this.directLinks.delete(destHex);
           }
+          this.attachedLinks.delete(newLinkKey);
+          this.identifiedLinks.delete(newLinkKey);
         }
       });
       this.directLinks.set(destHex, link);
