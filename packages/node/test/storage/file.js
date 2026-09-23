@@ -65,6 +65,57 @@ describe("FileStorageAdapter — identity key blob", () => {
   });
 });
 
+describe("FileStorageAdapter — transport identity key blob (work doc #23)", () => {
+  test("loadTransportKey returns null when absent", async () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const a = new FileStorageAdapter(dir);
+      assert.strictEqual(await a.loadTransportKey(), null);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("saveTransportKey / loadTransportKey round-trip at <dir>/transport_identity.key", async () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const a = new FileStorageAdapter(dir);
+      const blob = fromHex("11".repeat(128));
+      await a.saveTransportKey(blob);
+      assert.ok(
+        existsSync(join(dir, "transport_identity.key")),
+        "lives at <dir>/transport_identity.key",
+      );
+      const loaded = await a.loadTransportKey();
+      assert.ok(loaded && bytesEqual(loaded, blob));
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("saveTransportKey writes owner-only (mode 0o600), distinct from identity.key", async () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const a = new FileStorageAdapter(dir);
+      await a.saveTransportKey(fromHex("11".repeat(128)));
+      const mode = statSync(join(dir, "transport_identity.key")).mode & 0o777;
+      assert.strictEqual(mode, 0o600, "transport key must be owner-only");
+      // The two slots are distinct files.
+      await a.saveKey(fromHex("00".repeat(128)));
+      assert.ok(
+        existsSync(join(dir, "identity.key")) &&
+          existsSync(join(dir, "transport_identity.key")),
+        "identity and transport keys are separate files",
+      );
+      const idKey = await a.loadKey();
+      const tpKey = await a.loadTransportKey();
+      assert.ok(!bytesEqual(idKey, tpKey), "the two keys are distinct");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe("FileStorageAdapter — owned ratchet rings", () => {
   test("loadOwnedRatchets returns null when absent", async () => {
     const { dir, cleanup } = tempDir();

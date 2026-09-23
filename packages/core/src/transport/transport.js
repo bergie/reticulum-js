@@ -96,6 +96,32 @@ export class TransportCore extends EventTarget {
     this.defaultInterface = null;
 
     /**
+     * The transport-node identity (work doc #23 Phase 0). `null` on a leaf —
+     * a transport node advertises this identity's hash as its `transport_id`
+     * in HEADER_2 and (later phases) registers management destinations on
+     * it. Set by {@link import("../core/reticulum.js").Reticulum} when
+     * `enableTransport` is true; stays `null` otherwise so the leaf path is
+     * unchanged.
+     * @type {import("../core/identity.js").Identity|null}
+     */
+    this.identity = null;
+    /**
+     * The persistent transport identity held when transport is *disabled* but
+     * `staticTransportIdentity` is set (Python's `Transport._identity`). When
+     * transport is enabled, `identity` IS the persistent one and `_identity`
+     * stays `null`. `null` on a leaf that didn't opt into the static form.
+     * @type {import("../core/identity.js").Identity|null}
+     */
+    this._identity = null;
+    /**
+     * Whether this node operates as a Reticulum transport (relay + announce
+     * propagation + path requests). Gated by the `Reticulum` `enableTransport`
+     * config; `false` on a leaf so all transport-node behavior is a no-op.
+     * @type {boolean}
+     */
+    this.transportEnabled = false;
+
+    /**
      * Selective persistence coordinator (#16). Set by `Reticulum` after it
      * constructs the adapter-backed Persistor; stays null when persistence is
      * disabled. `sendPacket` notifies it whenever we transmit to a real

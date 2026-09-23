@@ -1,6 +1,18 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Transport-node identity + flag (work doc #23 Phase 0): `new Reticulum({
+  enableTransport: true })` loads (or generates + persists) a stable transport
+  identity — the node's advertised `transport_id` for later-phase HEADER_2
+  forwarding. `staticTransportIdentity` (Python `static_transport_identity`)
+  holds the persistent id in `transport._identity` with an ephemeral in
+  `transport.identity` while transport is disabled, so toggling transport on/off
+  keeps a stable id. Both default off → the leaf path is unchanged and loads no
+  transport identity. `TransportCore.identity` / `_identity` / `transportEnabled`
+  are the new fields; later phases consume them. `Identity.loadOrGenerateTransport`
+  mirrors `loadOrGenerate` on new dedicated `StorageAdapter` slots
+  (`loadTransportKey`/`saveTransportKey`, owner-only).
 
 ## [0.9.0] - 2026-09-21
 ### Fixed

@@ -277,7 +277,13 @@ test("validateAnnounce rejects when the body is too short for a ratchet announce
 
 /** A minimal in-memory StorageAdapter for loadOrGenerate tests. */
 function makeAdapter(opts = {}) {
-  const store = { saved: null, loaded: null, ...opts };
+  const store = {
+    saved: null,
+    loaded: null,
+    transportSaved: null,
+    transportLoaded: null,
+    ...opts,
+  };
   return {
     store,
     async loadKey() {
@@ -287,6 +293,14 @@ function makeAdapter(opts = {}) {
     async saveKey(bytes) {
       if (store.saveThrows) throw store.saveThrows;
       store.saved = bytes;
+    },
+    async loadTransportKey() {
+      if (store.transportLoaded instanceof Error) throw store.transportLoaded;
+      return store.transportLoaded;
+    },
+    async saveTransportKey(bytes) {
+      if (store.transportSaveThrows) throw store.transportSaveThrows;
+      store.transportSaved = bytes;
     },
   };
 }
@@ -344,5 +358,72 @@ test("loadOrGenerate propagates a storage read error instead of regenerating", a
 
 test("loadOrGenerate without an adapter generates an ephemeral identity", async () => {
   const identity = await Identity.loadOrGenerate(undefined);
+  assert.ok(identity.identityHash);
+});
+
+// --- loadOrGenerateTransport (work doc #23 Phase 0) ----------------------
+// Mirrors loadOrGenerate but on the dedicated transport-key storage slots,
+// so a transport node's identity is distinct from the local app identity.
+
+test("loadOrGenerateTransport generates + persists when no key exists", async () => {
+  const adapter = makeAdapter({ transportLoaded: null });
+  const identity = await Identity.loadOrGenerateTransport(adapter);
+  assert.ok(identity.identityHash, "generated an identity");
+  assert.strictEqual(
+    adapter.store.transportSaved?.length,
+    128,
+    "persisted the private key on the transport slot",
+  );
+  assert.strictEqual(
+    adapter.store.saved,
+    null,
+    "did not touch the local-identity slot",
+  );
+});
+
+test("loadOrGenerateTransport loads an existing key without regenerating", async () => {
+  const original = await Identity.generate();
+  const privBytes = await original.getPrivateKey();
+  const adapter = makeAdapter({ transportLoaded: privBytes });
+  const loaded = await Identity.loadOrGenerateTransport(adapter);
+  assert.ok(
+    bytesEqual(loaded.identityHash, original.identityHash),
+    "same transport identity loaded back",
+  );
+  assert.strictEqual(adapter.store.transportSaved, null, "did not overwrite");
+});
+
+test("loadOrGenerateTransport refuses to overwrite a corrupt stored key", async () => {
+  const adapter = makeAdapter({ transportLoaded: new Uint8Array(100) });
+  await assert.rejects(
+    () => Identity.loadOrGenerateTransport(adapter),
+    /could not be loaded/i,
+    "must throw on corrupt transport key",
+  );
+  assert.strictEqual(
+    adapter.store.transportSaved,
+    null,
+    "must not persist a new key over the corrupt one",
+  );
+});
+
+test("loadOrGenerateTransport propagates a storage read error", async () => {
+  const adapter = makeAdapter({
+    transportLoaded: new Error("disk read failed (permissions)"),
+  });
+  await assert.rejects(
+    () => Identity.loadOrGenerateTransport(adapter),
+    /disk read failed/,
+    "must surface read errors, not mint a new transport identity",
+  );
+  assert.strictEqual(
+    adapter.store.transportSaved,
+    null,
+    "must not persist anything after a read failure",
+  );
+});
+
+test("loadOrGenerateTransport without an adapter generates an ephemeral", async () => {
+  const identity = await Identity.loadOrGenerateTransport(undefined);
   assert.ok(identity.identityHash);
 });

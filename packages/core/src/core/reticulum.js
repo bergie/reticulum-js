@@ -3,6 +3,7 @@ import { InterfaceDiscovery } from "../transport/discovery.js";
 import { TransportCore } from "../transport/transport.js";
 import { toHex } from "../utils/encoding.js";
 import { LogLevel, log, setLogLevel } from "../utils/log.js";
+import { Identity } from "./identity.js";
 import { IFAC_MIN_SIZE, IFAC_SALT } from "./ifac.js";
 import { Packet } from "./packet.js";
 
@@ -67,6 +68,18 @@ export class Reticulum {
    *   so a leaf can discover connectable transport-node interfaces on the
    *   `rnstransport.discovery.interface` aspect.
    *   v1 is surface-only — no auto-connect.
+   * @param {boolean} [config.enableTransport] - When true, operate as a
+   *   Reticulum transport node (work doc #23): relay DATA/links hop-by-hop,
+   *   propagate announces, and answer/forward path requests. Loads (or
+   *   generates + persists) a stable transport identity used as the node's
+   *   `transport_id`. `false` by default — the leaf path is unchanged and
+   *   loads no transport identity.
+   * @param {boolean} [config.staticTransportIdentity] - When `enableTransport`
+   *   is false, still load the persistent transport identity into
+   *   `rns.transport._identity` (but use an ephemeral for `identity`) so a
+   *   node toggling transport on/off keeps a stable `transport_id` when next
+   *   enabled. Mirrors Python's `static_transport_identity`. Ignored when
+   *   `enableTransport` is true. No-op without a storage adapter.
    * @param {Object} [config.discovery] - Extra options forwarded to the
    *   {@link InterfaceDiscovery} constructor when `enableDiscovery` is true
    *   (`requiredValue`, `discoverySources`, `networkIdentity`, `backboneSupport`).
@@ -137,6 +150,20 @@ export class Reticulum {
     /** Whether {@link stop} has run. */
     this._stopped = false;
 
+    // --- Transport-node identity + flag (work doc #23 Phase 0) ---
+    // Gated behind `enableTransport`: a transport node advertises
+    // `transport.identity.hash` as its `transport_id` in HEADER_2 (later
+    // phases) and registers management destinations on it. A leaf never loads
+    // a transport identity, so the leaf path is byte-for-byte unchanged.
+    //
+    // `staticTransportIdentity` (mirrors Python `static_transport_identity`):
+    // when transport is *disabled* but set, load the persistent identity into
+    // `transport._identity` and use an ephemeral for `transport.identity`, so
+    // a node toggling transport on/off keeps a stable `transport_id` when next
+    // enabled (the disabled node never advertises the real id).
+    this.transport.transportEnabled = !!config.enableTransport;
+    this.transportIdentityLoadPromise = this._loadTransportIdentity(config);
+
     // Interface discovery (work doc #17). Surface-only in v1: parses,
     // stamp-validates and surfaces `rnstransport.discovery.interface` announces
     // as `discovery.on("discovered", ...)`. `start()` is async (it precomputes
@@ -153,6 +180,44 @@ export class Reticulum {
     }
 
     log("Reticulum", "Reticulum Engine initialized.");
+  }
+
+  /**
+   * Loads (or generates + persists) the transport-node identity behind the
+   * `enableTransport` / `staticTransportIdentity` config flags (work doc #23
+   * Phase 0). Resolves `transport.identity` (and `transport._identity` for the
+   * static-but-disabled case). Fire-and-forget on construction; callers that
+   * need it ready can `await rns.transportIdentityLoadPromise`.
+   *
+   * @param {{enableTransport?: boolean, staticTransportIdentity?: boolean}} config
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _loadTransportIdentity(config) {
+    if (config.enableTransport) {
+      this.transport.identity = await Identity.loadOrGenerateTransport(
+        this.storage,
+      );
+      log(
+        "Reticulum",
+        `Transport identity ${toHex(this.transport.identity.identityHash)}`,
+        LogLevel.NOTICE,
+      );
+      return;
+    }
+    if (config.staticTransportIdentity && this.storage) {
+      // Disabled but static: keep the persistent id available for a future
+      // `enableTransport` toggle, but advertise an ephemeral so a leaf never
+      // claims the real transport_id.
+      const persistent = await Identity.loadOrGenerateTransport(this.storage);
+      this.transport._identity = persistent;
+      this.transport.identity = await Identity.generate();
+      log(
+        "Reticulum",
+        `Static transport identity ${toHex(persistent.identityHash)} loaded (ephemeral in use while transport disabled)`,
+        LogLevel.DEBUG,
+      );
+    }
   }
 
   /**

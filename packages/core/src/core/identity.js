@@ -163,6 +163,75 @@ export class Identity extends EventTarget {
   }
 
   /**
+   * Loads or generates the transport-node identity (work doc #23 Phase 0).
+   *
+   * Distinct from the local app identity ({@link Identity.loadOrGenerate}): a
+   * transport node advertises this identity's hash as its `transport_id` in
+   * HEADER_2, and later phases register management destinations on it. Like
+   * the local identity it is persistent secret material (the 128-byte
+   * priv+pub export, same round-trip format as {@link StorageAdapter.saveKey}),
+   * stored owner-only via the dedicated `loadTransportKey`/`saveTransportKey`
+   * storage slots.
+   *
+   * @param {import("../storage/storage.js").StorageAdapter|null} storageAdapter
+   *   When `null`, an ephemeral identity is generated (a transport node with
+   *   no storage adapter cannot keep a stable `transport_id` across restarts).
+   * @returns {Promise<Identity>}
+   */
+  static async loadOrGenerateTransport(storageAdapter) {
+    if (!storageAdapter) {
+      log(
+        "Identity",
+        "No storage adapter provided. Generating ephemeral transport identity.",
+        LogLevel.WARNING,
+      );
+      return await Identity.generate();
+    }
+
+    let savedBytes = null;
+    try {
+      savedBytes = await storageAdapter.loadTransportKey();
+    } catch (e) {
+      log(
+        "Identity",
+        `Failed to read transport identity from storage: ${e}`,
+        LogLevel.ERROR,
+      );
+      throw new Error(`Failed to read transport identity from storage: ${e}`);
+    }
+
+    if (savedBytes) {
+      if (savedBytes.length === 128) {
+        const identity = await Identity.fromBytes(savedBytes);
+        if (identity) return identity;
+      }
+      log(
+        "Identity",
+        "Stored transport identity key is present but could not be loaded (corrupt or wrong length). " +
+          "Refusing to overwrite; remove the file manually to regenerate.",
+        LogLevel.ERROR,
+      );
+      throw new Error(
+        "Stored transport identity key is present but could not be loaded; refusing to overwrite it",
+      );
+    }
+
+    const newIdentity = await Identity.generate();
+    const privateBytes = await newIdentity.getPrivateKey();
+    try {
+      await storageAdapter.saveTransportKey(privateBytes);
+    } catch (e) {
+      log(
+        "Identity",
+        `Failed to persist new transport identity: ${e}`,
+        LogLevel.ERROR,
+      );
+      throw new Error(`Failed to persist new transport identity: ${e}`);
+    }
+    return newIdentity;
+  }
+
+  /**
    * Get a SHA-256 hash of passed data.
    * @param {Uint8Array} data
    * @returns {Promise<Uint8Array>}

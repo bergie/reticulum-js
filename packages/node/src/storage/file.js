@@ -7,6 +7,7 @@
  * On-disk layout under the configured `directory`:
  *
  *   <dir>/identity.key            — local Identity private-key blob (loadKey/saveKey)
+ *   <dir>/transport_identity.key  — transport-node Identity private-key blob (loadTransportKey/saveTransportKey, work doc #23)
  *   <dir>/owned_ratchets/<hash>.key — own ratchet private-key rings (loadOwnedRatchets/saveOwnedRatchets)
  *   <dir>/<namespace>/<key>.bin   — one file per namespaced record (get/set/delete/keys)
  *
@@ -41,6 +42,11 @@ export class FileStorageAdapter {
   /** @returns {string} */
   _keyPath() {
     return join(this.directory, "identity.key");
+  }
+
+  /** @returns {string} */
+  _transportKeyPath() {
+    return join(this.directory, "transport_identity.key");
   }
 
   /**
@@ -92,6 +98,29 @@ export class FileStorageAdapter {
     // by umask (it has no group/other bits to clear), so the key is always
     // owner-only regardless of the process umask.
     await writeFile(this._keyPath(), bytes, { mode: 0o600 });
+  }
+
+  /**
+   * @returns {Promise<Uint8Array|null>}
+   */
+  async loadTransportKey() {
+    try {
+      return new Uint8Array(await readFile(this._transportKeyPath()));
+    } catch (e) {
+      if (isNotFound(e)) return null;
+      throw e;
+    }
+  }
+
+  /**
+   * @param {Uint8Array} bytes
+   * @returns {Promise<void>}
+   */
+  async saveTransportKey(bytes) {
+    // Same owner-only rationale as saveKey — the transport identity private
+    // key is secret material and is stored 0o600 in a 0o700 directory.
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    await writeFile(this._transportKeyPath(), bytes, { mode: 0o600 });
   }
 
   /**

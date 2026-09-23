@@ -35,6 +35,13 @@
  *   Identity's private-key blob (128 bytes), or null when absent.
  * @property {(bytes: Uint8Array) => Promise<void>} saveKey Persists the local
  *   Identity's private-key blob.
+ * @property {() => Promise<Uint8Array|null>} loadTransportKey Loads the
+ *   transport-node Identity's private-key blob (64-byte priv, work doc #23
+ *   Phase 0), or null when absent. Secret material — backends MUST store it
+ *   with identity-key-grade, owner-only permissions (same as `saveKey`).
+ * @property {(bytes: Uint8Array) => Promise<void>} saveTransportKey Persists
+ *   the transport-node Identity's private-key blob (secret material,
+ *   owner-only permissions).
  * @property {(destHashHex: string) => Promise<Uint8Array|null>} loadOwnedRatchets
  *   Loads this node's own ratchet private-key ring for a destination (secret
  *   material — backends MUST store it with identity-key-grade, owner-only
@@ -85,6 +92,8 @@ export class MemoryStorageAdapter {
     this._stores = new Map();
     /** @type {Uint8Array|null} */
     this._key = null;
+    /** @type {Uint8Array|null} */
+    this._transportKey = null;
     /** @type {Map<string, Uint8Array>} */
     this._ownedRatchets = new Map();
   }
@@ -113,6 +122,21 @@ export class MemoryStorageAdapter {
    */
   async saveKey(bytes) {
     this._key = bytes.slice();
+  }
+
+  /**
+   * @returns {Promise<Uint8Array|null>}
+   */
+  async loadTransportKey() {
+    return this._transportKey ? this._transportKey.slice() : null;
+  }
+
+  /**
+   * @param {Uint8Array} bytes
+   * @returns {Promise<void>}
+   */
+  async saveTransportKey(bytes) {
+    this._transportKey = bytes.slice();
   }
 
   /**

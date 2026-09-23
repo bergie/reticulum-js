@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `FileStorageAdapter` transport-identity slots (work doc #23 Phase 0):
+  `loadTransportKey`/`saveTransportKey` persist the transport-node identity
+  private key at `<dir>/transport_identity.key`, owner-only (0o600) like
+  `identity.key`, distinct from the local app identity. Consumed by
+  `@reticulum/core`'s `Identity.loadOrGenerateTransport`.
 
 ## [0.9.0] - 2026-09-21
 ### Added
