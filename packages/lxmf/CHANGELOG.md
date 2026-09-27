@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.2] - 2026-09-27
 ### Fixed
 - `LXMRouter.send()` no longer leaks inbound `data`/`resource` listeners on a
   reused cached DIRECT delivery link. The backchannel listeners

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-09-27
+
 ## [0.9.1] - 2026-09-27
 ### Fixed
 - `PUBLISH_DATA_MAX` reduced 431 → 384: the historical value was derived from
