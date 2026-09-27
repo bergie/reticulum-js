@@ -20,13 +20,14 @@
  *
  * === Publish delivery: DATA or link Resource ===
  *
- * Payloads up to the link MDU (`PUBLISH_DATA_MAX`, 431 B at the default
- * MTU) go out as a single fire-and-forget DATA packet — the common case
- * for channel updates and state sync. Anything larger would fragment into
- * packets the node drops, so it is instead sent as a Resource over a link
- * to the publish destination. The node ingests both paths identically,
- * matching the reference implementation (whose publish endpoint accepts
- * both single DATA packets and oversized link Resources).
+ * Payloads up to `PUBLISH_DATA_MAX` (the largest payload that fits one
+ * plain tokenized packet at the default MTU) go out as a single
+ * fire-and-forget DATA packet — the common case for channel updates and
+ * state sync. Anything larger would fragment into packets the node drops,
+ * so it is instead sent as a Resource over a link to the publish
+ * destination. The node ingests both paths identically, matching the
+ * reference implementation (whose publish endpoint accepts both single
+ * DATA packets and oversized link Resources).
  */
 
 import {
@@ -64,11 +65,21 @@ const NOTIFY_UNREGISTER_PATH = "/rfed/notify/unregister";
 const NOTIFY_CLEAR_PATH = "/rfed/notify/clear";
 
 /**
- * Largest publish payload sent as a single fire-and-forget DATA packet —
- * the link MDU (431 B at the default 500 B MTU). Anything larger is sent
- * as a Resource over a link to the publish destination.
+ * Largest publish payload sent as a single fire-and-forget DATA packet.
+ * Anything larger is sent as a Resource over a link to the publish
+ * destination.
+ *
+ * The value is the largest payload that actually fits one plain tokenized
+ * destination packet at the default 500 B MTU: the Token envelope
+ * (ephemeral pubkey 32 ‖ iv 16 ‖ hmac 32) plus the packet header and
+ * destination hash add 99 bytes over the PKCS7-padded payload, so a 431-byte
+ * payload packs to 531 bytes and overflows the MTU (Python RNS throws at
+ * pack time; on constrained interfaces the datagram is simply lost). The
+ * exact ceiling is 399 bytes (pad16(399) = 400, raw 499); 384 is the
+ * block-aligned value kept here for safety margin. (The historical 431 was
+ * derived from the *link* MDU, but plain publishes bypass links entirely.)
  */
-const PUBLISH_DATA_MAX = 431;
+const PUBLISH_DATA_MAX = 384;
 
 /** Modern split rfed destination names (SPEC §2). Share the node identity. */
 const CHANNEL_SUBSCRIBE_NAME = "rfed.channel.subscribe";
@@ -399,12 +410,12 @@ export class RFedClient {
    * Sends a prepared rfed SEND payload to the node's `rfed.channel.publish`
    * destination. Shared by {@link publish} and {@link publishRaw}.
    *
-   * Payloads up to the link MDU go out as a single fire-and-forget DATA
+   * Payloads up to PUBLISH_DATA_MAX go out as a single fire-and-forget DATA
    * packet. Anything larger would be fragmented into packets the node drops,
    * so it is instead sent as a Resource over a link to the publish
    * destination — the node ingests both paths identically. This mirrors the
    * reference: a DATA-only publish endpoint silently loses any publish
-   * larger than the link MDU (~431 B).
+   * larger than the single-packet DATA MDU.
    *
    * @param {Uint8Array} nodeHash
    * @param {Uint8Array} rfedPayload

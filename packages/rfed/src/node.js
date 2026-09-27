@@ -24,7 +24,7 @@
  *
  * The publish destination (`rfed.channel.publish`) accepts link requests in
  * addition to fire-and-forget DATA SENDs. Payloads at or under the link MDU
- * (431 B) arrive as a single DATA packet; anything larger arrives as a
+ * (~400 B) arrive as a single DATA packet; anything larger arrives as a
  * Resource transfer — both land in the same `_handleSend` ingest, matching
  * the reference node (a DATA-only publish endpoint silently drops any
  * publish larger than the link MDU).
@@ -395,7 +395,7 @@ export class RFedNode {
         );
       });
     });
-    // A publish payload larger than the link MDU (~431 B) arrives as a
+    // A publish payload larger than the single-packet DATA MDU arrives as a
     // Resource on an established link instead of a single DATA packet —
     // both paths land in the same `_handleSend` ingest, matching the
     // reference node (a DATA-only publish endpoint silently drops any
