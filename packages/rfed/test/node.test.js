@@ -434,7 +434,7 @@ describe("RFedNode — deferred delivery", () => {
     );
   });
 
-  // The reference node accepts SENDs larger than the link MDU (~431 B) as
+  // The reference node accepts SENDs larger than the single-packet DATA MDU as
   // Resource transfers on a link to the publish destination; a DATA-only
   // publish endpoint silently drops them.
   test("oversized publish: payload beyond the DATA MDU arrives as a link Resource and is ingested", async () => {
@@ -445,7 +445,7 @@ describe("RFedNode — deferred delivery", () => {
     await client.listen((d) => received.push(d));
     await waitFor(() => node.isOnline(clientDeliveryHash));
 
-    // Well over the 431-byte DATA MDU, forcing the client onto the
+    // Well over the DATA MDU, forcing the client onto the
     // link + Resource path.
     const body = "x".repeat(1200);
     await client.publish(
