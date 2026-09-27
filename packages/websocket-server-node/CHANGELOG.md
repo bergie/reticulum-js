@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-27
+
 ## [0.9.0] - 2026-09-21
 ### Fixed
 - The `wss://` client test no longer fails under **Deno**: it relies on

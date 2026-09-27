@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-27
+### Fixed
+- **rfed**: `PUBLISH_DATA_MAX` reduced 431 → 384: the historical value was derived from
+  the *link* MDU, but the DATA publish path sends a **plain** packet to the
+  destination — the Token envelope (ephemeral pubkey 32 ‖ iv 16 ‖ hmac 32)
+  plus header and destination hash add 99 bytes over the PKCS7-padded
+  payload, so a 431-byte publish packs to 531 bytes and overflows the 500 B
+  MTU (Python RNS throws at pack time; on constrained interfaces the datagram
+  is silently lost). The exact ceiling is 399 bytes; 384 keeps a
+  block-aligned margin. Publishes of 385–431 bytes now correctly take the
+  Resource path.
+
 ## [0.9.0] - 2026-09-21
 ### Added
 - **core**: `Interface.optimiseMtu()` (work doc #34): the reference implementations'
