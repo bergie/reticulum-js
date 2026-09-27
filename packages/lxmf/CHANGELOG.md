@@ -11,6 +11,8 @@
   link and tracked in an `attachedLinks` set alongside the existing
   `identifiedLinks`/`directLinks` caches, and evicted when the link closes.
 
+## [0.9.1] - 2026-09-27
+
 ## [0.9.0] - 2026-09-21
 ### Changed
 - Cache access is now instance-scoped (work doc #37): the router and peers

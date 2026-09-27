@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-27
+
 ## [0.9.0] - 2026-09-21
 ### Added
 - **`BackboneInterface` / `BackboneClientInterface`** (work doc #34): the
