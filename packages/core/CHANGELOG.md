@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The RNode interface detect timeout now defaults to 15 s instead of 5 s:
+  ESP32-S3 boards (Heltec LoRa32 v3) reset when the host opens the serial
+  port and can take over ten seconds to boot, so the shorter window made
+  detect time out on healthy devices.
 
 ## [0.9.2] - 2026-09-27
 

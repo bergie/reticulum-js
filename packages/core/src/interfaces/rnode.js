@@ -242,7 +242,9 @@ export const KISS = Object.freeze({
  *   both endpoints must match.
  * @property {string} [name] - Human-readable interface name.
  * @property {number} [detectTimeout] - Seconds to wait for the detect
- *   handshake. Defaults to 5 — the serial path is near-instant.
+ *   handshake. Defaults to 15 — a warm device answers within milliseconds,
+ *   but ESP32-S3 boards (e.g. Heltec LoRa32 v3) can take 10+ seconds to boot
+ *   after the host opens the serial port (the open pulse resets them).
  * @property {number} [validateTimeout] - Seconds to wait for the post-config
  *   radio-state echo. Defaults to 2.
  * @property {number} [postOpenDelayMs] - Milliseconds to wait between opening
@@ -361,8 +363,11 @@ export class RNodeInterface extends Interface {
         detectTimeout: {
           type: "number",
           minimum: 0,
-          default: 5,
-          description: "Seconds to wait for the detect handshake response.",
+          default: 15,
+          description:
+            "Seconds to wait for the detect handshake response. Generous by " +
+            "default because ESP32 boards reboot on port-open and can take " +
+            "over ten seconds to become ready.",
         },
         validateTimeout: {
           type: "number",
@@ -455,7 +460,7 @@ export class RNodeInterface extends Interface {
     // configured.
     this.shouldId = this.idCallsign !== null && this.idInterval !== null;
     this.detectTimeout =
-      options.detectTimeout === undefined ? 5 : options.detectTimeout;
+      options.detectTimeout === undefined ? 15 : options.detectTimeout;
     this.validateTimeout =
       options.validateTimeout === undefined ? 2 : options.validateTimeout;
     this.postOpenDelayMs =

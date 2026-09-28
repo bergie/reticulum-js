@@ -296,6 +296,16 @@ test("detect timeout aborts when the device never responds", async () => {
   await iface.disconnect();
 });
 
+test("detect timeout defaults to 15 s for slow-booting ESP32 boards", () => {
+  // Regression: ESP32-S3 boards (Heltec LoRa32 v3) can take 10+ seconds to
+  // boot after the port-open reset pulse; the previous 5 s default made
+  // detect time out on such devices (see signalk-reticulum issue #1).
+  const { detectTimeout: _omitted, ...noDetectTimeout } = RADIO;
+  const iface = new FakeTransport(noDetectTimeout);
+  assert.equal(iface.detectTimeout, 15);
+  return iface.disconnect();
+});
+
 /** Counts how many complete CMD_DETECT probe bursts have been written. */
 function countDetectBursts(iface) {
   let count = 0;
