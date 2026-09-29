@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `unwrapChannelMessage` now enforces the channel prelude **key binding**
+  (RFed/SPEC.md, introduced upstream 2026-09-27): the prelude sender key's own
+  `lxmf.delivery` destination hash must equal the `source_hash` taken verbatim
+  from the LXMF tail, checked **before** the key is remembered in Reticulum's
+  known-destinations cache; a mismatching post is rejected and nothing is
+  cached. Previously the prelude key was remembered unconditionally — anyone
+  who knows the channel name (the channel private key is derived from it) could
+  overwrite a contact's cached key by posting with a claimed `source_hash`.
 
 ## [0.9.2] - 2026-09-27
 

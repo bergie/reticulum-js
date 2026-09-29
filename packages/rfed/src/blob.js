@@ -17,12 +17,15 @@
  *
  * `source_hash` is the sender's `lxmf.delivery` **destination** hash —
  * `truncated_hash(name_hash("lxmf.delivery") ‖ identity_hash)` — NOT the bare
- * identity hash. Integrity is the LXMF Ed25519 signature; cache poisoning is
- * impossible because reaching the EC-decrypt step already required the channel
- * private key (i.e. an authorised subscriber).
+ * identity hash. Integrity is the LXMF Ed25519 signature. The channel private
+ * key alone does **not** protect Reticulum's known-destinations cache — it is
+ * derived from the channel name, so anyone who knows the name holds it — so
+ * receivers MUST verify the prelude key binds to `source_hash` (its
+ * `lxmf.delivery` destination hash equals `source_hash`) before remembering
+ * it (RFed/SPEC.md, "Key binding").
  */
 
-import { concatBytes, Identity } from "@reticulum/core";
+import { bytesEqual, concatBytes, Identity } from "@reticulum/core";
 import { LXMessage as Message } from "@reticulum/lxmf";
 import { deliveryHashFor } from "./channel.js";
 import {
@@ -236,7 +239,12 @@ export function parseSendPayload(payload) {
  * identity is cached via the transport's instance-scoped cache (work doc #37)
  * so subsequent messages from the same sender validate without the prelude.
  *
- * The returned `signatureValid` is **the** integrity check: a forged
+ * The prelude key is **bound** to the message before anything is remembered:
+ * the key's own `lxmf.delivery` destination hash must equal the `source_hash`
+ * taken verbatim from the LXMF tail, or the post is rejected and nothing is
+ * cached (RFed/SPEC.md "Key binding" — without it, anyone who knows the
+ * channel name could overwrite a contact's cached key). The returned
+ * `signatureValid` is then the integrity check of the accepted post: a forged
  * `sender_identity_pub` produces a signature mismatch.
  *
  * @param {Object} opts
@@ -287,6 +295,16 @@ export async function unwrapChannelMessage({
   const message = await Message.deserialize(fullWire, channelDeliveryHash);
 
   const senderIdentity = await Identity.fromPublicKey(senderPub);
+
+  // Key binding (MUST, before remembering): the prelude key's own
+  // `lxmf.delivery` destination hash must equal the `source_hash` claimed in
+  // the LXMF tail. On mismatch reject the post and remember nothing.
+  const senderDeliveryHash = await deliveryHashFor(senderIdentity);
+  if (!bytesEqual(senderDeliveryHash, message.sourceHash)) {
+    throw new Error(
+      "rfed prelude key binding failed: sender's lxmf.delivery hash does not match the LXMF source_hash",
+    );
+  }
 
   // Cache the sender identity so future messages validate without the prelude.
   // `source_hash` is the lxmf.delivery destination hash; the public key is the

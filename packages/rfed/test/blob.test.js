@@ -22,6 +22,7 @@ import {
 import { deliveryHashFor, deriveChannel } from "../src/channel.js";
 import {
   HASH_LENGTH,
+  MAGIC_LENGTH,
   MAGIC_RTID,
   PUBLIC_KEY_LENGTH,
   STAMP_SIZE,
@@ -207,9 +208,19 @@ describe("rfed unwrapChannelMessage (round-trip)", () => {
       lxmMessage: new Message({ content: "forge me" }),
     });
 
-    // Decrypt, flip a bit in the embedded pubkey, re-encrypt with the channel key.
+    // Decrypt, flip a bit in the embedded pubkey, re-encrypt with the channel
+    // key. The LXMF source_hash is rewritten to the tampered key's own
+    // lxmf.delivery hash so the key-binding check passes and the signature
+    // validation is exercised in isolation.
     const plaintext = await f.channelIdentity.decrypt(wrapped.innerBlob);
     plaintext[PUBLIC_KEY_LENGTH] ^= 0x01; // flip inside sender_identity_pub
+    const tamperedIdentity = await Identity.fromPublicKey(
+      plaintext.subarray(MAGIC_LENGTH, MAGIC_LENGTH + PUBLIC_KEY_LENGTH),
+    );
+    plaintext.set(
+      await deliveryHashFor(tamperedIdentity),
+      MAGIC_LENGTH + PUBLIC_KEY_LENGTH,
+    );
     const tamperedBlob = await f.channelIdentity.encrypt(plaintext);
 
     const decoded = await unwrapChannelMessage({
@@ -219,6 +230,49 @@ describe("rfed unwrapChannelMessage (round-trip)", () => {
       channelDeliveryHash: f.channelDeliveryHash,
     });
     assert.strictEqual(decoded.signatureValid, false);
+  });
+
+  test("a prelude key that does not bind to the source_hash is rejected and remembered nowhere", async () => {
+    const f = await fixture();
+    const wrapped = await wrapChannelMessage({
+      channelIdentity: f.channelIdentity,
+      senderIdentity: f.senderIdentity,
+      senderLxmDeliveryHash: f.senderDeliveryHash,
+      lxmMessage: new Message({ content: "binding test" }),
+    });
+
+    // Rewrite the LXMF tail's source_hash to an impostor's lxmf.delivery hash
+    // while keeping the genuine prelude key: the claimed source no longer
+    // matches the key that signed, so the binding MUST fail.
+    const plaintext = await f.channelIdentity.decrypt(wrapped.innerBlob);
+    const impostor = await Identity.generate();
+    plaintext.set(await deliveryHashFor(impostor), PUBLIC_KEY_LENGTH);
+    const forgedBlob = await f.channelIdentity.encrypt(plaintext);
+
+    const remember = testRns.transport.rememberIdentity.bind(testRns.transport);
+    let remembered = 0;
+    testRns.transport.rememberIdentity = async (...args) => {
+      remembered += 1;
+      return remember(...args);
+    };
+    try {
+      await assert.rejects(
+        unwrapChannelMessage({
+          rns: testRns,
+          innerBlob: forgedBlob,
+          channelIdentity: f.channelIdentity,
+          channelDeliveryHash: f.channelDeliveryHash,
+        }),
+        /binding/i,
+      );
+    } finally {
+      testRns.transport.rememberIdentity = remember;
+    }
+    assert.strictEqual(
+      remembered,
+      0,
+      "nothing may be cached for a rejected post",
+    );
   });
 
   test("decryption fails with the wrong channel identity", async () => {
