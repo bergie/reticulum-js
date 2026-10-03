@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.3] - 2026-10-03
 ### Added
 - `TransportCore.prototype.recallOrSolicitIdentity(destinationHash, timeoutMs)` (work doc #39): recalls an identity or sends a path request and awaits the destination announce up to `timeoutMs`, throwing a typed `UnknownIdentityError` if unreachable. Concurrent calls for the same destination hash are deduplicated.
 - `Reticulum.prototype.ready()` (work doc #39): resolves when persistor hydration and background services (such as interface discovery) complete.

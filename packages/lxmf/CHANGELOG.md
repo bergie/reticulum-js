@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.3] - 2026-10-03
 ### Added
 - `LXMRouter.prototype.send(message, senderIdentity, options)` (work doc #39): supports an options bag `{ linkId, fallback = "opportunistic", solicit = true, timeoutMs }` with automated fallback escalation (DIRECT link -> opportunistic -> propagation store-and-forward) and identity solicitation via `recallOrSolicitIdentity`. Existing calls passing a bare `linkId` as 3rd parameter remain supported for backwards compatibility.
 - `Message` guarantees stable `timestamp` and `messageId` across repeated `serialize()` calls and delivery retries on the same instance, ensuring wire-level deduplication across retries.

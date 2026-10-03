@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-03
+### Added
+- **core**: `TransportCore.prototype.recallOrSolicitIdentity(destinationHash, timeoutMs)` (work doc #39): recalls an identity or sends a path request and awaits the destination announce up to `timeoutMs`, throwing a typed `UnknownIdentityError` if unreachable. Concurrent calls for the same destination hash are deduplicated.
+- **core**: `Reticulum.prototype.ready()` (work doc #39): resolves when persistor hydration and background services (such as interface discovery) complete.
+- **core**: `UnknownIdentityError` (work doc #39): typed error subclassing `Error` thrown when identity solicitation fails or times out.
+- **lxmf**: `LXMRouter.prototype.send(message, senderIdentity, options)` (work doc #39): supports an options bag `{ linkId, fallback = "opportunistic", solicit = true, timeoutMs }` with automated fallback escalation (DIRECT link -> opportunistic -> propagation store-and-forward) and identity solicitation via `recallOrSolicitIdentity`. Existing calls passing a bare `linkId` as 3rd parameter remain supported for backwards compatibility.
+- **lxmf**: `Message` guarantees stable `timestamp` and `messageId` across repeated `serialize()` calls and delivery retries on the same instance, ensuring wire-level deduplication across retries.
+### Changed
+- **rfed**: `unwrapChannelMessage` now enforces the channel prelude **key binding**
+  (RFed/SPEC.md, introduced upstream 2026-09-27): the prelude sender key's own
+  `lxmf.delivery` destination hash must equal the `source_hash` taken verbatim
+  from the LXMF tail, checked **before** the key is remembered in Reticulum's
+  known-destinations cache; a mismatching post is rejected and nothing is
+  cached. Previously the prelude key was remembered unconditionally — anyone
+  who knows the channel name (the channel private key is derived from it) could
+  overwrite a contact's cached key by posting with a claimed `source_hash`.
+### Fixed
+- **core**: The RNode interface detect timeout now defaults to 15 s instead of 5 s:
+  ESP32-S3 boards (Heltec LoRa32 v3) reset when the host opens the serial
+  port and can take over ten seconds to boot, so the shorter window made
+  detect time out on healthy devices.
+- **core**: The RNode detect-timeout error is now actionable: it reports whether the
+  device sent any data at all during the wait, distinguishing a silent/wrong
+  port ("no data received on the port — wrong port?" — e.g. `/dev/ttyUSB0`
+  being another device on multi-USB systems) from a device that speaks but
+  never answers the detect probe (still booting, or not RNode-compatible).
+- **core**: `TransportCore.prototype.recallIdentity` now awaits persistor hydration if background loading is pending, avoiding boot-time identity recall race conditions (work doc #39).
+
 ## [0.9.2] - 2026-09-27
 ### Fixed
 - **lxmf**: `LXMRouter.send()` no longer leaks inbound `data`/`resource` listeners on a

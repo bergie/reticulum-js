@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.3] - 2026-10-03
 ### Changed
 - `unwrapChannelMessage` now enforces the channel prelude **key binding**
   (RFed/SPEC.md, introduced upstream 2026-09-27): the prelude sender key's own
