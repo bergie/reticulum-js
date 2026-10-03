@@ -539,6 +539,8 @@ export class RNodeInterface extends Interface {
     // Detect/handshake state.
     this.detected = false;
     this.fwVersionReceived = false;
+    /** Total bytes received from the device since the last state reset. */
+    this._rxByteCount = 0;
     /** @type {number | null} */ this.platform = null;
     /** @type {number | null} */ this.mcu = null;
     /** True once a display-capable device (ESP32/NRF52) has been detected. */
@@ -843,7 +845,25 @@ export class RNodeInterface extends Interface {
       () => this.detect(),
     );
     if (!detected) {
-      throw new Error(`Could not detect RNode device for ${this.name}`);
+      if (this._rxByteCount === 0) {
+        log(
+          this.name,
+          "No data received from the device at all during detect — " +
+            "the port likely does not point at an RNode (check `port`; on " +
+            "multi-USB systems the RNode may enumerate as /dev/ttyUSB1+), " +
+            "or the device is unpowered/held in reset",
+          LogLevel.WARNING,
+        );
+      }
+      const detail =
+        this._rxByteCount === 0
+          ? `no data received on the port — wrong port?`
+          : `${this._rxByteCount} bytes received, none answering detect — ` +
+            "device may still be booting or its firmware is not " +
+            "RNode-compatible";
+      throw new Error(
+        `Could not detect RNode device for ${this.name} (${detail})`,
+      );
     }
     // Display capability is known once the platform echoes back (ESP32 and
     // NRF52 boards carry a screen); other platforms stay headless.
@@ -1226,6 +1246,7 @@ export class RNodeInterface extends Interface {
     this.rLtAlock = null;
     this.detected = false;
     this.fwVersionReceived = false;
+    this._rxByteCount = 0;
     this.majVersion = 0;
     this.minVersion = 0;
     this.firmwareOk = false;
@@ -1494,6 +1515,10 @@ export class RNodeInterface extends Interface {
    * @private
    */
   _feedBytes(chunk) {
+    // Diagnostic counter: lets the detect timeout distinguish "port opened but
+    // nothing ever came back" (wrong port, device held in reset) from "device
+    // speaks but never answered the detect probe".
+    this._rxByteCount += chunk.length;
     for (let idx = 0; idx < chunk.length; idx++) {
       const byte = chunk[idx];
 

@@ -296,6 +296,30 @@ test("detect timeout aborts when the device never responds", async () => {
   await iface.disconnect();
 });
 
+test("detect timeout reports a silent device as having sent no data", async () => {
+  const iface = new FakeTransport({ ...RADIO, detectTimeout: 0.2 });
+  await assert.rejects(() => iface.connect(), /no data received/);
+  await iface.disconnect();
+});
+
+test("detect timeout reports byte count when the device speaks but never detects", async () => {
+  const iface = new FakeTransport({ ...RADIO, detectTimeout: 0.2 });
+  const connectPromise = iface.connect();
+  // A device that sends something (e.g. a boot log or telemetry frames) but
+  // never answers the detect probe.
+  await waitFor(() => iface.written.length > 0);
+  iface.push(new Uint8Array([C.FEND, C.CMD_RADIO_STATE, 0x00, C.FEND]));
+  await assert.rejects(
+    () => connectPromise,
+    (err) => {
+      assert.match(err.message, /Could not detect RNode device/);
+      assert.match(err.message, /bytes received, none answering detect/);
+      return true;
+    },
+  );
+  await iface.disconnect();
+});
+
 test("detect timeout defaults to 15 s for slow-booting ESP32 boards", () => {
   // Regression: ESP32-S3 boards (Heltec LoRa32 v3) can take 10+ seconds to
   // boot after the port-open reset pulse; the previous 5 s default made

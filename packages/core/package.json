@@ -36,5 +36,12 @@
     "lint": "npx @biomejs/biome check --use-editorconfig=true src/",
     "types": "tsc && node scripts/fix-dts.mjs",
     "preversion": "npm run types"
+  },
+  "typesVersions": {
+    "*": {
+      "src/*": [
+        "types/src/*"
+      ]
+    }
   }
 }

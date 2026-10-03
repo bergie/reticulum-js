@@ -11,6 +11,11 @@
   ESP32-S3 boards (Heltec LoRa32 v3) reset when the host opens the serial
   port and can take over ten seconds to boot, so the shorter window made
   detect time out on healthy devices.
+- The RNode detect-timeout error is now actionable: it reports whether the
+  device sent any data at all during the wait, distinguishing a silent/wrong
+  port ("no data received on the port — wrong port?" — e.g. `/dev/ttyUSB0`
+  being another device on multi-USB systems) from a device that speaks but
+  never answers the detect probe (still booting, or not RNode-compatible).
 - `TransportCore.prototype.recallIdentity` now awaits persistor hydration if background loading is pending, avoiding boot-time identity recall race conditions (work doc #39).
 
 ## [0.9.2] - 2026-09-27
