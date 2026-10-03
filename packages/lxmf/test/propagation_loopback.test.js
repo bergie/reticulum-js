@@ -335,4 +335,67 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
       "node store empty after both syncs",
     );
   });
+
+  test("a propagation Resource over the announced per-sync limit is refused", async () => {
+    // LXMRouter.propagation_resource_advertised refuses an inbound propagation
+    // Resource whose data exceeds propagation_per_sync_limit * 1000 (rfed
+    // upstream 5fd1fd8 brought its node in line with this). The refusal happens
+    // at advertisement: the transfer never starts, nothing is stored, and the
+    // sender's submit fails.
+    const wire = new Wire();
+    const node = await makeNode();
+    const sender = await makeNode();
+    const recipient = await makeNode();
+    const nodes = [node, sender, recipient];
+    for (const n of nodes) wire.attach(n.transport);
+
+    const nodeRouter = new LXMRouter(node.identity, node.rns);
+    await nodeRouter.init();
+    // A 0 KB per-sync limit refuses every advertised Resource.
+    await nodeRouter.enablePropagation({
+      stampCost: 0,
+      stampCostFlexibility: 0,
+      perSyncLimitKb: 0,
+      name: "JS loopback PN",
+    });
+    const nodePropHash = nodeRouter.propagationDest.destinationHash;
+    await rememberEverywhere(
+      nodes,
+      nodePropHash,
+      node.identity.publicKey,
+      nodeRouter.propagationDest.appData,
+    );
+
+    const senderRouter = new LXMRouter(sender.identity, sender.rns);
+    await senderRouter.init();
+    await rememberEverywhere(
+      nodes,
+      senderRouter.deliveryDest.destinationHash,
+      sender.identity.publicKey,
+      null,
+    );
+
+    senderRouter.setOutboundPropagationNode(nodePropHash);
+    const message = new Message({
+      sourceHash: senderRouter.deliveryDest.destinationHash,
+      destinationHash: senderRouter.deliveryDest.destinationHash,
+      title: "oversize",
+      content: "this submit must be refused at advertisement",
+      timestamp: 1730000001,
+    });
+
+    await assert.rejects(
+      () =>
+        senderRouter.submitToPropagationNode(message, sender.identity, {
+          stampCost: 0,
+        }),
+      undefined,
+      "submit must fail when the node refuses the Resource",
+    );
+    assert.strictEqual(
+      nodeRouter.propagationNode.store.size,
+      0,
+      "nothing stored from a refused Resource",
+    );
+  });
 });

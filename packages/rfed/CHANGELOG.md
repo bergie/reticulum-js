@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `/rfed/get` (MESSAGE_GET) responses are never uncapped any more (rfed upstream
+  07fdab1): the per-response cap (`config.transferLimitBytes`) now defaults to
+  100 MiB instead of unlimited, and a new aggregate hourly budget
+  (`config.syncLimitBytes`, default 1000 MiB across all peers) refuses further
+  responses until the 60-minute period rolls over — mirroring the Rust node's
+  `channel_transfer_limit_mb` / `channel_sync_limit_mb` defaults.
 
 ## [0.9.3] - 2026-10-03
 ### Changed

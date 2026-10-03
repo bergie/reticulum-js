@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The propagation node now refuses an inbound propagation Resource whose data
+  exceeds the per-sync limit it announces (`perSyncLimitKb` × 1000 B), as
+  `LXMRouter.propagation_resource_advertised` does in LXMF 1.1.1 (rfed upstream
+  5fd1fd8 brought its node in line with the reference). The cap is applied at
+  advertisement time via the link's Resource size cap, so an oversized transfer
+  never starts; previously every advertised Resource was accepted and ingested
+  regardless of size. A failed propagation submit now also tears down the cached
+  propagation link so the next submit opens a fresh one.
 
 ## [0.9.3] - 2026-10-03
 ### Added

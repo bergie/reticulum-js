@@ -122,6 +122,18 @@ const DEFAULT_PULL_PAGE_SIZE = 25;
 const DEFAULT_DEFERRED_QUEUE_LIMIT = 256;
 /** Default subscriber presence TTL (seconds) — rfed.delivery announce freshness. */
 const DEFAULT_PRESENCE_TTL_SEC = 3600;
+/**
+ * Channel sync caps for the `/rfed/get` MESSAGE_GET responder (SPEC §4).
+ * The responder builds one response for a peer's whole gap, so it is never
+ * left uncapped — these are the defaults the Rust node's shipped templates
+ * always set (`sync.rs` "Channel sync caps", MB of 1024²).
+ */
+/** The most one MESSAGE_GET response carries, in bytes. */
+const DEFAULT_CHANNEL_TRANSFER_LIMIT_BYTES = 100 * 1024 * 1024;
+/** The most MESSAGE_GET responses carry to all peers together per hour, bytes. */
+const DEFAULT_CHANNEL_SYNC_LIMIT_BYTES = 1000 * 1024 * 1024;
+/** Length of the aggregate channel-sync budget period (seconds). */
+const SYNC_LIMIT_PERIOD = 3600;
 /** Blob-store TTL (SPEC §5: 30 days). */
 const BLOB_TTL_SECS = 30 * 24 * 3600;
 /** Deferred-queue entry TTL (SPEC §7: 7-day prune). */
@@ -157,10 +169,12 @@ const PENDING_BACKUP_CAP = 1024;
  * @property {(subscriberHash: Uint8Array) => { deferredQueueLimit: number }} [config.policyFor]
  *   Per-subscriber policy lookup (default tier); a runner overrides this to
  *   drive VIP tiers from config. Used for the per-subscriber deferred cap.
- * @property {number|null} [config.transferLimitBytes] Per-`/rfed/get` session
- *   byte cap (SPEC §4). When set, the GET response stops emitting records once
- *   this would be exceeded (default `null` = unlimited for the in-memory node;
- *   a runner should bound it).
+ * @property {number} [config.transferLimitBytes] Per-`/rfed/get` response byte
+ *   cap (SPEC §4). The GET response stops emitting records once this would be
+ *   exceeded. Never uncapped: defaults to 100 MiB.
+ * @property {number} [config.syncLimitBytes] Aggregate `/rfed/get` byte budget
+ *   per hour across all peers (SPEC §4). Responses stop when the hour's budget
+ *   is spent. Never uncapped: defaults to 1000 MiB.
  * @property {Uint8Array|null} [config.primaryNode] Designated first-choice
  *   backup target for THIS node's subscribers (SPEC §11). Subscription pairs
  *   are pushed here via `/rfed/backup/push` on each backup tick.
@@ -216,8 +230,18 @@ export class RFedNode {
     this.blobTtlSecs = config.blobTtlSecs ?? BLOB_TTL_SECS;
     /** @type {number} */
     this.deferredTtlSecs = config.deferredTtlSecs ?? DEFERRED_TTL_SECS;
-    /** @type {number|null} */
-    this.transferLimitBytes = config.transferLimitBytes ?? null;
+    // The MESSAGE_GET responder is never uncapped: a response stops at the
+    // per-response cap, and all responses together at the hour's budget.
+    /** @type {number} */
+    this.transferLimitBytes =
+      config.transferLimitBytes ?? DEFAULT_CHANNEL_TRANSFER_LIMIT_BYTES;
+    /** @type {number} */
+    this.syncLimitBytes =
+      config.syncLimitBytes ?? DEFAULT_CHANNEL_SYNC_LIMIT_BYTES;
+    /** Bytes served by `/rfed/get` in the current budget period. @type {number} */
+    this.syncBytesSent = 0;
+    /** Start of the current budget period (ms). @type {number} */
+    this.syncPeriodStart = Date.now();
 
     // ── Backup failover (SPEC §11, Phase 6) ──────────────────────────────
     /** @type {Uint8Array|null} Designated primary backup target. */
@@ -1113,8 +1137,9 @@ export class RFedNode {
   /**
    * `/rfed/get` (SPEC §3/§4) — encodes the requested blobs into the §3 stream
    * `ch(16)‖id(16)‖len(4 BE)‖blob`, stopping once `transferLimitBytes` would
-   * be exceeded (per-session cap). Returns the raw stream bytes; the Link wraps
-   * them in a msgpack Binary for transit (Rust `handle_message_get`).
+   * be exceeded (per-response cap) or the hour's `syncLimitBytes` budget is
+   * spent. The responder is never uncapped. Returns the raw stream bytes; the
+   * Link wraps them in a msgpack Binary for transit (Rust `handle_message_get`).
    *
    * Blobs transit stamp-stripped; no stamp validation here.
    *
@@ -1122,6 +1147,11 @@ export class RFedNode {
    * @returns {Uint8Array}
    */
   _handleGet(data) {
+    if (Date.now() - this.syncPeriodStart >= SYNC_LIMIT_PERIOD * 1000) {
+      this.syncBytesSent = 0;
+      this.syncPeriodStart = Date.now();
+    }
+
     /** @type {Uint8Array[]} */
     const ids = Array.isArray(data) ? data : [];
     /** @type {Array<{ channelHash: Uint8Array, messageId: Uint8Array, blob: Uint8Array }>} */
@@ -1132,10 +1162,20 @@ export class RFedNode {
       if (!meta) continue;
       const blob = this.blobStore.get(id);
       if (!blob) continue;
-      if (
-        this.transferLimitBytes !== null &&
-        total + blob.length > this.transferLimitBytes
-      ) {
+      if (total + blob.length > this.transferLimitBytes) {
+        log(
+          "RFed",
+          `Channel transfer limit reached (${total}/${this.transferLimitBytes}B) — truncating response`,
+          LogLevel.NOTICE,
+        );
+        break;
+      }
+      if (this.syncBytesSent + blob.length > this.syncLimitBytes) {
+        log(
+          "RFed",
+          `Channel sync limit reached (${this.syncBytesSent}/${this.syncLimitBytes}B) — refusing until next period`,
+          LogLevel.NOTICE,
+        );
         break;
       }
       records.push({
@@ -1144,6 +1184,7 @@ export class RFedNode {
         blob: new Uint8Array(blob),
       });
       total += blob.length;
+      this.syncBytesSent += blob.length;
     }
     return encodeBlobStream(records);
   }

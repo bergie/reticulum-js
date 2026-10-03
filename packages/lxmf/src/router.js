@@ -347,6 +347,12 @@ export class LXMRouter extends EventTarget {
             event.detail.packet,
           );
           link.bz2 = this.rns.compressionProvider || undefined;
+          // LXMRouter.propagation_resource_advertised: refuse an inbound
+          // propagation Resource whose data exceeds the per-sync limit we
+          // announce (KB of 1000 B). The cap applies at advertisement time, so
+          // an oversized transfer never starts. Also bounds client submissions
+          // on the same destination, as in the reference.
+          link.maxResourceSize = node.perSyncLimitKb * 1000;
           link.addEventListener("resource", (/** @type {any} */ resEvent) => {
             const resource = /** @type {any} */ (resEvent).detail.resource;
             resource
@@ -604,7 +610,16 @@ export class LXMRouter extends EventTarget {
     // lxmf_data afterwards via RESOURCE_REQ. Wait for the transfer to reach
     // COMPLETE before reporting success — otherwise the message is never
     // stored if the link (or the process) goes away first.
-    await this._awaitOutgoingResource(resource, link);
+    try {
+      await this._awaitOutgoingResource(resource, link);
+    } catch (err) {
+      // The node refused the Resource (e.g. over its announced per-sync
+      // limit), the link died, or the transfer timed out. Drop the cached
+      // link so the next submit opens a fresh one.
+      this.outboundPropagationLink = null;
+      link.teardown();
+      throw err;
+    }
 
     return { transientId, stampCost };
   }

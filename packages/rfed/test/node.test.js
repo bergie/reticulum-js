@@ -54,6 +54,7 @@ import { deliveryHashFor, deriveChannel } from "../src/channel.js";
 import { RFedClient } from "../src/client.js";
 import { RFedNode } from "../src/node.js";
 import { SubscriptionTable } from "../src/subscription.js";
+import { decodeBlobStream } from "../src/sync.js";
 
 /** Polls `fn` every 10 ms until truthy or `timeoutMs` elapses. */
 async function waitFor(fn, timeoutMs = 5000) {
@@ -1028,6 +1029,74 @@ describe("RFedNode — notify wake-ups (Phase 5)", () => {
 });
 
 // ─── Phase 6: backup failover (SPEC §11) ─────────────────────────────────
+
+describe("RFedNode — /rfed/get channel sync caps", () => {
+  test("the responder is never uncapped: 100 MiB per response, 1000 MiB an hour by default", async () => {
+    const { node } = await fixture();
+    assert.strictEqual(node.transferLimitBytes, 100 * 1024 * 1024);
+    assert.strictEqual(node.syncLimitBytes, 1000 * 1024 * 1024);
+  });
+
+  test("a response stops at the per-response cap and at what is left of the hour's", async () => {
+    // Blobs of 100 B; a stream record adds 36 B of framing the caps do not
+    // count (the Rust responder caps at the stored blob's size).
+    const { node } = await fixture({
+      nodeConfig: { transferLimitBytes: 250, syncLimitBytes: 500 },
+    });
+    const channel = new Uint8Array(16).fill(0x11);
+    const ids = [];
+    for (let i = 0; i < 6; i++) {
+      ids.push(node.blobStore.store(channel, new Uint8Array(100).fill(i)));
+    }
+    const served = (/** @type {Uint8Array} */ stream) =>
+      decodeBlobStream(stream).length;
+
+    assert.strictEqual(served(node._handleGet(ids)), 2, "the per-response cap");
+    assert.strictEqual(served(node._handleGet(ids.slice(2))), 2);
+    assert.strictEqual(
+      served(node._handleGet(ids.slice(4))),
+      1,
+      "what is left of the hour's cap",
+    );
+    assert.strictEqual(
+      served(node._handleGet(ids.slice(5))),
+      0,
+      "the hour's cap is spent",
+    );
+  });
+
+  test("the hourly budget resets when the period elapses", async () => {
+    const { node } = await fixture({
+      nodeConfig: { transferLimitBytes: 250, syncLimitBytes: 500 },
+    });
+    const channel = new Uint8Array(16).fill(0x11);
+    const ids = [];
+    for (let i = 0; i < 6; i++) {
+      ids.push(node.blobStore.store(channel, new Uint8Array(100).fill(i)));
+    }
+    assert.strictEqual(decodeBlobStream(node._handleGet(ids)).length, 2);
+    assert.strictEqual(
+      decodeBlobStream(node._handleGet(ids.slice(2))).length,
+      2,
+    );
+    assert.strictEqual(
+      decodeBlobStream(node._handleGet(ids.slice(4))).length,
+      1,
+    );
+    assert.strictEqual(
+      decodeBlobStream(node._handleGet(ids.slice(5))).length,
+      0,
+    );
+
+    // An hour elapses: the budget starts over.
+    node.syncPeriodStart -= 3600 * 1000;
+    assert.strictEqual(
+      decodeBlobStream(node._handleGet(ids.slice(5))).length,
+      1,
+      "a fresh period serves again",
+    );
+  });
+});
 
 describe("RFedNode — backup failover (Phase 6)", () => {
   test("SubscriptionTable: subscribeBackup + backupEntriesForTick + prune", async () => {
