@@ -7,6 +7,7 @@
  * initiator and responder handshake paths live here; Destination only delegates.
  */
 
+import { Identity } from "../core/identity.js";
 import {
   ContextType,
   DestType,
@@ -15,6 +16,7 @@ import {
   Packet,
   PacketType,
 } from "../core/packet.js";
+import { Resource, SplitResourceAssembler } from "../core/resource.js";
 import { hkdf } from "../crypto/ciphers.js";
 import {
   exportPublicKey,
@@ -87,7 +89,6 @@ export function isLinkPacketUnencrypted(packetType, contextByte) {
  * @returns {Promise<Uint8Array>}
  */
 export async function linkIdFromLrPacket(packet) {
-  const { Identity } = await import("../core/identity.js");
   const lowFlags = packet.raw[0] & 0x0f;
   const offset = packet.headerType === HeaderType.HEADER_2 ? 18 : 2;
   let body = packet.raw.subarray(offset);
@@ -1309,7 +1310,6 @@ export class Link extends EventTarget {
    * @private
    */
   async _handleIdentify(packet) {
-    const { Identity } = await import("../core/identity.js");
     // packet.payload is already decrypted by _processPacket.
     const plaintext = /** @type {Uint8Array} */ (packet.payload);
     if (plaintext.length !== 128) return;
@@ -1376,7 +1376,6 @@ export class Link extends EventTarget {
     if (this.status !== LinkStatus.ACTIVE) {
       throw new Error("Link must be ACTIVE to issue a REQUEST.");
     }
-    const { Identity } = await import("../core/identity.js");
 
     const pathHash = await Identity.truncatedHash(
       new TextEncoder().encode(path),
@@ -1400,7 +1399,6 @@ export class Link extends EventTarget {
         options.onMetadata,
         options.onProgress,
       );
-      const { Resource } = await import("../core/resource.js");
       const resource = new Resource({
         data: packedRequest,
         link: this,
@@ -1513,7 +1511,6 @@ export class Link extends EventTarget {
    * @private
    */
   async _handleRequest(originalPacket, decrypted) {
-    const { Identity } = await import("../core/identity.js");
     const requestId = await Identity.truncatedHash(
       originalPacket.getHashablePart(),
     );
@@ -1645,7 +1642,6 @@ export class Link extends EventTarget {
       response instanceof ResourceResponse &&
       response.metadata !== undefined
     ) {
-      const { Resource } = await import("../core/resource.js");
       const resource = new Resource({
         data: response.data,
         metadata: response.metadata,
@@ -1679,7 +1675,6 @@ export class Link extends EventTarget {
       // §11.2: oversized RESPONSE via the §10 Resource pipeline (adv flag `p`,
       // `q=requestId`). The assembled bytes are the same `[request_id, response]`
       // msgpack envelope as the single-packet form.
-      const { Resource } = await import("../core/resource.js");
       const resource = new Resource({
         data: packed,
         link: this,
@@ -1976,9 +1971,6 @@ export class Link extends EventTarget {
    * @private
    */
   async _trackSplitSegment(segment, packet) {
-    const { Resource, SplitResourceAssembler } = await import(
-      "../core/resource.js"
-    );
     const key = toHex(/** @type {Uint8Array} */ (segment.originalHash));
     if (this.failedSplitResources.has(key)) {
       // The transfer already failed — reject late segments outright.
@@ -2156,9 +2148,6 @@ export class Link extends EventTarget {
 
       case ContextType.RESOURCE_ADV: {
         // §10.4: receiver accepts an incoming transfer and starts requesting.
-        const { Resource, SplitResourceAssembler } = await import(
-          "../core/resource.js"
-        );
         const incoming = await Resource.accept(this, decrypted, {
           bz2: this.bz2,
           maxSize: this.maxResourceSize,

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `Link` now imports `Identity` and `Resource`/`SplitResourceAssembler` statically instead of via dynamic `import()` calls in its hot paths (handshake, request/response, resource advertisement, and split-resource tracking), removing the per-operation module-resolution overhead and the implicit asynchrony it caused.
 
 ## [0.9.4] - 2026-10-03
 
