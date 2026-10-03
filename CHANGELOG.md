@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-03
+### Changed
+- **rfed**: `/rfed/get` (MESSAGE_GET) responses are never uncapped any more (rfed upstream
+  07fdab1): the per-response cap (`config.transferLimitBytes`) now defaults to
+  100 MiB instead of unlimited, and a new aggregate hourly budget
+  (`config.syncLimitBytes`, default 1000 MiB across all peers) refuses further
+  responses until the 60-minute period rolls over — mirroring the Rust node's
+  `channel_transfer_limit_mb` / `channel_sync_limit_mb` defaults.
+### Fixed
+- **lxmf**: Peer-mesh distribution is now wired into the propagation node itself via a
+  new `onStored` hook (`PropagationNodeOptions`), so messages stored through
+  *any* ingest path — link Resources, in-process embedded-node submits, paper
+  ingestion — are queued for distribution to peered propagation nodes.
+  Previously only the link-Resource path distributed, so embedded-node
+  submissions that bypassed the link (as Signal K's in-process deliverer does)
+  sat in the store forever and were never offered to peers. Verified
+  interoperable against a Python LXMF propagation node (LXMF 1.0.1):
+  Signal K-style embedded submit → JS node peer sync → Python node → Python
+  client delivery.
+- **lxmf**: Newly established propagation-node peerings now get a retroactive backlog
+  catch-up: all currently stored messages are marked unhandled for the new
+  peer so they are offered on the next sync pass. Over-offering is safe — the
+  peer only requests what it lacks via `/offer` — and this lets a node that
+  stored messages before any peer existed (or before an upgrade) converge with
+  peers it acquires later.
+- **lxmf**: The propagation node now refuses an inbound propagation Resource whose data
+  exceeds the per-sync limit it announces (`perSyncLimitKb` × 1000 B), as
+  `LXMRouter.propagation_resource_advertised` does in LXMF 1.1.1 (rfed upstream
+  5fd1fd8 brought its node in line with the reference). The cap is applied at
+  advertisement time via the link's Resource size cap, so an oversized transfer
+  never starts; previously every advertised Resource was accepted and ingested
+  regardless of size. A failed propagation submit now also tears down the cached
+  propagation link so the next submit opens a fresh one.
+
 ## [0.9.3] - 2026-10-03
 ### Added
 - **core**: `TransportCore.prototype.recallOrSolicitIdentity(destinationHash, timeoutMs)` (work doc #39): recalls an identity or sends a path request and awaits the destination announce up to `timeoutMs`, throwing a typed `UnknownIdentityError` if unreachable. Concurrent calls for the same destination hash are deduplicated.

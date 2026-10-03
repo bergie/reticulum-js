@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/lxmf",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "license": "EUPL-1.2",
   "exports": {
     ".": "./src/index.js",

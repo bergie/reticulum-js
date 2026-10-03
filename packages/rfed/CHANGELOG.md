@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.4] - 2026-10-03
 ### Changed
 - `/rfed/get` (MESSAGE_GET) responses are never uncapped any more (rfed upstream
   07fdab1): the per-response cap (`config.transferLimitBytes`) now defaults to

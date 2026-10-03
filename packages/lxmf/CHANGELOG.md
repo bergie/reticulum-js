@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.4] - 2026-10-03
 ### Fixed
 - Peer-mesh distribution is now wired into the propagation node itself via a
   new `onStored` hook (`PropagationNodeOptions`), so messages stored through
