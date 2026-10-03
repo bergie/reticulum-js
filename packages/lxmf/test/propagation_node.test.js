@@ -350,3 +350,108 @@ describe("MessageStore — limits + persistence", () => {
     assert.ok(got.handledPeers instanceof Set);
   });
 });
+
+// ─── Peer-mesh distribution hooks ───────────────────────────────────────
+
+describe("PropagationNode onStored + MessageStore peer catch-up", () => {
+  test("ingestBlobs invokes onStored with newly stored transient_ids", async () => {
+    const base = fromHex(FIXTURE.pythonPropagation.lxmfData);
+    const blob = new Uint8Array(base.length + 32);
+    blob.set(base, 0);
+
+    /** @type {Uint8Array[][]} */
+    const batches = [];
+    const node = new PropagationNode({
+      stampCost: 0,
+      stampCostFlexibility: 0,
+      onStored: (ids) => batches.push(ids),
+    });
+    await node.ingestBlobs([blob]);
+    assert.strictEqual(batches.length, 1);
+    assert.strictEqual(batches[0].length, 1);
+    assert.deepStrictEqual(
+      batches[0][0],
+      fromHex(FIXTURE.pythonPropagation.transientId),
+    );
+
+    // Duplicate ingestion must not re-trigger distribution.
+    await node.ingestBlobs([blob]);
+    assert.strictEqual(batches.length, 1);
+  });
+
+  test("onStored is not invoked when everything is locally delivered", async () => {
+    const recipient = await Identity.fromBytes(
+      fromHex(FIXTURE.recipientIdentity128),
+    );
+    const inDest = await Destination.IN(
+      "lxmf.delivery",
+      DestType.SINGLE,
+      recipient,
+      null,
+    );
+    // Encrypt a real message to the local destination so ingestBlobs takes
+    // the local-delivery branch instead of storing.
+    const sender = await Identity.fromBytes(fromHex(FIXTURE.sourceIdentity128));
+    const outDest = await Destination.OUT(
+      "lxmf.delivery",
+      DestType.SINGLE,
+      recipient,
+      null,
+    );
+    const msg = new Message({
+      destinationHash: outDest.destinationHash,
+      sourceHash: (
+        await Destination.OUT("lxmf.delivery", DestType.SINGLE, sender, null)
+      ).destinationHash,
+      title: "t",
+      content: "hello",
+    });
+    const { lxmfData } = await msg.toPropagationData(sender, outDest);
+    const blob = new Uint8Array(lxmfData.length + 32);
+    blob.set(lxmfData, 0);
+
+    let calls = 0;
+    const node = new PropagationNode({
+      stampCost: 0,
+      stampCostFlexibility: 0,
+      getDeliveryDestination: (hash) =>
+        toHex(hash) === toHex(inDest.destinationHash) ? inDest : null,
+      onLocalDelivery: () => {},
+      onStored: () => {
+        calls++;
+      },
+    });
+    const res = await node.ingestBlobs([blob]);
+    assert.strictEqual(res.delivered, 1);
+    assert.strictEqual(res.stored, 0);
+    assert.strictEqual(calls, 0);
+  });
+
+  test("markAllUnhandledForPeer catches up the backlog exactly once", () => {
+    const dest = rnd(16);
+    const store = new MessageStore();
+    const a = fakeEntry(dest, 100);
+    const b = fakeEntry(dest, 200);
+    store.add(a);
+    store.add(b);
+    // Mark b as already synced with a previous peer (simulating a prior sync
+    // with another node — the new peer's sweep must not touch that state).
+    const previousPeer = rnd(16);
+    store.markHandledForPeer(b.transientId, previousPeer);
+
+    const peer = rnd(16);
+    assert.strictEqual(store.markAllUnhandledForPeer(peer), 2);
+    assert.ok(store.get(a.transientId).unhandledPeers.has(toHex(peer)));
+    assert.ok(store.get(b.transientId).unhandledPeers.has(toHex(peer)));
+    // The previous peer's state is untouched: it already holds the message.
+    assert.ok(store.get(b.transientId).handledPeers.has(toHex(previousPeer)));
+    assert.ok(!store.get(b.transientId).handledPeers.has(toHex(peer)));
+
+    // Idempotent: a second sweep adds nothing new.
+    assert.strictEqual(store.markAllUnhandledForPeer(peer), 0);
+
+    // Other peers are untouched.
+    const other = rnd(16);
+    assert.ok(!store.get(a.transientId).unhandledPeers.has(toHex(other)));
+  });
+});

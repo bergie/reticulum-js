@@ -271,6 +271,30 @@ export class MessageStore {
   }
 
   /**
+   * Marks every stored message as still needed by `peerHash` (unhandled for
+   * that peer). Used as a retroactive catch-up when a peering relationship is
+   * established with a node that may not hold our existing backlog: over-
+   * offering is safe because the peer only requests the subset it lacks via
+   * `/offer` (`LXMRouter.peer` has no backlog enqueue, but restarted Python
+   * nodes likewise re-converge from their persisted per-peer sync state).
+   *
+   * @param {Uint8Array} peerHash
+   * @returns {number} number of entries marked unhandled.
+   */
+  markAllUnhandledForPeer(peerHash) {
+    const hex = toHex(peerHash);
+    let count = 0;
+    for (const e of this._entries.values()) {
+      if (!e.unhandledPeers.has(hex)) {
+        e.unhandledPeers.add(hex);
+        e.handledPeers.delete(hex);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
    * Lists the unhandled messages for a peer, as
    * `{ transientId, weight, size, entry }` sorted by weight ascending
    * (`LXMPeer.sync` offer ordering). Entries whose stamp value is below

@@ -323,6 +323,9 @@ export class LXMRouter extends EventTarget {
         // here, mirroring Python lxmf_delivery).
         this._dispatchMessage(/** @type {any} */ (msg), null);
       },
+      // Peer-mesh distribution for every ingest path (link Resources,
+      // in-process embedded-node submits, paper ingestion).
+      onStored: (storedIds) => this._distributeStored(storedIds),
     });
     this.propagationNode = node;
 
@@ -368,9 +371,7 @@ export class LXMRouter extends EventTarget {
                     `Propagation submit ingested: ${res.stored} stored, ${res.delivered} delivered, ${res.rejected} rejected`,
                     LogLevel.DEBUG,
                   );
-                  // Queue newly-stored messages for distribution to every
-                  // peered node (LXMRouter.flush_peer_distribution_queue).
-                  this._distributeStored(res.storedIds);
+                  // Peer distribution happens via the node's onStored hook.
                 }
               })
               .catch((/** @type {Error} */ err) => {
@@ -441,11 +442,13 @@ export class LXMRouter extends EventTarget {
     const key = toHex(destinationHash);
     /** @type {LXMPeer} */
     let peer;
+    let isNewPeer = false;
     if (this.peers.has(key)) {
       peer = /** @type {LXMPeer} */ (this.peers.get(key));
     } else {
       peer = new LXMPeer(this, destinationHash.slice(), DEFAULT_SYNC_STRATEGY);
       this.peers.set(key, peer);
+      isNewPeer = true;
     }
     peer.alive = true;
     peer.lastHeard = Date.now() / 1000;
@@ -458,6 +461,25 @@ export class LXMRouter extends EventTarget {
     peer.metadata = config.metadata ?? null;
     // Invalidate any stale peering key so a cost change regenerates it.
     if (!peer.peeringKeyReady()) peer.peeringKey = null;
+    // Retroactive catch-up for newly established peerings: make sure the peer
+    // is offered our entire stored backlog, including messages stored before
+    // this peering existed (e.g. a restart, or messages ingested via an
+    // embedded-node path before any peer was known). Over-offering is safe:
+    // the peer filters what it wants in the /offer response, and messages it
+    // already holds are marked handled again.
+    if (isNewPeer) {
+      const store = this.propagationNode?.store;
+      if (store) {
+        const count = store.markAllUnhandledForPeer(destinationHash);
+        if (count > 0) {
+          log(
+            "LXMF",
+            `Queued ${count} stored message(s) for distribution to new peer ${toHex(destinationHash)}`,
+            LogLevel.DEBUG,
+          );
+        }
+      }
+    }
     log("LXMF", `Peered with ${toHex(destinationHash)}`, LogLevel.NOTICE);
     return peer;
   }

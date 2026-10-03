@@ -58,6 +58,13 @@ const DESTINATION_LENGTH = 16;
  *   Returns null when the recipient is not local.
  * @property {(message: Message, transientId: Uint8Array) => void|Promise<void>} [onLocalDelivery]
  *   Invoked when a propagated message addressed to a local identity decrypts.
+ * @property {(storedIds: Uint8Array[]) => void} [onStored]
+ *   Invoked with the transient_ids newly stored by {@link ingestBlobs}. The
+ *   owning router uses this to queue the messages for distribution to peered
+ *   propagation nodes (`flush_peer_distribution_queue`), so the peer-mesh sync
+ *   offers them on its next pass. Wiring it here (rather than at each call
+ *   site) guarantees that every ingest path — link Resources, in-process
+ *   embedded-node submits, paper-message ingestion — distributes identically.
  */
 
 /**
@@ -88,6 +95,7 @@ export class PropagationNode {
     this.getDeliveryDestination =
       options.getDeliveryDestination ?? (() => null);
     this.onLocalDelivery = options.onLocalDelivery ?? (() => {});
+    this.onStored = options.onStored ?? (() => {});
     this.getLocalIdentityHash =
       options.getLocalIdentityHash ?? (() => new Uint8Array(0));
 
@@ -191,6 +199,8 @@ export class PropagationNode {
       storedIds.push(v.transientId.slice());
       stored++;
     }
+
+    if (storedIds.length > 0) this.onStored(storedIds);
 
     return { stored, delivered, rejected, storedIds };
   }

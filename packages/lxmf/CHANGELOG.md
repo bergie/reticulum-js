@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 ### Fixed
+- Peer-mesh distribution is now wired into the propagation node itself via a
+  new `onStored` hook (`PropagationNodeOptions`), so messages stored through
+  *any* ingest path — link Resources, in-process embedded-node submits, paper
+  ingestion — are queued for distribution to peered propagation nodes.
+  Previously only the link-Resource path distributed, so embedded-node
+  submissions that bypassed the link (as Signal K's in-process deliverer does)
+  sat in the store forever and were never offered to peers. Verified
+  interoperable against a Python LXMF propagation node (LXMF 1.0.1):
+  Signal K-style embedded submit → JS node peer sync → Python node → Python
+  client delivery.
+- Newly established propagation-node peerings now get a retroactive backlog
+  catch-up: all currently stored messages are marked unhandled for the new
+  peer so they are offered on the next sync pass. Over-offering is safe — the
+  peer only requests what it lacks via `/offer` — and this lets a node that
+  stored messages before any peer existed (or before an upgrade) converge with
+  peers it acquires later.
 - The propagation node now refuses an inbound propagation Resource whose data
   exceeds the per-sync limit it announces (`perSyncLimitKb` × 1000 B), as
   `LXMRouter.propagation_resource_advertised` does in LXMF 1.1.1 (rfed upstream
