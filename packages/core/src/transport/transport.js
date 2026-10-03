@@ -47,6 +47,23 @@ const DEFAULT_PER_HOP_TIMEOUT_SECS = 6;
 const MINIMUM_BITRATE = 5;
 
 /**
+ * Thrown when an identity cannot be recalled or solicited for a destination hash.
+ */
+export class UnknownIdentityError extends Error {
+  /**
+   * @param {Uint8Array} destinationHash
+   * @param {string} [message]
+   */
+  constructor(destinationHash, message) {
+    const hex = toHex(destinationHash);
+    super(message || `Cannot deliver: identity for ${hex} is unknown`);
+    this.name = "UnknownIdentityError";
+    /** @type {Uint8Array} */
+    this.destinationHash = destinationHash;
+  }
+}
+
+/**
  * The central network router for the Reticulum node.
  * Routes packets emitted by Interfaces.
  */
@@ -146,6 +163,9 @@ export class TransportCore extends EventTarget {
     // the in-flight table.
     /** @type {Map<string, number>} */
     this.inflightPathRequests = new Map();
+
+    /** @type {Map<string, Promise<import("../core/identity.js").Identity>>} */
+    this._inflightIdentitySolicitations = new Map();
 
     // Lazily-started sweep (the counterpart of the reference implementations'
     // interface jobs / table culling): drains held announces one per interval
@@ -354,11 +374,94 @@ export class TransportCore extends EventTarget {
    * @returns {Promise<import("../core/identity.js").Identity|null>}
    */
   async recallIdentity(targetHash, fromIdentityHash = false) {
+    if (this.persistor?.loadPromise && !this.persistor.loaded) {
+      await this.persistor.loadPromise;
+    }
     return Destination.recallFrom(
       this.caches.knownDestinations,
       targetHash,
       fromIdentityHash,
     );
+  }
+
+  /**
+   * Recalls a learned identity by destination hash. If the identity is not yet
+   * known, it sends a path request and awaits the destination's announce event
+   * up to timeoutMs before attempting to recall again.
+   *
+   * @param {Uint8Array} destinationHash
+   * @param {number} [timeoutMs=30000]
+   * @returns {Promise<import("../core/identity.js").Identity>}
+   * @throws {UnknownIdentityError} when the identity is not known and cannot be solicited within timeout.
+   */
+  async recallOrSolicitIdentity(destinationHash, timeoutMs = 30_000) {
+    if (this.persistor?.loadPromise && !this.persistor.loaded) {
+      await this.persistor.loadPromise;
+    }
+    const identity = await this.recallIdentity(destinationHash);
+    if (identity) return identity;
+
+    const destHex = toHex(destinationHash);
+    const existing = this._inflightIdentitySolicitations.get(destHex);
+    if (existing) {
+      return await existing;
+    }
+
+    const solicitationPromise = (async () => {
+      let foundIdentity = null;
+      let cleanup = () => {};
+      /** @type {Promise<import("../core/identity.js").Identity | null>} */
+      const announcePromise = new Promise((resolve) => {
+        let settled = false;
+        /** @type {ReturnType<typeof setTimeout> | null} */
+        let timer = null;
+        cleanup = () => {
+          if (timer) clearTimeout(timer);
+          this.removeEventListener("announce", onAnnounce);
+        };
+        /** @param {any} ev */
+        const onAnnounce = (ev) => {
+          const dh = ev?.detail?.destinationHash;
+          if (dh && bytesEqual(dh, destinationHash)) {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(ev.detail.identity ?? null);
+          }
+        };
+        this.addEventListener("announce", onAnnounce);
+        if (timeoutMs > 0) {
+          timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            resolve(null);
+          }, timeoutMs);
+        }
+      });
+
+      try {
+        await this.requestPath(destinationHash);
+      } catch {
+        // Best effort: a late announce may still resolve
+      }
+
+      foundIdentity = await announcePromise;
+      if (!foundIdentity) {
+        foundIdentity = await this.recallIdentity(destinationHash);
+      }
+      if (!foundIdentity) {
+        throw new UnknownIdentityError(destinationHash);
+      }
+      return foundIdentity;
+    })();
+
+    this._inflightIdentitySolicitations.set(destHex, solicitationPromise);
+    try {
+      return await solicitationPromise;
+    } finally {
+      this._inflightIdentitySolicitations.delete(destHex);
+    }
   }
 
   /**

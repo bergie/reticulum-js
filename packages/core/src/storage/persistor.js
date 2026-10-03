@@ -227,6 +227,10 @@ export class Persistor {
     this.persistedDestinations = new Set();
     /** @type {ReturnType<typeof setTimeout> | null} */
     this._flushTimer = null;
+    /** @type {Promise<void> | null} */
+    this.loadPromise = null;
+    /** @type {boolean} */
+    this.loaded = false;
   }
 
   /**
@@ -421,36 +425,48 @@ export class Persistor {
    * @returns {Promise<void>}
    */
   async load() {
-    const adapter = this._kvAdapter();
-    if (!adapter) return;
-    await this._loadNamespace(
-      adapter,
-      StorageNamespace.IDENTITIES,
-      this.knownDestinations,
-      decodeIdentityEntry,
-    );
-    await this._loadNamespace(
-      adapter,
-      StorageNamespace.RATCHETS,
-      this.knownRatchets,
-      decodeRatchet,
-    );
-    if (this.routingTable) {
+    if (this.loaded) return;
+    if (this.loadPromise) return this.loadPromise;
+    this.loadPromise = (async () => {
+      const adapter = this._kvAdapter();
+      if (!adapter) {
+        this.loaded = true;
+        return;
+      }
       await this._loadNamespace(
         adapter,
-        StorageNamespace.PATHS,
-        this.routingTable.routes,
-        decodeRoute,
+        StorageNamespace.IDENTITIES,
+        this.knownDestinations,
+        decodeIdentityEntry,
       );
-    }
-    // Drop peer ratchets that expired while offline or whose destination was
-    // forgotten (mirrors RNS.Identity._clean_ratchets).
-    Destination.cleanKnownRatchets(this.knownRatchets, this.knownDestinations);
-    log(
-      "Persistor",
-      `Loaded ${this.persistedDestinations.size} persisted destination(s).`,
-      LogLevel.DEBUG,
-    );
+      await this._loadNamespace(
+        adapter,
+        StorageNamespace.RATCHETS,
+        this.knownRatchets,
+        decodeRatchet,
+      );
+      if (this.routingTable) {
+        await this._loadNamespace(
+          adapter,
+          StorageNamespace.PATHS,
+          this.routingTable.routes,
+          decodeRoute,
+        );
+      }
+      // Drop peer ratchets that expired while offline or whose destination was
+      // forgotten (mirrors RNS.Identity._clean_ratchets).
+      Destination.cleanKnownRatchets(
+        this.knownRatchets,
+        this.knownDestinations,
+      );
+      this.loaded = true;
+      log(
+        "Persistor",
+        `Loaded ${this.persistedDestinations.size} persisted destination(s).`,
+        LogLevel.DEBUG,
+      );
+    })();
+    return this.loadPromise;
   }
 
   /**

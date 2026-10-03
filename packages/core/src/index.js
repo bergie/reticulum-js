@@ -119,6 +119,7 @@ export {
   WORKBLOCK_EXPAND_ROUNDS as DISCOVERY_WORKBLOCK_EXPAND_ROUNDS,
 } from "./transport/discovery.js";
 export { Link, LinkStatus, ResourceResponse } from "./transport/link.js";
+export { UnknownIdentityError } from "./transport/transport.js";
 export {
   base64ToBytes,
   base64UrlToBytes,

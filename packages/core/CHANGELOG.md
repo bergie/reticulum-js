@@ -1,11 +1,17 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `TransportCore.prototype.recallOrSolicitIdentity(destinationHash, timeoutMs)` (work doc #39): recalls an identity or sends a path request and awaits the destination announce up to `timeoutMs`, throwing a typed `UnknownIdentityError` if unreachable. Concurrent calls for the same destination hash are deduplicated.
+- `Reticulum.prototype.ready()` (work doc #39): resolves when persistor hydration and background services (such as interface discovery) complete.
+- `UnknownIdentityError` (work doc #39): typed error subclassing `Error` thrown when identity solicitation fails or times out.
+
 ### Fixed
 - The RNode interface detect timeout now defaults to 15 s instead of 5 s:
   ESP32-S3 boards (Heltec LoRa32 v3) reset when the host opens the serial
   port and can take over ten seconds to boot, so the shorter window made
   detect time out on healthy devices.
+- `TransportCore.prototype.recallIdentity` now awaits persistor hydration if background loading is pending, avoiding boot-time identity recall race conditions (work doc #39).
 
 ## [0.9.2] - 2026-09-27
 

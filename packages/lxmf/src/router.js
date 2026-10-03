@@ -19,6 +19,7 @@ import {
   ReceiptStatus,
   Resource,
   toHex,
+  UnknownIdentityError,
   warnIfFragmented,
 } from "@reticulum/core";
 import {
@@ -670,13 +671,24 @@ export class LXMRouter extends EventTarget {
    * @private
    */
   async _packForPropagationSubmit(message, senderIdentity, stampCost) {
-    const recipientIdentity = await this.rns.transport.recallIdentity(
+    let recipientIdentity = await this.rns.transport.recallIdentity(
       message.destinationHash,
     );
+    if (
+      !recipientIdentity &&
+      typeof this.rns.transport.recallOrSolicitIdentity === "function"
+    ) {
+      try {
+        recipientIdentity = await this.rns.transport.recallOrSolicitIdentity(
+          message.destinationHash,
+          30_000,
+        );
+      } catch {
+        // Will throw below
+      }
+    }
     if (!recipientIdentity) {
-      throw new Error(
-        `Unknown recipient identity for ${toHex(message.destinationHash)}`,
-      );
+      throw new UnknownIdentityError(message.destinationHash);
     }
     const recipientOut = await Destination.OUT(
       "lxmf.delivery",
@@ -1296,90 +1308,191 @@ export class LXMRouter extends EventTarget {
    * @param {Uint8Array|null} linkId
    * @returns {Promise<void>}
    */
-  async send(message, senderIdentity, linkId) {
+  /**
+   * Serializes and sends an LXMF message.
+   *
+   * Delivery method mirrors the Python reference with automated fallback:
+   *   - a provided `linkId` is reused (DIRECT over an existing link);
+   *   - otherwise a DIRECT link to the recipient is established (and cached);
+   *   - if DIRECT link fails or cannot be established, escalates according to `fallback`
+   *     ("opportunistic" -> "propagation" -> "none").
+   *
+   * On a link this initiates, LINKIDENTIFY is sent once before the message DATA
+   * (Python LXMF otherwise drops packets that arrive before identify), and the
+   * link is wired to receive replies (backchannel).
+   *
+   * @param {Message} message
+   * @param {Identity} senderIdentity
+   * @param {Uint8Array | {
+   *   linkId?: Uint8Array | null,
+   *   fallback?: "opportunistic" | "propagation" | "none",
+   *   solicit?: boolean,
+   *   timeoutMs?: number,
+   * } | null} [optionsOrLinkId]
+   * @returns {Promise<void>}
+   */
+  async send(message, senderIdentity, optionsOrLinkId = {}) {
+    const options =
+      optionsOrLinkId instanceof Uint8Array
+        ? { linkId: optionsOrLinkId }
+        : (optionsOrLinkId ?? {});
+
+    const {
+      linkId: explicitLinkId = null,
+      fallback = "opportunistic",
+      solicit = true,
+      timeoutMs = 30_000,
+    } = options;
+
     const { messageId, wireData } = await message.serialize(senderIdentity);
     log("LXMF", `DEBUG: Sending LXMF Message ID: ${toHex(messageId)}`);
     log("LXMF", `DEBUG: Sending to ${toHex(message.destinationHash)}`);
 
-    const DESTINATION_LENGTH = Identity.TRUNCATED_HASH_LENGTH;
+    let linkDeliveryError = null;
 
-    // No link provided: deliver over a DIRECT link to the recipient — Python's
-    // default DIRECT method (LXMRouter.process_outbound) and the channel mobile
-    // LXMF clients listen on for replies. A single opportunistic packet is used
-    // only as a fallback when no link can be established (peer unreachable or
-    // identity unknown).
-    if (!linkId) {
-      const directLink = await this._establishDirectLink(
-        message.destinationHash,
-      );
-      if (directLink) {
-        // Backchannel: a DIRECT link we initiated must also *receive* — Python
-        // calls delivery_link_established on outbound direct links after
-        // delivery so replies are dispatched instead of dropped. Attach the
-        // inbound listeners once per link — a reused cached link already has
-        // them, re-attaching would leak `data`/`resource` listeners and
-        // re-dispatch each inbound message once per copy.
-        const linkKey = toHex(directLink.linkId);
-        if (!this.attachedLinks.has(linkKey)) {
-          this._attachLinkMessageListeners(directLink);
-          this.attachedLinks.add(linkKey);
+    // 1. Link delivery: explicit linkId or newly established DIRECT link
+    let targetLinkId = explicitLinkId;
+    if (!targetLinkId) {
+      try {
+        const directLink = await this._establishDirectLink(
+          message.destinationHash,
+          { solicit, timeoutMs },
+        );
+        if (directLink) {
+          const linkKey = toHex(directLink.linkId);
+          if (!this.attachedLinks.has(linkKey)) {
+            this._attachLinkMessageListeners(directLink);
+            this.attachedLinks.add(linkKey);
+          }
+          targetLinkId = directLink.linkId;
         }
-        linkId = directLink.linkId;
+      } catch (err) {
+        linkDeliveryError = err;
       }
     }
 
-    // Direct delivery happens over a Link. The full LXMF body
-    // (dest_hash || source_hash || signature || payload) travels inside the
-    // link, Token-encrypted by link.send() (LXMF.md §5.2). `createLink()`
-    // resolves as soon as the handshake is *initiated*, but the session token
-    // is only derived once the handshake completes and the Link becomes ACTIVE.
-    // Wait for that so we don't try to encrypt with a token that doesn't exist.
-    if (linkId) {
-      const linkKey = toHex(linkId);
-      const link = this.rns.transport.activeLinks.get(linkKey);
-      if (link) {
-        await link.whenActive();
-        // Python LXMF will not process application DATA on a link until the
-        // initiator has sent LINKIDENTIFY (it drops anything arriving before
-        // that). We enforce the counterpart on our side: identify ourselves to
-        // the responder before sending the message, once per initiator link.
-        if (link.initiator && !this.identifiedLinks.has(linkKey)) {
-          await link.identify(senderIdentity);
-          this.identifiedLinks.add(linkKey);
-        }
-        // §5.2/§10.1: a DIRECT body larger than the Link MDU must be sent as a
-        // Resource. The boundary is exactly the Link MDU (431 B at mtu 500);
-        // the spec's "319-byte LXMF content size" is the same threshold
-        // expressed as `MDU − LXMF_OVERHEAD(112)`.
-        if (wireData.length > link.mdu) {
-          if (!link.bz2) link.bz2 = this.rns.compressionProvider || undefined;
-          const resource = new Resource({
-            data: wireData,
-            link,
-            bz2: link.bz2,
-          });
-          await resource.advertise();
-          // Wait for the full DIRECT body to be transferred before returning;
-          // advertise() alone only signals that a Resource is available.
-          await this._awaitOutgoingResource(resource, link);
-          return;
-        }
+    if (targetLinkId) {
+      try {
+        await this._sendOverLink(
+          targetLinkId,
+          senderIdentity,
+          message.destinationHash,
+          wireData,
+          timeoutMs,
+        );
+        return;
+      } catch (err) {
+        log(
+          "LXMF",
+          `Direct link send failed: ${err}; evaluating fallback`,
+          LogLevel.DEBUG,
+        );
+        linkDeliveryError = err;
       }
-      const linkPacket = new Packet({
-        packetType: PacketType.DATA,
-        contextFlag: true,
-        contextByte: ContextType.NONE,
-        destinationHash: message.destinationHash,
-        destinationType: DestType.SINGLE,
-        transportType: 0,
-        payload: wireData,
+    }
+
+    if (fallback === "none") {
+      throw (
+        linkDeliveryError ||
+        new Error(
+          `Cannot deliver to ${toHex(
+            message.destinationHash,
+          )}: direct link delivery failed and fallback is "none"`,
+        )
+      );
+    }
+
+    // 2. Opportunistic delivery fallback
+    let opportunisticError = null;
+    if (fallback === "opportunistic" || fallback === "propagation") {
+      try {
+        await this._sendOpportunistic(message, wireData, {
+          solicit,
+          timeoutMs,
+        });
+        return;
+      } catch (err) {
+        log(
+          "LXMF",
+          `Opportunistic delivery failed: ${err}; evaluating fallback`,
+          LogLevel.DEBUG,
+        );
+        opportunisticError = err;
+      }
+    }
+
+    // 3. Propagation node fallback
+    if (fallback === "propagation") {
+      if (this.outboundPropagationNode) {
+        await this.submitToPropagationNode(message, senderIdentity);
+        return;
+      }
+      throw new Error(
+        `Cannot deliver to ${toHex(
+          message.destinationHash,
+        )}: direct and opportunistic failed, and no outbound propagation node is configured`,
+      );
+    }
+
+    throw (
+      opportunisticError ||
+      linkDeliveryError ||
+      new Error(`Cannot deliver message to ${toHex(message.destinationHash)}`)
+    );
+  }
+
+  /**
+   * Transmits pre-serialized wireData over an existing active link, handling
+   * identify, Resource switching for large bodies, and DATA packet sending.
+   *
+   * @param {Uint8Array} linkId
+   * @param {Identity} senderIdentity
+   * @param {Uint8Array} destinationHash
+   * @param {Uint8Array} wireData
+   * @param {number} [timeoutMs]
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _sendOverLink(
+    linkId,
+    senderIdentity,
+    destinationHash,
+    wireData,
+    timeoutMs,
+  ) {
+    const linkKey = toHex(linkId);
+    const link = this.rns.transport.activeLinks.get(linkKey);
+    if (!link) {
+      throw new Error(`Link ${linkKey} is not active in transport`);
+    }
+    await link.whenActive(timeoutMs);
+    if (link.initiator && !this.identifiedLinks.has(linkKey)) {
+      await link.identify(senderIdentity);
+      this.identifiedLinks.add(linkKey);
+    }
+    if (wireData.length > link.mdu) {
+      if (!link.bz2)
+        link.bz2 =
+          /** @type {any} */ (this.rns.compressionProvider) || undefined;
+      const resource = new Resource({
+        data: wireData,
+        link,
+        bz2: link.bz2,
       });
-      await this.rns.transport.sendPacket(linkPacket, linkId);
+      await resource.advertise();
+      await this._awaitOutgoingResource(resource, link);
       return;
     }
-
-    // Opportunistic fallback: no DIRECT link could be established.
-    await this._sendOpportunistic(message, wireData);
+    const linkPacket = new Packet({
+      packetType: PacketType.DATA,
+      contextFlag: true,
+      contextByte: ContextType.NONE,
+      destinationHash,
+      destinationType: DestType.SINGLE,
+      transportType: 0,
+      payload: wireData,
+    });
+    await this.rns.transport.sendPacket(linkPacket, linkId);
   }
 
   /**
@@ -1406,18 +1519,32 @@ export class LXMRouter extends EventTarget {
    * @param {Message} message
    * @param {Uint8Array} wireData - pre-serialized LXMF body (from
    *   `message.serialize`).
+   * @param {{ solicit?: boolean, timeoutMs?: number }} [options]
    * @returns {Promise<void>}
    * @private
    */
-  async _sendOpportunistic(message, wireData) {
+  async _sendOpportunistic(message, wireData, options = {}) {
+    const { solicit = true, timeoutMs = 30_000 } = options;
     const DESTINATION_LENGTH = Identity.TRUNCATED_HASH_LENGTH;
-    const peerIdentity = await this.rns.transport.recallIdentity(
+    let peerIdentity = await this.rns.transport.recallIdentity(
       message.destinationHash,
     );
+    if (
+      !peerIdentity &&
+      solicit &&
+      typeof this.rns.transport.recallOrSolicitIdentity === "function"
+    ) {
+      try {
+        peerIdentity = await this.rns.transport.recallOrSolicitIdentity(
+          message.destinationHash,
+          timeoutMs,
+        );
+      } catch {
+        // Will throw below
+      }
+    }
     if (!peerIdentity) {
-      throw new Error(
-        `Cannot deliver: identity for ${toHex(message.destinationHash)} is unknown`,
-      );
+      throw new UnknownIdentityError(message.destinationHash);
     }
     const peerDestination = await Destination.OUT(
       "lxmf.delivery",
@@ -1531,10 +1658,12 @@ export class LXMRouter extends EventTarget {
    * times out — the caller should then fall back to opportunistic delivery.
    *
    * @param {Uint8Array} destinationHash
+   * @param {{ solicit?: boolean, timeoutMs?: number }} [options]
    * @returns {Promise<import("@reticulum/core").Link|null>}
    * @private
    */
-  async _establishDirectLink(destinationHash) {
+  async _establishDirectLink(destinationHash, options = {}) {
+    const { solicit = true, timeoutMs = DIRECT_LINK_TIMEOUT_MS } = options;
     const destHex = toHex(destinationHash);
     const cached = this.directLinks.get(destHex);
     if (cached && cached.status === LinkStatus.ACTIVE) {
@@ -1542,8 +1671,21 @@ export class LXMRouter extends EventTarget {
     }
     this.directLinks.delete(destHex);
 
-    const peerIdentity =
-      await this.rns.transport.recallIdentity(destinationHash);
+    let peerIdentity = await this.rns.transport.recallIdentity(destinationHash);
+    if (
+      !peerIdentity &&
+      solicit &&
+      typeof this.rns.transport.recallOrSolicitIdentity === "function"
+    ) {
+      try {
+        peerIdentity = await this.rns.transport.recallOrSolicitIdentity(
+          destinationHash,
+          timeoutMs,
+        );
+      } catch {
+        // Handled below
+      }
+    }
     if (!peerIdentity) {
       log(
         "LXMF",
@@ -1566,7 +1708,7 @@ export class LXMRouter extends EventTarget {
         this.rns,
       );
       const link = await Link.initiate(peerDestination, this.rns.transport);
-      await link.whenActive(DIRECT_LINK_TIMEOUT_MS);
+      await link.whenActive(timeoutMs);
       // Evict from the cache when the link comes down so the next send
       // re-establishes a fresh one (matching the Python reference, which
       // drops the cached link on close).

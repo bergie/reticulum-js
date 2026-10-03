@@ -289,6 +289,19 @@ export class Reticulum {
   }
 
   /**
+   * Waits for the Reticulum node to be ready.
+   * Resolves when the initial persistence hydration has finished and any
+   * background initialization (such as interface discovery) has completed.
+   * @returns {Promise<void>}
+   */
+  async ready() {
+    await this.persistorLoadPromise;
+    if (this.discovery?.startPromise) {
+      await this.discovery.startPromise;
+    }
+  }
+
+  /**
    * Graceful shutdown: stops interface discovery, disconnects every attached
    * interface, and flushes the persistence layer so the final debounced batch
    * isn't lost. A per-interface disconnect failure is logged and the rest

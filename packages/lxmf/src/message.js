@@ -150,6 +150,13 @@ export class Message {
   /**
    * Serializes the Message into the LXMF wire format.
    *
+   * A `Message` instance guarantees a stable `timestamp` (fixed at instantiation)
+   * and a deterministic `messageId` (computed as SHA-256 over destination, source,
+   * and 4-element payload) across repeated `serialize()` calls and send retries.
+   * Consumers re-sending the same message instance across delivery fallbacks
+   * (DIRECT link -> opportunistic -> propagation) will always produce the identical
+   * wire message ID, preserving recipient-side deduplication.
+   *
    * If `this.stamp` is set (e.g. a proof-of-work stamp from the Stamper, or a
    * ticket-derived stamp), it is appended as the 5th payload element. The
    * signature and message_id are always computed over the 4-element payload
