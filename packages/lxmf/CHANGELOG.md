@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-04
+
 ## [0.9.4] - 2026-10-03
 ### Fixed
 - Peer-mesh distribution is now wired into the propagation node itself via a

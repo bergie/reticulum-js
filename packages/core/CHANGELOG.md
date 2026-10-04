@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.5] - 2026-10-04
 ### Added
 - `Destination` now dispatches an `announced` `CustomEvent` (work doc #34 narration) each time one of its announces actually goes on air, with `detail.destinationHash` and the announce packet's `detail.contextByte` (`NONE` for regular/periodic announces, `PATH_RESPONSE` for `path?` answers). Covers manual `announce()` calls, `announcePathResponse()` and periodic re-announce ticks; announces dropped before broadcast (failed transmission, stale in-flight straggler) do not emit it.
 

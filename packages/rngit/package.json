@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/rngit",
-  "version": "0.9.4",
+  "version": "0.9.5",
   "description": "Git repositories over Reticulum — an rngit-compatible transport and client for isomorphic-git",
   "keywords": [
     "reticulum",
@@ -45,7 +45,7 @@
   },
   "dependencies": {
     "@digitaldefiance/bzip2-wasm": "^1.1.1",
-    "@reticulum/core": "^0.9.4",
+    "@reticulum/core": "^0.9.5",
     "isomorphic-git": "^1.32.0"
   }
 }

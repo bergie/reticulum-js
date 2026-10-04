@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-10-04
+
 ## [0.9.4] - 2026-10-03
 ### Changed
 - `/rfed/get` (MESSAGE_GET) responses are never uncapped any more (rfed upstream
