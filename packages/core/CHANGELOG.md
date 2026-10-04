@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.6] - 2026-10-04
 ### Added
 - `Destination.recalled(name, destinationHash, interfaceLayer, timeoutMs)` (work doc #34): creates a dialable OUT SINGLE destination from a destination hash the application learned through its own channels (e.g. an `rns://` URL). Because the LRPROOF cannot be verified without the peer's long-term public key (it is not carried on the wire), the identity is hydrated from the transport's known-destinations cache; when unknown, a path request is sent and the peer's announce awaited (`UnknownIdentityError` if unreachable within `timeoutMs`, default 30 s). The factory also fails fast with a `TypeError` for a malformed hash and with an error when the recalled identity does not hash to `destinationHash` under the given `name` (wrong app name for that hash).
 

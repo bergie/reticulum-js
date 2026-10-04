@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-10-04
+### Added
+- **core**: `Destination.recalled(name, destinationHash, interfaceLayer, timeoutMs)` (work doc #34): creates a dialable OUT SINGLE destination from a destination hash the application learned through its own channels (e.g. an `rns://` URL). Because the LRPROOF cannot be verified without the peer's long-term public key (it is not carried on the wire), the identity is hydrated from the transport's known-destinations cache; when unknown, a path request is sent and the peer's announce awaited (`UnknownIdentityError` if unreachable within `timeoutMs`, default 30 s). The factory also fails fast with a `TypeError` for a malformed hash and with an error when the recalled identity does not hash to `destinationHash` under the given `name` (wrong app name for that hash).
+
 ## [0.9.5] - 2026-10-04
 ### Added
 - **core**: `Destination` now dispatches an `announced` `CustomEvent` (work doc #34 narration) each time one of its announces actually goes on air, with `detail.destinationHash` and the announce packet's `detail.contextByte` (`NONE` for regular/periodic announces, `PATH_RESPONSE` for `path?` answers). Covers manual `announce()` calls, `announcePathResponse()` and periodic re-announce ticks; announces dropped before broadcast (failed transmission, stale in-flight straggler) do not emit it.
