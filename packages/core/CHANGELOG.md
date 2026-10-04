@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `Destination` now dispatches an `announced` `CustomEvent` (work doc #34 narration) each time one of its announces actually goes on air, with `detail.destinationHash` and the announce packet's `detail.contextByte` (`NONE` for regular/periodic announces, `PATH_RESPONSE` for `path?` answers). Covers manual `announce()` calls, `announcePathResponse()` and periodic re-announce ticks; announces dropped before broadcast (failed transmission, stale in-flight straggler) do not emit it.
+
 ### Changed
 - `Link` now imports `Identity` and `Resource`/`SplitResourceAssembler` statically instead of via dynamic `import()` calls in its hot paths (handshake, request/response, resource advertisement, and split-resource tracking), removing the per-operation module-resolution overhead and the implicit asynchrony it caused.
 - Upstream compatibility sync with the Python reference RNS 1.5.1–1.5.6 (work doc #41): `Packet.deserialize` now rejects zero-length data fields; an ANNOUNCE exceeding the 500-byte MTU counts a protocol violation on the receiving interface; RNode RSSI/SNR readings persist across incoming frames instead of being cleared per frame; discovery announces only accept `ifac_netname`/`ifac_netkey` as non-empty strings, with the literal "None" stripped in housekeeping and config-entry generation; and a bz2 compressor failure falls back to uncompressed resource transfer.

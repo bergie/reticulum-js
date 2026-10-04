@@ -196,6 +196,139 @@ test("Destination.announce output round-trips through Identity.validateAnnounce"
   assert.strictEqual(result.ratchet, null);
 });
 
+// --- "announced" event -------------------------------------------------------
+
+test("Destination.announce dispatches an 'announced' event after the packet goes on air", async () => {
+  const { dest, captured } = await makeAnnounceableDest();
+  /** @type {CustomEvent[]} */
+  const events = [];
+  dest.addEventListener("announced", (e) => {
+    events.push(/** @type {CustomEvent} */ (e));
+    // The transport fact must already hold when observers see the event: the
+    // announce is on air at dispatch time.
+    assert.strictEqual(
+      captured.length,
+      1,
+      "announce broadcast before the event",
+    );
+  });
+
+  await dest.announce();
+
+  assert.strictEqual(events.length, 1);
+  const [evt] = events;
+  assert.strictEqual(evt.type, "announced");
+  assert.ok(bytesEqual(evt.detail.destinationHash, dest.destinationHash));
+  assert.strictEqual(evt.detail.contextByte, ContextType.NONE);
+});
+
+test("announcePathResponse dispatches 'announced' with the PATH_RESPONSE context byte", async () => {
+  const { dest, captured } = await makeAnnounceableDest();
+  /** @type {CustomEvent[]} */
+  const events = [];
+  dest.addEventListener("announced", (e) =>
+    events.push(/** @type {CustomEvent} */ (e)),
+  );
+
+  await dest.announcePathResponse();
+
+  assert.strictEqual(captured.length, 1);
+  assert.strictEqual(events.length, 1);
+  assert.ok(bytesEqual(events[0].detail.destinationHash, dest.destinationHash));
+  assert.strictEqual(events[0].detail.contextByte, ContextType.PATH_RESPONSE);
+});
+
+test("periodic re-announces dispatch an 'announced' event per fire", async () => {
+  const originalMin = Destination.MIN_ANNOUNCE_INTERVAL_MS;
+  Destination.MIN_ANNOUNCE_INTERVAL_MS = 1;
+  /** @type {Destination|null} */
+  let dest = null;
+  try {
+    ({ dest } = await makeAnnounceableDest());
+    /** @type {CustomEvent[]} */
+    const events = [];
+    dest.addEventListener("announced", (e) =>
+      events.push(/** @type {CustomEvent} */ (e)),
+    );
+
+    dest.startAnnouncing({ intervalMs: 5 });
+    await wait(20);
+    assert.ok(
+      events.length >= 2,
+      `expected periodic event fires, got ${events.length}`,
+    );
+    for (const evt of events) {
+      assert.strictEqual(evt.detail.contextByte, ContextType.NONE);
+      assert.ok(bytesEqual(evt.detail.destinationHash, dest.destinationHash));
+    }
+  } finally {
+    dest?.stopAnnouncing();
+    Destination.MIN_ANNOUNCE_INTERVAL_MS = originalMin;
+  }
+});
+
+test("a failed broadcast does not emit 'announced'", async () => {
+  const { dest, captured } = await makeAnnounceableDest();
+  let fired = false;
+  dest.addEventListener("announced", () => {
+    fired = true;
+  });
+
+  /** @type {any} */ (dest.interfaceLayer).broadcast = () => {
+    throw new Error("radio down");
+  };
+  await assert.rejects(() => dest.announce());
+
+  assert.strictEqual(captured.length, 0);
+  assert.strictEqual(
+    fired,
+    false,
+    "event must not fire when the announce never went on air",
+  );
+});
+
+test("a stale straggler announce (cadence restarted mid-flight) does not emit 'announced'", async () => {
+  const { dest, captured } = await makeAnnounceableDest();
+  let fired = false;
+  dest.addEventListener("announced", () => {
+    fired = true;
+  });
+
+  // Hold the periodic announce in flight at the public-key fetch so we can
+  // restart the cadence while it is mid-flight, exactly like the real
+  // startAnnouncing()/stopAnnouncing() race.
+  /** @type {(value?: void) => void} */
+  let releaseKey = () => {};
+  const gate = new Promise((resolve) => {
+    releaseKey = resolve;
+  });
+  /** @type {any} */ (dest.identity).getPublicKey = () => gate;
+
+  const originalMin = Destination.MIN_ANNOUNCE_INTERVAL_MS;
+  Destination.MIN_ANNOUNCE_INTERVAL_MS = 1;
+  try {
+    // Fresh start: the immediate periodic announce now blocks inside the gate.
+    dest.startAnnouncing({ intervalMs: 5 });
+    // Restart the cadence while the announce is mid-flight — the in-flight
+    // one is stamped with the superseded generation and must be dropped
+    // before broadcast (and before the event).
+    dest.startAnnouncing({ intervalMs: 5 });
+    releaseKey();
+    await gate;
+    await wait(10);
+
+    assert.strictEqual(captured.length, 0, "straggler announce was dropped");
+    assert.strictEqual(
+      fired,
+      false,
+      "dropped straggler must not emit the event",
+    );
+  } finally {
+    dest?.stopAnnouncing();
+    Destination.MIN_ANNOUNCE_INTERVAL_MS = originalMin;
+  }
+});
+
 test("TransportCore.rememberRatchet / recallRatchet store the newest ratchet", () => {
   const destHash = crypto.getRandomValues(new Uint8Array(16));
   const ratchetA = crypto.getRandomValues(new Uint8Array(32));

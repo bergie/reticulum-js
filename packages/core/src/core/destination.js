@@ -143,6 +143,22 @@ function appDataEquals(a, b) {
  */
 
 /**
+ * Dispatched on a {@link Destination} each time one of its announces actually
+ * goes on air — after the announce packet has been handed to the interface
+ * layer for broadcast. Covers manual `announce()` calls, `path?` answers and
+ * periodic re-announce ticks alike; announces that were dropped before
+ * broadcast (failed transmission, stale in-flight straggler) do not emit it.
+ *
+ * @event Destination#announced
+ * @type {CustomEvent}
+ * @property {Object} detail
+ * @property {Uint8Array} detail.destinationHash This destination's hash.
+ * @property {number} detail.contextByte The announce packet's context byte
+ *   (`NONE` for regular/periodic announces, `PATH_RESPONSE` for `path?`
+ *   answers).
+ */
+
+/**
  * Represents a Reticulum destination — an addressable endpoint that can
  * announce, receive packets, encrypt/decrypt, and establish Links.
  * @extends EventTarget
@@ -274,6 +290,8 @@ export class Destination extends EventTarget {
    *
    * Emits with `context = NONE` (a regular periodic announce). Use
    * {@link announcePathResponse} to answer a `path?` request.
+   *
+   * @fires Destination#announced
    */
   async announce() {
     await this._emitAnnounce(ContextType.NONE);
@@ -293,6 +311,7 @@ export class Destination extends EventTarget {
    *
    * @param {Uint8Array|null} [tag] The `path?` request tag that triggered
    *   this response, when known.
+   * @fires Destination#announced
    */
   async announcePathResponse(tag = null) {
     await this._emitAnnounce(ContextType.PATH_RESPONSE, undefined, tag);
@@ -341,6 +360,7 @@ export class Destination extends EventTarget {
    * @param {Object} [options]
    * @param {number} [options.intervalMs] Cadence in ms (clamped to the floor).
    * @returns {void}
+   * @fires Destination#announced
    */
   startAnnouncing(options = {}) {
     if (!this.identity) {
@@ -573,6 +593,13 @@ export class Destination extends EventTarget {
       return;
     }
     this.interfaceLayer.broadcast(announcePacket);
+    // Transport fact for observers (work document #34 narration): the
+    // announce went on air. Emitted for both periodic and manual announces
+    this.dispatchEvent(
+      new CustomEvent("announced", {
+        detail: { destinationHash: this.destinationHash, contextByte },
+      }),
+    );
   }
 
   /**
