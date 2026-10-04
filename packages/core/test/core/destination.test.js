@@ -7,8 +7,12 @@ import {
 } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
 import { ContextType, DestType, PacketType } from "../../src/core/packet.js";
-import { TransportCore } from "../../src/transport/transport.js";
-import { bytesEqual } from "../../src/utils/encoding.js";
+import { Link, LinkStatus } from "../../src/transport/link.js";
+import {
+  TransportCore,
+  UnknownIdentityError,
+} from "../../src/transport/transport.js";
+import { bytesEqual, toHex } from "../../src/utils/encoding.js";
 
 /** Minimal knownDestinations entry for map-membership tests. */
 function identityEntry() {
@@ -49,6 +53,160 @@ test("Destination SINGLE/PLAIN/GROUP hash computation", async () => {
   const outDest = await Destination.OUT("myapp", DestType.SINGLE, identity);
   assert.strictEqual(outDest.direction, Direction.OUT);
   assert.ok(outDest.destinationHash);
+});
+
+// --- Destination.recalled (work doc #34) ------------------------------------
+
+test("Destination.recalled builds a dialable OUT destination from a hash", async () => {
+  const transport = new TransportCore();
+  const identity = await Identity.generate();
+  const peerDest = await Destination.OUT(
+    "responder",
+    DestType.SINGLE,
+    identity,
+    {
+      transport,
+    },
+  );
+  await transport.rememberIdentity(
+    new Uint8Array(32),
+    peerDest.destinationHash,
+    identity.publicKey,
+  );
+
+  const recalled = await Destination.recalled(
+    "responder",
+    peerDest.destinationHash,
+    /** @type {any} */ ({ transport }),
+  );
+
+  assert.strictEqual(recalled.direction, Direction.OUT);
+  assert.strictEqual(recalled.type, DestType.SINGLE);
+  assert.ok(recalled.identity, "the identity must be hydrated from the cache");
+  assert.deepStrictEqual(recalled.identity.publicKey, identity.publicKey);
+  assert.ok(
+    bytesEqual(recalled.destinationHash, peerDest.destinationHash),
+    "the recalled destination addresses the peer's announced hash",
+  );
+});
+
+test("Destination.recalled solicits the announce when the identity is uncached", async () => {
+  const transport = new TransportCore();
+  const identity = await Identity.generate();
+  const peerDest = await Destination.OUT(
+    "responder",
+    DestType.SINGLE,
+    identity,
+    { transport },
+  );
+
+  let pathRequestedWith = null;
+  transport.requestPath = async (dh) => {
+    pathRequestedWith = dh;
+    // Simulate the peer's announce arriving in response to the path request.
+    await transport.rememberIdentity(
+      new Uint8Array(32),
+      peerDest.destinationHash,
+      identity.publicKey,
+    );
+    transport.dispatchEvent(
+      new CustomEvent("announce", {
+        detail: { destinationHash: peerDest.destinationHash, identity },
+      }),
+    );
+  };
+
+  const recalled = await Destination.recalled(
+    "responder",
+    peerDest.destinationHash,
+    /** @type {any} */ ({ transport }),
+    1000,
+  );
+
+  assert.ok(
+    bytesEqual(pathRequestedWith, peerDest.destinationHash),
+    "a path request should have solicited the peer's announce",
+  );
+  assert.ok(bytesEqual(recalled.destinationHash, peerDest.destinationHash));
+});
+
+test("Destination.recalled surfaces UnknownIdentityError when the peer never announces", async () => {
+  const transport = new TransportCore();
+  transport.requestPath = async () => {};
+
+  await assert.rejects(
+    () =>
+      Destination.recalled(
+        "responder",
+        new Uint8Array(16).fill(0x42),
+        /** @type {any} */ ({ transport }),
+        50,
+      ),
+    UnknownIdentityError,
+  );
+});
+
+test("Destination.recalled validates its inputs", async () => {
+  const transport = new TransportCore();
+  transport.requestPath = async () => {};
+
+  await assert.rejects(
+    () =>
+      Destination.recalled(
+        "x",
+        new Uint8Array(15),
+        /** @type {any} */ ({ transport }),
+      ),
+    TypeError,
+  );
+  await assert.rejects(
+    () =>
+      Destination.recalled(
+        "x",
+        new Uint8Array(17),
+        /** @type {any} */ ({ transport }),
+      ),
+    TypeError,
+  );
+  await assert.rejects(
+    () =>
+      Destination.recalled(
+        "x",
+        /** @type {any} */ ("0123456789abcdef"),
+        /** @type {any} */ ({ transport }),
+      ),
+    TypeError,
+  );
+  await assert.rejects(
+    () => Destination.recalled("x", new Uint8Array(16)),
+    /not bound to an RNS instance/,
+  );
+});
+
+test("Destination.recalled rejects a name that does not hash to the destination", async () => {
+  const transport = new TransportCore();
+  const identity = await Identity.generate();
+  const peerDest = await Destination.OUT(
+    "responder",
+    DestType.SINGLE,
+    identity,
+    { transport },
+  );
+  await transport.rememberIdentity(
+    new Uint8Array(32),
+    peerDest.destinationHash,
+    identity.publicKey,
+  );
+
+  await assert.rejects(
+    () =>
+      Destination.recalled(
+        "wrongname",
+        peerDest.destinationHash,
+        /** @type {any} */ ({ transport }),
+      ),
+    /wrong name for that destination/,
+  );
 });
 
 // --- announce random_hash (SPEC.md §4.1, §9.10) -----------------------------
@@ -580,4 +738,136 @@ test("startAnnouncing throws without an identity or interface layer", async () =
     /** @type {any} */ (fakeLayer),
   );
   assert.throws(() => plainDest.startAnnouncing(), /requires an identity/);
+});
+
+// --- Destination.recalled end-to-end: dial by hash over a link --------------
+
+/** Minimal two-sided transport, mirroring the mocks in link/resource tests. */
+class MockTransport {
+  constructor() {
+    /** @type {Packet[]} */
+    this.receivedPackets = [];
+    /** @type {Map<string, Link>} */
+    this.links = new Map();
+    /** @type {Map<string, Destination>} */
+    this.destinations = new Map();
+    /** Optional peer transport to forward every sent packet to. */
+    this.peer = null;
+  }
+  /** @param {Uint8Array} hash @param {Link} link */
+  addLink(hash, link) {
+    this.links.set(toHex(hash), link);
+  }
+  /** @param {Uint8Array} hash */
+  removeLink(hash) {
+    this.links.delete(toHex(hash));
+  }
+  /** @param {Uint8Array} hash @param {Destination} dest */
+  addDestination(hash, dest) {
+    this.destinations.set(toHex(hash), dest);
+  }
+  /** @param {Packet} packet */
+  async sendPacket(packet) {
+    this.receivedPackets.push(packet);
+    if (this.peer) await this.peer._route(packet);
+    return true;
+  }
+  /** @param {Packet} packet */
+  async _route(packet) {
+    const dh = toHex(packet.destinationHash);
+    if (this.links.has(dh)) {
+      await this.links.get(dh).receive(packet);
+    } else if (this.destinations.has(dh)) {
+      const dest = this.destinations.get(dh);
+      if (packet.packetType === PacketType.LINKREQUEST) {
+        const link = await Link.accept(dest, this, packet);
+        this.addLink(link.linkId, link);
+      }
+    }
+  }
+}
+
+/** @param {Link} initiator @param {() => Link|undefined} getResponder @param {number} [timeoutMs] */
+async function awaitActive(initiator, getResponder, timeoutMs = 1000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const responder = getResponder();
+    if (
+      initiator.status === LinkStatus.ACTIVE &&
+      responder &&
+      responder.status === LinkStatus.ACTIVE
+    ) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(
+    `handshake did not complete within ${timeoutMs}ms ` +
+      `(initiator=${initiator.status}, responder=${getResponder()?.status})`,
+  );
+}
+
+test("dialing by destination hash completes a link handshake (work doc #34)", async () => {
+  const transportI = new MockTransport();
+  const transportR = new MockTransport();
+  transportI.peer = transportR;
+  transportR.peer = transportI;
+
+  // Initiator-side identity cache: empty until the responder's announce
+  // arrives in response to the path request (the mesh's path response).
+  const identityCache = new TransportCore();
+  /** @type {any} */ (transportI).recallOrSolicitIdentity = (
+    /** @type {Uint8Array} */ hash,
+    /** @type {number} */ timeoutMs = 30_000,
+  ) => identityCache.recallOrSolicitIdentity(hash, timeoutMs);
+  const responderIdentity = await Identity.generate();
+  const responderDest = await Destination.IN(
+    "responder",
+    DestType.SINGLE,
+    responderIdentity,
+    /** @type {any} */ ({ transport: transportR }),
+  );
+  transportR.addDestination(responderDest.destinationHash, responderDest);
+
+  /** @type {Uint8Array} */
+  identityCache.requestPath = async (/** @type {Uint8Array} */ hash) => {
+    await identityCache.rememberIdentity(
+      new Uint8Array(32),
+      hash,
+      responderIdentity.publicKey,
+    );
+    identityCache.dispatchEvent(
+      new CustomEvent("announce", {
+        detail: { destinationHash: hash, identity: responderIdentity },
+      }),
+    );
+  };
+
+  // Dial from the hash alone — no Identity object in hand.
+  const out = await Destination.recalled(
+    "responder",
+    responderDest.destinationHash,
+    /** @type {any} */ ({ transport: transportI }),
+    1000,
+  );
+
+  const initiatorLink = await out.createLink();
+  const getResponder = () => [...transportR.links.values()][0];
+  await awaitActive(initiatorLink, getResponder);
+
+  assert.strictEqual(initiatorLink.status, LinkStatus.ACTIVE);
+  assert.strictEqual(getResponder()?.status, LinkStatus.ACTIVE);
+
+  // The responder proved its identity by signing the LRPROOF with the key
+  // the announce carried — Token-encrypted traffic flows both ways.
+  const secret = new TextEncoder().encode("dial by hash");
+  const ct = await initiatorLink.token.encrypt(secret);
+  assert.deepStrictEqual(
+    Array.from(await /** @type {any} */ (getResponder()).token.decrypt(ct)),
+    Array.from(secret),
+  );
+
+  // Release the watchdog timers so the test process can exit.
+  await initiatorLink.teardown();
+  await getResponder()?.teardown();
 });
