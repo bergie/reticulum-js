@@ -292,12 +292,23 @@ export class Resource extends EventTarget {
     this.uncompressedSize = plaintext.length; // d: original uncompressed size
 
     // §10.2 step 2 — optional bz2 compression (only if a module was injected).
+    // A compressor failure falls back to uncompressed transfer rather than
+    // aborting the resource — the Python reference wraps bz2.compress in a
+    // try/except and sends uncompressed (RNS 1.5.1, c1d7c12b).
     let body = plaintext;
     if (this.autoCompress && this.bz2) {
-      const compressed = this.bz2.compress(plaintext);
-      if (compressed.length < plaintext.length) {
-        body = compressed;
-        this.compressed = true;
+      try {
+        const compressed = this.bz2.compress(plaintext);
+        if (compressed.length < plaintext.length) {
+          body = compressed;
+          this.compressed = true;
+        }
+      } catch (err) {
+        log(
+          "Resource",
+          `Could not auto-compress resource data, falling back to uncompressed transfer: ${/** @type {any} */ (err).message ?? err}`,
+          LogLevel.DEBUG,
+        );
       }
     }
 
@@ -326,10 +337,19 @@ export class Resource extends EventTarget {
     let body = plaintext;
     this.compressed = false;
     if (this.autoCompress && this.bz2) {
-      const compressed = this.bz2.compress(plaintext);
-      if (compressed.length < plaintext.length) {
-        body = compressed;
-        this.compressed = true;
+      // Same compress-failure fallback as _prepareSender (RNS 1.5.1, c1d7c12b).
+      try {
+        const compressed = this.bz2.compress(plaintext);
+        if (compressed.length < plaintext.length) {
+          body = compressed;
+          this.compressed = true;
+        }
+      } catch (err) {
+        log(
+          "Resource",
+          `Could not auto-compress segment ${this.segmentIndex}, falling back to uncompressed transfer: ${/** @type {any} */ (err).message ?? err}`,
+          LogLevel.DEBUG,
+        );
       }
     }
 

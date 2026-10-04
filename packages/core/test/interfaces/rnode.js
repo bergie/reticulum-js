@@ -456,6 +456,36 @@ test("stats commands update radio state", async () => {
   await iface.disconnect();
 });
 
+test("RSSI/SNR readings persist across incoming data frames", async () => {
+  // §RNS 1.5.1 (dcbc7638): the Python reference treated the per-frame
+  // clearing of r_stat_rssi / r_stat_snr as a reporting regression —
+  // readings must persist until the radio reports fresh ones.
+  const iface = new FakeTransport(RADIO);
+  await bringOnline(iface);
+
+  // Seed an RSSI reading (-60 dBm).
+  iface.push(cmdFrame(C.CMD_STAT_RSSI, [97]));
+  await waitFor(() => iface.rStatRssi === 97 - C.RSSI_OFFSET);
+
+  // Push a data frame through; the reading must survive it.
+  const packet = mkPacket(new TextEncoder().encode("still here"));
+  iface.push(cmdFrame(C.CMD_DATA, Array.from(packet.serialize())));
+  const received = new Promise((resolve) => {
+    iface.addEventListener("packet", (event) => resolve(event.detail.packet));
+  });
+  await received;
+  assert.equal(
+    iface.rStatRssi,
+    97 - C.RSSI_OFFSET,
+    "RSSI reading must survive an incoming data frame",
+  );
+
+  // A fresh reading replaces the old one.
+  iface.push(cmdFrame(C.CMD_STAT_RSSI, [90])); // -67 dBm
+  await waitFor(() => iface.rStatRssi === 90 - C.RSSI_OFFSET);
+  await iface.disconnect();
+});
+
 test("CMD_STAT_CHTM reports airtime, channel load and signal telemetry", async () => {
   const iface = new FakeTransport(RADIO);
   await bringOnline(iface);

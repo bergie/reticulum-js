@@ -306,6 +306,13 @@ export class Packet {
     const contextByte = data[offset];
     offset += 1;
 
+    // §2: a packet with an empty data field is malformed — the Python
+    // reference raises "Zero-length data field" in Packet.unpack (RNS 1.5.1)
+    // and drops the frame as a protocol violation. Note that legitimate
+    // always-empty-payload contexts (e.g. the raw link-level keepalive bytes
+    // an HDLC frame carries) never reach this deserializer as packets.
+    if (offset >= data.length) throw new Error("Zero-length data field");
+
     const payload = data.slice(offset);
 
     return new Packet({

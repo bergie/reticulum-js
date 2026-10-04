@@ -1137,6 +1137,10 @@ export class AutoInterface extends Interface {
     // Inherit the parent's nominal bitrate, matching the Python reference's
     // spawned interfaces.
     peer.bitrate = this.bitrate;
+    // Inherit the parent's gravity (Python reference 1.5.5, 1d9ebe8c) so a
+    // configured gravity applies to path tie-breaks learned via spawned
+    // peers too.
+    peer.gravity = this.gravity;
     // Inherit the parent's ingress-control settings (the Python reference
     // copies all ingress-control settings onto spawned interfaces) so a
     // node-global override applied at addInterface reaches every spawned

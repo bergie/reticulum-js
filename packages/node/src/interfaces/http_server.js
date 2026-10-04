@@ -603,8 +603,10 @@ export class HttpPostServerInterface extends Interface {
       networkName: this.ifacNetname ?? undefined,
       passphrase: this.ifacNetkey ?? undefined,
     });
-    // Inherit the server's nominal bitrate.
+    // Inherit the server's nominal bitrate and gravity (Python reference
+    // 1.5.5, 1d9ebe8c).
     peer.bitrate = this.bitrate;
+    peer.gravity = this.gravity;
     // connect() is synchronous through stream setup, so writable is ready
     // before the `connection` event fires.
     await peer.connect();

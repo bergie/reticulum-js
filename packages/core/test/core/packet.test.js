@@ -103,10 +103,32 @@ async function testPacket() {
   );
 
   // hops == PATHFINDER_M - 1 is the largest valid value and must be accepted.
-  const maxHops = new Uint8Array(19);
+  // The frame carries a 1-byte payload — a zero-length data field is itself
+  // malformed (see the next case).
+  const maxHops = new Uint8Array(20);
   maxHops[1] = PATHFINDER_M - 1;
   assert.doesNotThrow(() => Packet.deserialize(maxHops));
   assert.strictEqual(Packet.deserialize(maxHops).hops, PATHFINDER_M - 1);
+
+  // §RNS 1.5.1 (d80245b6): a packet with a zero-length data field is
+  // malformed and dropped — the Python reference raises
+  // "Zero-length data field" in Packet.unpack.
+  const emptyData = new Uint8Array(19); // header + dest + context, no data
+  emptyData[1] = 1; // valid hop count, so only the payload is at fault
+  assert.throws(
+    () => Packet.deserialize(emptyData),
+    /Zero-length data field/,
+    "empty data field must be rejected",
+  );
+  // HEADER_2 variant: transport_id + dest + context, no data.
+  const emptyDataH2 = new Uint8Array(35);
+  emptyDataH2[0] = 0x40; // HEADER_2
+  emptyDataH2[1] = 1;
+  assert.throws(
+    () => Packet.deserialize(emptyDataH2),
+    /Zero-length data field/,
+    "empty data field must be rejected (HEADER_2)",
+  );
 
   console.log("Packet tests passed!");
 }

@@ -25,6 +25,8 @@ import {
   DISCOVERABLE_TYPES,
   FLAG_ENCRYPTED,
   generateDiscoveryStamp,
+  IFAC_NETKEY,
+  IFAC_NETNAME,
   InterfaceDiscovery,
   isHostname,
   isIpAddress,
@@ -68,6 +70,8 @@ function makeInfo({
   longitude = null,
   height = null,
   operatorLxmfAddress = undefined,
+  ifacNetname = undefined,
+  ifacNetkey = undefined,
 }) {
   /** @type {Map<number, any>} */
   const map = new Map([
@@ -83,6 +87,12 @@ function makeInfo({
   ]);
   if (operatorLxmfAddress !== undefined) {
     map.set(OP_ADDR, operatorLxmfAddress);
+  }
+  if (ifacNetname !== undefined) {
+    map.set(IFAC_NETNAME, ifacNetname);
+  }
+  if (ifacNetkey !== undefined) {
+    map.set(IFAC_NETKEY, ifacNetkey);
   }
   return map;
 }
@@ -246,6 +256,101 @@ test("parseDiscoveryAnnounce rejects an unauthorized discovery source", async ()
     discoverySources: [other.identityHash],
   });
   assert.strictEqual(parsed, null);
+});
+
+test("parseDiscoveryAnnounce only accepts ifac_netname / ifac_netkey as non-empty strings", async () => {
+  // §RNS 1.5.5 (135e941f): misconfigured nodes have published literal
+  // "None" / empty-string IFAC values; the reference now type-checks and
+  // rejects anything that is not a non-empty string.
+  const transportId = crypto.getRandomValues(new Uint8Array(16));
+  const mkAppData = (netname, netkey) =>
+    buildDiscoveryAppData(
+      makeInfo({
+        transportId,
+        name: "Ifac Test",
+        reachableOn: "example.com",
+        port: 42424,
+        ifacNetname: netname,
+        ifacNetkey: netkey,
+      }),
+      { stampCost: 8 },
+    );
+  const announced = await Identity.generate();
+
+  // Valid non-empty strings surface on the parsed info.
+  const ok = await parseDiscoveryAnnounce(
+    await mkAppData("mesh", "secret"),
+    announced,
+    {
+      requiredValue: 8,
+    },
+  );
+  assert.strictEqual(ok?.ifac_netname, "mesh");
+  assert.strictEqual(ok?.ifac_netkey, "secret");
+
+  // Empty string and non-string types are rejected at parse time; the
+  // literal "None" passes the handler (as in the reference) but is stripped
+  // by housekeeping / config-entry generation below.
+  const emptyName = await parseDiscoveryAnnounce(
+    await mkAppData("", "secret"),
+    announced,
+    {
+      requiredValue: 8,
+    },
+  );
+  assert.strictEqual(emptyName?.ifac_netname, undefined);
+  assert.strictEqual(emptyName?.ifac_netkey, "secret");
+
+  // Non-string types (an integer) are rejected at parse time.
+  const intName = await parseDiscoveryAnnounce(
+    await buildDiscoveryAppData(
+      new Map([
+        ...makeInfo({
+          transportId,
+          name: "Ifac Test",
+          reachableOn: "example.com",
+          port: 42424,
+        }),
+        [IFAC_NETNAME, 42],
+      ]),
+      { stampCost: 8 },
+    ),
+    announced,
+    { requiredValue: 8 },
+  );
+  assert.strictEqual(intName?.ifac_netname, undefined);
+
+  // The literal "None" passes parsing but is stripped by
+  // buildConfigEntry, so a generated config never carries a nonsensical
+  // network name / passphrase.
+  const noneKey = await parseDiscoveryAnnounce(
+    await mkAppData("mesh", "None"),
+    announced,
+    {
+      requiredValue: 8,
+    },
+  );
+  assert.strictEqual(noneKey?.ifac_netname, "mesh");
+  assert.strictEqual(noneKey?.ifac_netkey, "None");
+  const entry = buildConfigEntry(
+    /** @type {any} */ ({
+      type: "TCPServerInterface",
+      name: "Ifac Test",
+      transportIdHex: toHex(transportId),
+      ifacNetname: noneKey?.ifac_netname,
+      ifacNetkey: noneKey?.ifac_netkey,
+      reachableOn: "example.com",
+      port: 42424,
+    }),
+  );
+  assert.ok(
+    entry.includes("network_name = mesh"),
+    "legitimate netname must be kept",
+  );
+  assert.ok(
+    !entry.includes("passphrase"),
+    "config entry must omit the literal 'None' passphrase",
+  );
 });
 
 // ---------------------------------------------------------------------

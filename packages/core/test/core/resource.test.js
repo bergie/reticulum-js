@@ -252,6 +252,52 @@ describe("Resource end-to-end transfer (§10)", () => {
     await runTransfer({ size: 2000, compress: true });
   });
 
+  test("a bz2 compressor failure falls back to uncompressed transfer", async () => {
+    // §RNS 1.5.1 (c1d7c12b): the Python reference wraps bz2.compress in a
+    // try/except and sends uncompressed when compression throws.
+    const { initiator, responder } = await makePair();
+    const payload = new Uint8Array(2000).fill(0x44);
+    const resource = new Resource({
+      data: payload,
+      link: initiator,
+      /** @type {any} */
+      bz2: {
+        compress: () => {
+          throw new Error("compressor exploded");
+        },
+        decompress: () => {
+          throw new Error("should never be called");
+        },
+      },
+    });
+    await resource.advertise();
+    assert.strictEqual(resource.compressed, false);
+
+    /** @type {Resource|null} */
+    let incoming = null;
+    responder.addEventListener("resource", (event) => {
+      incoming = /** @type {CustomEvent} */ (event).detail.resource;
+    });
+
+    await resource.whenComplete();
+    await new Promise((resolve, reject) => {
+      const poll = setInterval(() => {
+        if (incoming && incoming.status === ResourceStatus.COMPLETE) {
+          clearInterval(poll);
+          resolve(incoming);
+        } else if (incoming && incoming.status === ResourceStatus.FAILED) {
+          clearInterval(poll);
+          reject(new Error("transfer failed"));
+        }
+      }, 5);
+      setTimeout(() => reject(new Error("timeout")), 5000);
+    });
+    assert.deepStrictEqual(
+      Array.from(/** @type {Uint8Array} */ (incoming.data)),
+      Array.from(payload),
+    );
+  });
+
   test("parts are placed by map_hash index, not arrival order", async () => {
     // Build a sender in-process (no wire traffic) and a mirror receiver, then
     // deliver parts in REVERSE. Placement is by map_hash index lookup, so the

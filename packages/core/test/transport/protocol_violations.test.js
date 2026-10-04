@@ -102,6 +102,44 @@ test("an invalid announce signature counts a protocol violation on the receiving
   );
 });
 
+test("an announce exceeding MTU counts a protocol violation on the receiving interface", async () => {
+  const transport = new TransportCore();
+  const iface = new StubInterface();
+  transport.interfaces.add(iface);
+
+  // §RNS 1.5.1 (d80245b6): announce frames above the 500-byte protocol MTU
+  // are nonsensical and dropped as a protocol violation. The body contents
+  // don't matter — the size check runs before validation.
+  const packet = new Packet({
+    packetType: PacketType.ANNOUNCE,
+    destinationType: DestType.SINGLE,
+    destinationHash: crypto.getRandomValues(new Uint8Array(16)),
+    transportType: TransportType.BROADCAST,
+    contextByte: ContextType.NONE,
+    contextFlag: false,
+    payload: new Uint8Array(500), // forces raw > MTU(500) after headers
+  });
+  packet.raw = packet.serialize();
+
+  const before = iface.protocolViolations;
+  await transport._handleAnnounce(packet, iface);
+  assert.strictEqual(
+    iface.protocolViolations,
+    before + 1,
+    "oversized announce counted as a protocol violation",
+  );
+  // And the announce was not ingested: the event listener registered below
+  // must never fire.
+  let announced = false;
+  transport.addEventListener("announce", () => {
+    announced = true;
+  });
+  // Re-route the same oversized packet — it must be dropped again without
+  // dispatching.
+  await transport._handleAnnounce(packet, iface);
+  assert.strictEqual(announced, false, "oversized announce was not ingested");
+});
+
 test("a duplicate non-announce packet counts a packet-filter hit on the receiving interface", async () => {
   const transport = new TransportCore();
   const iface = new StubInterface();

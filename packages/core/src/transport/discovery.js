@@ -307,11 +307,26 @@ function configSuffix(ctx) {
  * @returns {string}
  */
 export function buildConfigEntry(fields, backboneSupport = true) {
+  // §RNS 1.5.5 (135e941f): a literal "None" IFAC value must not be emitted
+  // into a config entry — it would set a nonsensical network name/passphrase
+  // on the connecting node. (Empty values are already skipped by the suffix
+  // builder's truthiness checks.)
+  const sanitized = /** @type {DiscoveredFields} */ ({
+    ...fields,
+    ifacNetname:
+      fields.ifacNetname && fields.ifacNetname !== "None"
+        ? fields.ifacNetname
+        : null,
+    ifacNetkey:
+      fields.ifacNetkey && fields.ifacNetkey !== "None"
+        ? fields.ifacNetkey
+        : null,
+  });
   const ctx = /** @type {ConfigEntryContext} */ ({
-    name: fields.name,
-    transportIdHex: fields.transportIdHex,
-    ifacNetname: fields.ifacNetname ?? null,
-    ifacNetkey: fields.ifacNetkey ?? null,
+    name: sanitized.name,
+    transportIdHex: sanitized.transportIdHex,
+    ifacNetname: sanitized.ifacNetname,
+    ifacNetkey: sanitized.ifacNetkey,
   });
   const sfx = configSuffix(ctx);
 
@@ -650,11 +665,18 @@ async function buildDiscoveredInfo(unpacked, announcedIdentity, meta) {
     info.operator_lxmf_address = toHex(operatorLxmfAddress);
   }
 
-  if (unpacked[String(IFAC_NETNAME)] !== undefined) {
-    info.ifac_netname = String(unpacked[String(IFAC_NETNAME)]);
+  // §Discovery IFAC sanitization (RNS 1.5.5, 135e941f): only accept
+  // ifac_netname / ifac_netkey when they are non-empty strings, matching the
+  // reference's announce handler. (The literal string "None" still passes
+  // here, as in the reference; the discovery housekeeping pass strips it
+  // from persisted records — see listDiscoveredInterfaces.)
+  const rawNetname = unpacked[String(IFAC_NETNAME)];
+  if (typeof rawNetname === "string" && rawNetname.length > 0) {
+    info.ifac_netname = rawNetname;
   }
-  if (unpacked[String(IFAC_NETKEY)] !== undefined) {
-    info.ifac_netkey = String(unpacked[String(IFAC_NETKEY)]);
+  const rawNetkey = unpacked[String(IFAC_NETKEY)];
+  if (typeof rawNetkey === "string" && rawNetkey.length > 0) {
+    info.ifac_netkey = rawNetkey;
   }
 
   /** @type {DiscoveredFields} */
@@ -1006,6 +1028,13 @@ export class InterfaceDiscovery extends EventTarget {
     for (const [key, info] of this._store) {
       const lastHeard = info.last_heard ?? info.received ?? now;
       const heardDelta = now - lastHeard;
+
+      // §RNS 1.5.5 (135e941f): sanitize invalidly persisted "None" values
+      // for IFAC parameters — published by misconfigured nodes before the
+      // handler-side guard existed. Stripped here (housekeeping) rather than
+      // at parse time, mirroring the reference.
+      if (info.ifac_netname === "None") delete info.ifac_netname;
+      if (info.ifac_netkey === "None") delete info.ifac_netkey;
 
       // Prune records that are too old or no longer valid.
       let shouldRemove = false;

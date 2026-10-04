@@ -632,6 +632,16 @@ export class TransportCore extends EventTarget {
   async _handleAnnounce(packet, receivingInterface) {
     const destHex = toHex(packet.destinationHash);
 
+    // §RNS 1.5.1 (d80245b6): an announce frame larger than the protocol MTU
+    // (500 bytes) is nonsensical — a legitimate announce always fits in one
+    // packet — and is counted as a protocol violation on the receiving
+    // interface, like the Python reference's inbound traffic-class handler.
+    if ((packet.raw?.length ?? 0) > MTU) {
+      return receivingInterface?.protocolViolation?.(
+        `Excessive announce packet frame size of ${packet.raw?.length} bytes`,
+      );
+    }
+
     // Self-announce filter (SPEC.md §9.5 / §4.5 step 8): never ingest our own
     // destinations — otherwise we'd populate our contact list with ourselves.
     if (this.localDestinations.has(destHex)) {

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Upstream compatibility sync with the Python reference RNS 1.5.1–1.5.6 (work doc #41): spawned client/peer interfaces (backbone, auto, HTTP exchange) now inherit the parent's `gravity` alongside bitrate and ingress settings, matching the reference's spawn-site property propagation — a configured gravity now applies to path tie-breaks learned via spawned interfaces.
 
 ## [0.9.4] - 2026-10-03
 

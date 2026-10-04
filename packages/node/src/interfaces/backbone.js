@@ -483,10 +483,12 @@ export class BackboneInterface extends Interface {
       spawned.parentInterface = this;
       spawned.host = remoteIp;
       spawned.port = socket.remotePort || 0;
-      // Backbone inheritance, matching the Python reference's spawn site:
-      // the parent's bitrate (hence MTU autoconfiguration) and ingress
+      // Backbone inheritance, matching the Python reference's spawn site
+      // (incl. the 1.5.5 property-propagation fix, 1d9ebe8c): the parent's
+      // bitrate (hence MTU autoconfiguration), gravity and ingress
       // settings flow to every spawned client.
       spawned.bitrate = this.bitrate;
+      spawned.gravity = this.gravity;
       spawned.optimiseMtu();
       spawned.ingressControl = this.ingressControl;
       spawned.icMaxHeldAnnounces = this.icMaxHeldAnnounces;

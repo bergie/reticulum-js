@@ -1851,8 +1851,10 @@ export class RNodeInterface extends Interface {
   async _processIncoming(dataBuffer) {
     const data = new Uint8Array(dataBuffer);
     this.rxb += data.length;
-    this.rStatRssi = null;
-    this.rStatSnr = null;
+    // §RSSI/SNR persistence (RNS 1.5.1, dcbc7638): stat readings are no
+    // longer cleared per incoming frame — they persist until the radio
+    // reports fresh ones (the Python reference had this exact per-frame
+    // clearing as a reporting regression). Only a reconnect resets them.
     try {
       const opened = await this._openRaw(data);
       if (!opened) return;
