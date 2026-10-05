@@ -50,7 +50,7 @@ export class Reticulum {
    * Initializes the Reticulum engine.
    * @param {Object} config - Configuration options for the node.
    * @param {import("../storage/storage.js").StorageAdapter} [config.storageAdapter] - Interface for persisting identities and caches.
-   * @param {Object} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
+   * @param {import("./resource.js").Bzip2} [config.compressionProvider] - Engine for handling bz2 Resources (e.g., for rngit).
    * @param {boolean} [config.useImplicitProof] - §6.5.2 PROOF form for opportunistic DATA: `true` (default, upstream) emits the 64-byte implicit body; `false` emits the 96-byte explicit body.
    * @param {number} [config.defaultGravity] - Default interface gravity applied
    *   to any interface that doesn't specify one. Higher gravity = preferred

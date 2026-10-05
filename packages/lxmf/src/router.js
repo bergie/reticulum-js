@@ -577,6 +577,10 @@ export class LXMRouter extends EventTarget {
     );
     const link = await nodeDest.createLink();
     await link.whenActive();
+    // Inject the compression provider so compressed inbound Resources on this
+    // link (sync responses, acks) can be assembled (§10.2). The Python
+    // reference compresses Resource transfers by default. Harmless when absent.
+    link.bz2 = this.rns.compressionProvider || undefined;
     this.outboundPropagationLink = link;
     return link;
   }
@@ -1746,6 +1750,10 @@ export class LXMRouter extends EventTarget {
       );
       const link = await Link.initiate(peerDestination, this.rns.transport);
       await link.whenActive(timeoutMs);
+      // Inject the compression provider: the peer may send large LXMF
+      // messages back over this link as compressed Resources (§10.2), and
+      // Python peers auto-compress by default. Harmless when absent.
+      link.bz2 = this.rns.compressionProvider || undefined;
       // Evict from the cache when the link comes down so the next send
       // re-establishes a fresh one (matching the Python reference, which
       // drops the cached link on close).

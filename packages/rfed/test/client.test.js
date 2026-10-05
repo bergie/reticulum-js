@@ -660,4 +660,41 @@ describe("rfed client — raw (non-LXMF) payloads", () => {
     });
     assert.deepStrictEqual(decoded.payload, payload);
   });
+
+  test("client-initiated links carry the compression provider", async () => {
+    // Regression: client links (subscribe / unsubscribe / pull / notify) never
+    // received `link.bz2`, so a compressed node response failed to assemble
+    // with "Resource is compressed but no bz2 module was provided" (§10.2).
+    const { nodeHash, client } = await fixture();
+    // Minimal fake bz2 provider — presence is what matters; the codec itself
+    // is covered by the core Resource tests.
+    const fakeBz2 = {
+      compress: (/** @type {Uint8Array} */ data) => data,
+      decompress: (/** @type {Uint8Array} */ data) => data,
+    };
+    client.rns.compressionProvider = fakeBz2;
+
+    await client.subscribe(nodeHash, "public.bz2");
+    assert.ok(
+      client.rns.transport.activeLinks.size >= 1,
+      "subscribe must leave an active client link",
+    );
+    for (const [hash, link] of client.rns.transport.activeLinks) {
+      assert.strictEqual(
+        link.bz2,
+        fakeBz2,
+        `client link ${hash} must carry the compression provider`,
+      );
+    }
+
+    // Pull opens a fresh link to the pull destination — same requirement.
+    await client.pull(nodeHash, "public.bz2");
+    for (const [hash, link] of client.rns.transport.activeLinks) {
+      assert.strictEqual(
+        link.bz2,
+        fakeBz2,
+        `client link ${hash} must carry the compression provider`,
+      );
+    }
+  });
 });

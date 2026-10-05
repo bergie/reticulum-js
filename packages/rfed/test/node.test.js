@@ -744,8 +744,37 @@ describe("RFedNode — peer sync (Phase 4)", () => {
     assert.strictEqual(nodeA.blobStore.allMessageIds().length, 1);
 
     // B syncs with A: OFFER → gap → GET → ingest → fan out to local subscriber.
+    // The sync link must carry B's compression provider: a Python-style peer
+    // auto-compresses /rfed/get responses and other Resources by default
+    // (§10.2). Capture links at registration — the sync link is torn down in
+    // a finally block before syncWithPeer resolves.
+    const fakeBz2 = {
+      compress: (/** @type {Uint8Array} */ data) => data,
+      decompress: (/** @type {Uint8Array} */ data) => data,
+    };
+    bRns.rns.compressionProvider = fakeBz2;
+    const syncedLinks = [];
+    const realAddLink = bRns.rns.transport.addLink.bind(bRns.rns.transport);
+    bRns.rns.transport.addLink = (
+      /** @type {any} */ hash,
+      /** @type {any} */ link,
+    ) => {
+      syncedLinks.push(link);
+      realAddLink(hash, link);
+    };
     const ingested = await nodeB.syncWithPeer(aNodeHash);
     assert.strictEqual(ingested, 1);
+    assert.ok(
+      syncedLinks.length >= 1,
+      "peer sync must establish a link to the peer node",
+    );
+    for (const link of syncedLinks) {
+      assert.strictEqual(
+        link.bz2,
+        fakeBz2,
+        "peer-sync link must carry the compression provider",
+      );
+    }
 
     const decoded = await waitFor(() => received[0]);
     assert.strictEqual(decoded.message.content, "synced across two nodes");

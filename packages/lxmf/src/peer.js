@@ -202,6 +202,10 @@ export class LXMPeer {
     );
     this.state = PeerState.LINK_ESTABLISHING;
     this.link = await peerDest.createLink();
+    // Inject the compression provider: Python LXMPeer responses default to
+    // auto-compress, so inbound Resources need bz2 to assemble (§10.2).
+    // Harmless when absent.
+    this.link.bz2 = this.router.rns.compressionProvider || undefined;
     await this.link.identify(this.router.identity);
     this.state = PeerState.LINK_READY;
 

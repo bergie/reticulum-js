@@ -147,6 +147,16 @@ async function makeNode() {
   return { identity, rns, transport };
 }
 
+/**
+ * Minimal fake bz2 provider — identity codec. Tests only assert that links
+ * carry the provider so compressed inbound Resources *can* be assembled
+ * (§10.2); the codec itself is covered by the core Resource tests.
+ */
+const fakeBz2 = {
+  compress: (data) => data,
+  decompress: (data) => data,
+};
+
 describe("LXMF propagation — submit → store → sync over a loopback mesh", () => {
   test("a submitted message is stored then synced back to its recipient", async () => {
     // --- Three independent nodes on a shared wire ---
@@ -396,6 +406,113 @@ describe("LXMF propagation — submit → store → sync over a loopback mesh", 
       nodeRouter.propagationNode.store.size,
       0,
       "nothing stored from a refused Resource",
+    );
+  });
+
+  test("router-initiated links carry the compression provider", async () => {
+    // Regression: the outbound propagation link never received `link.bz2`, so
+    // a Python propagation node's auto-compressed /get responses failed to
+    // assemble with "Resource is compressed but no bz2 module was provided".
+    // Both the propagation link and DIRECT delivery links must carry the
+    // provider so inbound compressed Resources can be inflated (§10.2).
+    const wire = new Wire();
+    const node = await makeNode();
+    const sender = await makeNode();
+    const recipient = await makeNode();
+    const nodes = [node, sender, recipient];
+    for (const n of nodes) wire.attach(n.transport);
+
+    // Give the CLIENT routers a provider; links they initiate must pick it up.
+    sender.rns.compressionProvider = fakeBz2;
+    recipient.rns.compressionProvider = fakeBz2;
+
+    const nodeRouter = new LXMRouter(node.identity, node.rns);
+    await nodeRouter.init();
+    await nodeRouter.enablePropagation({
+      stampCost: 0,
+      name: "JS loopback PN",
+    });
+    const nodePropHash = nodeRouter.propagationDest.destinationHash;
+    await rememberEverywhere(
+      nodes,
+      nodePropHash,
+      node.identity.publicKey,
+      nodeRouter.propagationDest.appData,
+    );
+
+    const recipientRouter = new LXMRouter(recipient.identity, recipient.rns);
+    await recipientRouter.init();
+    const recipientDeliveryHash = recipientRouter.deliveryDest.destinationHash;
+    await rememberEverywhere(
+      nodes,
+      recipientDeliveryHash,
+      recipient.identity.publicKey,
+      null,
+    );
+
+    const senderRouter = new LXMRouter(sender.identity, sender.rns);
+    await senderRouter.init();
+    await rememberEverywhere(
+      nodes,
+      senderRouter.deliveryDest.destinationHash,
+      sender.identity.publicKey,
+      null,
+    );
+
+    // --- Propagation link (submit side) ---
+    senderRouter.setOutboundPropagationNode(nodePropHash);
+    const message = new Message({
+      sourceHash: senderRouter.deliveryDest.destinationHash,
+      destinationHash: recipientDeliveryHash,
+      title: "bz2",
+      content: "submit with a compression provider wired",
+      timestamp: 1730000002,
+    });
+    await senderRouter.submitToPropagationNode(message, sender.identity, {
+      stampCost: 0,
+    });
+    assert.ok(
+      senderRouter.outboundPropagationLink,
+      "submit must establish the propagation link",
+    );
+    assert.strictEqual(
+      senderRouter.outboundPropagationLink.bz2,
+      fakeBz2,
+      "outbound propagation link must carry the compression provider",
+    );
+
+    // --- Propagation link (sync side) — the path that failed in the field ---
+    recipientRouter.setOutboundPropagationNode(nodePropHash);
+    await recipientRouter.syncFromPropagationNode(recipient.identity, 100);
+    assert.ok(
+      recipientRouter.outboundPropagationLink,
+      "sync must establish the propagation link",
+    );
+    assert.strictEqual(
+      recipientRouter.outboundPropagationLink.bz2,
+      fakeBz2,
+      "sync propagation link must carry the compression provider",
+    );
+
+    // --- DIRECT delivery link ---
+    await senderRouter.send(
+      new Message({
+        sourceHash: senderRouter.deliveryDest.destinationHash,
+        destinationHash: recipientDeliveryHash,
+        title: "direct",
+        content: "direct send with a compression provider wired",
+        timestamp: 1730000003,
+      }),
+      sender.identity,
+    );
+    const directLink = senderRouter.directLinks.get(
+      toHex(recipientDeliveryHash),
+    );
+    assert.ok(directLink, "send must cache the DIRECT delivery link");
+    assert.strictEqual(
+      directLink.bz2,
+      fakeBz2,
+      "DIRECT delivery link must carry the compression provider",
     );
   });
 });

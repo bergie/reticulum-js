@@ -404,7 +404,30 @@ describe("peer mesh sync over loopback", () => {
     assert.strictEqual(routerA.propagationNode.store.size, 1);
 
     // --- Node A syncs to its peer node B over the mesh. ---
+    // The peer-sync link must carry A's compression provider: Python peers
+    // auto-compress /offer responses and transfer Resources by default
+    // (§10.2). Capture the link before sync's teardown discards it.
+    const fakeBz2 = {
+      compress: (/** @type {Uint8Array} */ data) => data,
+      decompress: (/** @type {Uint8Array} */ data) => data,
+    };
+    nodeA.rns.compressionProvider = fakeBz2;
+    const meshPeer = /** @type {any} */ (
+      routerA.peers.get(toHex(nodeBPropHash))
+    );
+    let peerSyncLink = null;
+    const realTeardown = meshPeer._teardown.bind(meshPeer);
+    meshPeer._teardown = () => {
+      peerSyncLink = meshPeer.link;
+      realTeardown();
+    };
     await routerA.syncPeers();
+    assert.ok(peerSyncLink, "peer sync must establish a link to the peer");
+    assert.strictEqual(
+      peerSyncLink.bz2,
+      fakeBz2,
+      "peer-sync link must carry the compression provider",
+    );
     await waitFor(
       () =>
         (routerB.propagationNode?.store.size ?? 0) >= 1 ? true : undefined,

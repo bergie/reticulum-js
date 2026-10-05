@@ -279,6 +279,9 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
+    // Compressed node responses need bz2 on the receiving link (§10.2);
+    // Python peers auto-compress by default. Harmless when absent.
+    link.bz2 = this.rns.compressionProvider || undefined;
     await link.identify(this.identity);
     const response = await link.request(SUBSCRIBE_PATH, payload);
     const decoded = decodeSubscribeResponse(response);
@@ -307,6 +310,7 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
+    link.bz2 = this.rns.compressionProvider || undefined;
     await link.identify(this.identity);
     const response = await link.request(UNSUBSCRIBE_PATH, payload);
     // Clear any raw-channel marking so a later subscribe (lxmf or raw) starts
@@ -432,6 +436,9 @@ export class RFedClient {
     );
     if (rfedPayload.length > PUBLISH_DATA_MAX) {
       const link = await dest.createLink();
+      // Keep the compressor on the link too so any inbound Resource on it
+      // (e.g. an error response) can be assembled (§10.2).
+      link.bz2 = this.rns.compressionProvider || undefined;
       const resource = new Resource({
         data: rfedPayload,
         link,
@@ -485,6 +492,7 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
+    link.bz2 = this.rns.compressionProvider || undefined;
     await link.identify(this.identity);
     const response = await link.request(PULL_PATH, channelHash);
 
@@ -568,6 +576,7 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
+    link.bz2 = this.rns.compressionProvider || undefined;
     await link.identify(this.identity);
     const response = await link.request(NOTIFY_CLEAR_PATH, payload);
     return response === true;
@@ -602,6 +611,7 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
+    link.bz2 = this.rns.compressionProvider || undefined;
     await link.identify(this.identity);
     const response = await link.request(path, payload);
     return response === true;

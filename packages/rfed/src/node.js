@@ -779,6 +779,10 @@ export class RFedNode {
       this.rns,
     );
     const link = await dest.createLink();
+    // Compressed backup-node responses need bz2 on the receiving link (§10.2);
+    // peers that auto-compress (Python-style) are the case to cover. Harmless
+    // when absent.
+    link.bz2 = this.rns.compressionProvider || undefined;
     await link.identify(this.identity);
     try {
       const pairsMsgpack = MicroMsgPack.encode(pairs);
@@ -1226,6 +1230,10 @@ export class RFedNode {
       this.rns,
     );
     const link = await dest.createLink();
+    // Compressed peer responses (the /rfed/get blob stream can be large) need
+    // bz2 on the receiving link (§10.2); Python-style peers auto-compress by
+    // default. Harmless when absent.
+    link.bz2 = this.rns.compressionProvider || undefined;
     await link.identify(this.identity);
     try {
       // OFFER — send our held IDs (peer ignores them, but matches the protocol).
@@ -1516,7 +1524,12 @@ export class RFedNode {
     );
     dest.addEventListener("link_request", async (/** @type {any} */ e) => {
       try {
-        await dest.acceptLink(e.detail.packet);
+        const link = await dest.acceptLink(e.detail.packet);
+        // The receiving side of every inbound node link needs bz2 to assemble
+        // compressed inbound Resources (§10.2), and oversized response
+        // Resources source their compressor from `link.bz2` too. Harmless
+        // when absent.
+        link.bz2 = this.rns.compressionProvider || undefined;
       } catch (err) {
         log(
           "RFedNode",
