@@ -270,7 +270,15 @@ export class LXMPeer {
     }
     const container = packPropagationContainer(lxmfList);
     this.state = PeerState.RESOURCE_TRANSFERRING;
-    const resource = new Resource({ data: container, link: this.link });
+    // Match the Python reference, which creates its transfer Resource with
+    // default auto_compress (LXMPeer.py:464). Resource only flags the transfer
+    // compressed when compression actually shrinks the data, so peers without
+    // a provider are unaffected as long as ours can't shrink it either.
+    const resource = new Resource({
+      data: container,
+      link: this.link,
+      bz2: this.link.bz2,
+    });
     await resource.advertise();
     // Wait for the full transfer + proof before tearing down the link,
     // otherwise the link closes mid-transfer and the peer never ingests.

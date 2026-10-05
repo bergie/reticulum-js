@@ -66,6 +66,12 @@ async function main() {
 
   const rns = new Reticulum({
     storageAdapter: new FileStorageAdapter("./nomadnet-fetch-storage"),
+    // NOTE: production code should pass a `compressionProvider` here (e.g. an
+    // adapter over `@digitaldefiance/bzip2-wasm`, see
+    // packages/rngit/src/client.js) AND set `link.bz2` from it on the link
+    // below — Python nodes compress large Resource responses by default
+    // (PROTOCOL-SPEC.md §10.2), and without it assembly fails with "Resource
+    // is compressed but no bz2 module was provided".
   });
 
   // Prefer the local shared instance (auto-discovered from

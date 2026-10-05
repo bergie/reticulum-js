@@ -57,6 +57,11 @@ async function main() {
   // ── Reticulum core + network interface ─────────────────────────────────
   const rns = new Reticulum({
     storageAdapter: new FileStorageAdapter("./rfed-storage"),
+    // NOTE: pass a `compressionProvider` here (e.g. an adapter over
+    // `@digitaldefiance/bzip2-wasm`, see packages/rngit/src/client.js) —
+    // Python-style nodes compress large Resource responses by default
+    // (PROTOCOL-SPEC.md §10.2), and without one they fail to assemble with
+    // "Resource is compressed but no bz2 module was provided".
   });
 
   // Prefer the local shared rnsd instance; fall back to a direct TCP interface.

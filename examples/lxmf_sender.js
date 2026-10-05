@@ -47,6 +47,12 @@ async function startSender() {
   // Initialize the Core RNS Engine
   const rns = new Reticulum({
     storageAdapter: new FileStorageAdapter("./sender-storage"),
+    // NOTE: pass a `compressionProvider` here (e.g. an adapter over
+    // `@digitaldefiance/bzip2-wasm`, see packages/rngit/src/client.js) —
+    // Python peers compress large Resource transfers by default
+    // (PROTOCOL-SPEC.md §10.2); without one, anything the remote sends back
+    // over the link fails to assemble with "Resource is compressed but no
+    // bz2 module was provided".
   });
 
   // Prefer the local shared instance (a running rnsd, or our own daemon): it
