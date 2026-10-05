@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.7] - 2026-10-05
 ### Fixed
 - `RFedClient` now injects the compression provider (`link.bz2`) on every link it initiates — subscribe, unsubscribe, pull, notify register/unregister/clear, and oversized publish — so compressed node responses can be assembled (Reticulum PROTOCOL-SPEC.md §10.2). Previously only the publish Resource carried it, so a node that auto-compresses its responses (the Python reference does by default) failed the client with "Resource is compressed but no bz2 module was provided". Links stay uncompressed when no provider is configured.
 - `RFedNode` peer-sync and backup links now carry the compression provider too — on links the node initiates (`syncWithPeer`, backup push) and on every inbound link it accepts (`rfed.node`, notify, and request destinations) — so a peer that auto-compresses (Python-style) can be understood, and the node's own oversized response Resources can compress. JS↔JS traffic is unaffected (responses default to uncompressed); this is interop hardening for auto-compressing peers.
