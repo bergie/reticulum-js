@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-10-10
+
 ## [0.9.7] - 2026-10-05
 ### Fixed
 - `RFedClient` now injects the compression provider (`link.bz2`) on every link it initiates — subscribe, unsubscribe, pull, notify register/unregister/clear, and oversized publish — so compressed node responses can be assembled (Reticulum PROTOCOL-SPEC.md §10.2). Previously only the publish Resource carried it, so a node that auto-compresses its responses (the Python reference does by default) failed the client with "Resource is compressed but no bz2 module was provided". Links stay uncompressed when no provider is configured.

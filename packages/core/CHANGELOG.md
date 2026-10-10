@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.8] - 2026-10-10
 ### Changed
 - Identity private-key storage now uses the Python reference's canonical 64-byte format (`X25519_priv || Ed25519_priv`, matching `RNS.Identity.get_private_key()` / `from_bytes`): `Identity.getPrivateKey()` returns 64 bytes and `loadOrGenerate` writes 64-byte key files, making them directly loadable by Python Reticulum tooling (work doc #9). The public halves are derived from the private scalars on load via the RFC 8037 JWK `x` field, still purely within Web Crypto.
 

@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-10-10
+### Added
+- **core**: `Identity.fromBytes` now accepts both the canonical 64-byte format and the legacy 128-byte reticulum-js private+public export, so existing key files keep loading without conversion. New identity-key interop tests verify round-trips against the Python reference (`RNS.Identity.from_file` / `to_file`) in both directions; they are skipped when Python is unavailable.
+### Changed
+- **core**: Identity private-key storage now uses the Python reference's canonical 64-byte format (`X25519_priv || Ed25519_priv`, matching `RNS.Identity.get_private_key()` / `from_bytes`): `Identity.getPrivateKey()` returns 64 bytes and `loadOrGenerate` writes 64-byte key files, making them directly loadable by Python Reticulum tooling (work doc #9). The public halves are derived from the private scalars on load via the RFC 8037 JWK `x` field, still purely within Web Crypto.
+
 ## [0.9.7] - 2026-10-05
 ### Fixed
 - **lxmf**: Router-initiated links now carry the compression provider (`link.bz2`), so compressed inbound Resources on them can be assembled (Reticulum PROTOCOL-SPEC.md §10.2). The Python reference compresses Resource transfers by default (`RNS.Resource(auto_compress=True)`), so without this a sync from a Python propagation node failed with "Resource is compressed but no bz2 module was provided". Covered: the outbound propagation link used by `submitToPropagationNode` / `syncFromPropagationNode` (the /get responses and acks), DIRECT delivery links (a peer may send large LXMF messages back over the link we initiated), and `LXMPeer` peer-sync links (Python `LXMPeer` responses default to auto-compress). Links stay uncompressed when no provider is configured. Outgoing `LXMPeer` transfer Resources now pass the provider as well, matching the Python reference's default auto-compress — a transfer is only flagged compressed when compression actually shrinks the data, so peers without a provider are unaffected.
