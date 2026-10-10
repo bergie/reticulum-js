@@ -1,4 +1,8 @@
 import assert from "node:assert";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   createAnnounceRandomHash,
@@ -6,7 +10,7 @@ import {
   Direction,
 } from "../../src/core/destination.js";
 import { Identity } from "../../src/core/identity.js";
-import { bytesEqual } from "../../src/utils/encoding.js";
+import { bytesEqual, toHex } from "../../src/utils/encoding.js";
 
 test("Identity generation and keys", async (t) => {
   const identity = await Identity.generate();
@@ -14,7 +18,7 @@ test("Identity generation and keys", async (t) => {
   assert.strictEqual(identity.identityHash.length, 16);
 
   const privKey = await identity.getPrivateKey();
-  assert.strictEqual(privKey.length, 128);
+  assert.strictEqual(privKey.length, 64);
 
   const pubKey = await identity.getPublicKey();
   assert.strictEqual(pubKey.length, 64);
@@ -68,6 +72,49 @@ test("Identity from bytes", async (t) => {
   const decrypted = await newIdentity.encrypt(new Uint8Array([1, 2, 3]));
   const plaintext = await identity.decrypt(decrypted);
   assert.deepStrictEqual(plaintext, new Uint8Array([1, 2, 3]));
+});
+
+/**
+ * Builds the legacy 128-byte reticulum-js export (`X25519_priv ||
+ * X25519_pub || Ed25519_priv || Ed25519_pub`) from an identity's current
+ * 64-byte private blob and 64-byte public key.
+ *
+ * @param {Identity} identity
+ * @returns {Promise<Uint8Array>}
+ */
+async function legacy128Blob(identity) {
+  const priv = await identity.getPrivateKey();
+  const pub = await identity.getPublicKey();
+  const blob = new Uint8Array(128);
+  blob.set(priv.subarray(0, 32), 0);
+  blob.set(pub.subarray(0, 32), 32);
+  blob.set(priv.subarray(32, 64), 64);
+  blob.set(pub.subarray(32, 64), 96);
+  return blob;
+}
+
+test("Identity fromBytes loads the legacy 128-byte export", async () => {
+  const identity = await Identity.generate();
+  const legacy = await legacy128Blob(identity);
+  assert.strictEqual(legacy.length, 128);
+
+  const loaded = await Identity.fromBytes(legacy);
+  assert.ok(loaded);
+  assert.deepStrictEqual(loaded.identityHash, identity.identityHash);
+});
+
+test("Identity fromPrivateKey round-trips the 64-byte Python format", async () => {
+  const identity = await Identity.generate();
+  const privKey = await identity.getPrivateKey();
+
+  const loaded = await Identity.fromPrivateKey(privKey);
+  assert.ok(loaded);
+  assert.deepStrictEqual(loaded.identityHash, identity.identityHash);
+});
+
+test("Identity fromBytes rejects a wrong-length blob", async () => {
+  const result = await Identity.fromBytes(new Uint8Array(100));
+  assert.strictEqual(result, null);
 });
 
 test("Identity.getRandomHash returns 16 random bytes", async () => {
@@ -295,7 +342,7 @@ test("loadOrGenerate generates and persists when no key exists", async () => {
   const adapter = makeAdapter({ loaded: null });
   const identity = await Identity.loadOrGenerate(adapter);
   assert.ok(identity.identityHash);
-  assert.strictEqual(adapter.store.saved?.length, 128, "persisted private key");
+  assert.strictEqual(adapter.store.saved?.length, 64, "persisted private key");
 });
 
 test("loadOrGenerate loads an existing valid key without regenerating", async () => {
@@ -308,6 +355,18 @@ test("loadOrGenerate loads an existing valid key without regenerating", async ()
     "same identity loaded back",
   );
   assert.strictEqual(adapter.store.saved, null, "did not overwrite");
+});
+
+test("loadOrGenerate loads a legacy 128-byte stored key without regenerating", async () => {
+  const original = await Identity.generate();
+  const legacy = await legacy128Blob(original);
+  const adapter = makeAdapter({ loaded: legacy });
+  const loaded = await Identity.loadOrGenerate(adapter);
+  assert.ok(
+    bytesEqual(loaded.identityHash, original.identityHash),
+    "legacy-format key loads back",
+  );
+  assert.strictEqual(adapter.store.saved, null, "did not rewrite the key");
 });
 
 test("loadOrGenerate refuses to overwrite a corrupt stored key", async () => {
@@ -345,4 +404,90 @@ test("loadOrGenerate propagates a storage read error instead of regenerating", a
 test("loadOrGenerate without an adapter generates an ephemeral identity", async () => {
   const identity = await Identity.loadOrGenerate(undefined);
   assert.ok(identity.identityHash);
+});
+
+// --- Python reference interop (on-disk key file format) --------------------
+
+/**
+ * Whether the Python toolchain with the RNS reference package is available.
+ * When false, the interop tests are skipped (e.g. in CI without Python).
+ */
+const pythonAvailable = (() => {
+  try {
+    execFileSync("python3", ["-c", "import RNS"], { stdio: "ignore" });
+    return true;
+  } catch (_e) {
+    return false;
+  }
+})();
+
+const tPython = pythonAvailable ? test : test.skip;
+
+/**
+ * Runs a Python snippet (stdout captured, RNS logging silenced) with the
+ * given positional arguments and returns trimmed stdout.
+ *
+ * @param {string} script
+ * @param {string[]} args
+ * @returns {string}
+ */
+function runPython(script, args = []) {
+  return execFileSync("python3", ["-c", script, ...args], {
+    encoding: "utf8",
+  }).trim();
+}
+
+tPython("Python reference loads a JS-saved 64-byte identity file", async () => {
+  const identity = await Identity.generate();
+  const privKey = await identity.getPrivateKey();
+  assert.strictEqual(privKey.length, 64);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rns-ident-"));
+  try {
+    const keyFile = path.join(dir, "identity.key");
+    fs.writeFileSync(keyFile, privKey);
+    const hexhash = runPython(
+      `
+import sys
+import RNS
+RNS.loglevel = RNS.LOG_CRITICAL
+identity = RNS.Identity.from_file(sys.argv[1])
+if identity is None:
+    sys.exit(1)
+print(identity.hexhash)
+`,
+      [keyFile],
+    );
+    assert.strictEqual(hexhash, toHex(identity.identityHash));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+tPython("JS loads a Python-saved identity file", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "rns-ident-"));
+  try {
+    const keyFile = path.join(dir, "identity.key");
+    const hexhash = runPython(
+      `
+import sys
+import RNS
+RNS.loglevel = RNS.LOG_CRITICAL
+identity = RNS.Identity()
+identity.to_file(sys.argv[1])
+print(identity.hexhash)
+`,
+      [keyFile],
+    );
+    const bytes = new Uint8Array(fs.readFileSync(keyFile));
+    assert.strictEqual(bytes.length, 64, "Python writes the 64-byte format");
+    const loaded = await Identity.fromPrivateKey(bytes);
+    assert.ok(loaded);
+    assert.strictEqual(toHex(loaded.identityHash), hexhash);
+    // The same file must also work through the storage read path.
+    const adapter = makeAdapter({ loaded: bytes });
+    const fromStorage = await Identity.loadOrGenerate(adapter);
+    assert.ok(bytesEqual(fromStorage.identityHash, loaded.identityHash));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
