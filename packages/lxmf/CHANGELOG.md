@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Inbound link handlers pass the `link_request` event's `receivingInterface` to `acceptLink`, pinning each accepted link's return path to its arrival interface (work doc #43).
+
 ## [0.9.8] - 2026-10-10
 
 ## [0.9.7] - 2026-10-05

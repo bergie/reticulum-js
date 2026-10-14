@@ -412,8 +412,13 @@ export class WebRTCSignaling extends EventTarget {
     this._requirePeerConnectionFactory();
     const packet = event.detail?.packet;
     if (!packet || !this.destination) return;
+    // detail.receivingInterface is the interface the LINKREQUEST arrived on;
+    // pass it so the link pins its return path.
     /** @type {import("../transport/link.js").Link} */
-    const link = await this.destination.acceptLink(packet);
+    const link = await this.destination.acceptLink(
+      packet,
+      event.detail?.receivingInterface ?? null,
+    );
     link.maxResourceSize = MAX_SDP_SIZE;
     link.bz2 = undefined;
     const onResource = (/** @type {any} */ resEvent) => {

@@ -428,7 +428,10 @@ export class RFedNode {
       "link_request",
       async (/** @type {any} */ event) => {
         try {
-          const link = await publishDest.acceptLink(event.detail.packet);
+          const link = await publishDest.acceptLink(
+            event.detail.packet,
+            event.detail.receivingInterface ?? null,
+          );
           link.bz2 = this.rns.compressionProvider || undefined;
           link.addEventListener("resource", (/** @type {any} */ resEvent) => {
             const resource = resEvent.detail.resource;
@@ -1524,7 +1527,10 @@ export class RFedNode {
     );
     dest.addEventListener("link_request", async (/** @type {any} */ e) => {
       try {
-        const link = await dest.acceptLink(e.detail.packet);
+        const link = await dest.acceptLink(
+          e.detail.packet,
+          e.detail.receivingInterface ?? null,
+        );
         // The receiving side of every inbound node link needs bz2 to assemble
         // compressed inbound Resources (§10.2), and oversized response
         // Resources source their compressor from `link.bz2` too. Harmless

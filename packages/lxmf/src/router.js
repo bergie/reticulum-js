@@ -348,6 +348,7 @@ export class LXMRouter extends EventTarget {
         try {
           const link = await /** @type {any} */ (propDest).acceptLink(
             event.detail.packet,
+            event.detail.receivingInterface ?? null,
           );
           link.bz2 = this.rns.compressionProvider || undefined;
           // LXMRouter.propagation_resource_advertised: refuse an inbound
@@ -956,6 +957,7 @@ export class LXMRouter extends EventTarget {
           // Use the clean callback we built into Destination.js
           const link = await /** @type {any} */ (this.deliveryDest).acceptLink(
             event.detail.packet,
+            event.detail.receivingInterface ?? null,
           );
           // Inject the caller-supplied bz2 module so any compressed inbound
           // resource can be decompressed (§10.2). Harmless when absent.

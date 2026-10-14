@@ -589,11 +589,14 @@ export class TransportCore extends EventTarget {
       return; // STOP! Success.
     }
 
-    // 3. If it's for an active link, route it there
+    // 3. If it's for an active link, route it there. The arrival interface
+    // rides along: the reference pins `Link.attached_interface` from the
+    // interfaces its handshake packets arrive on, so the link's return path
+    // is its arrival interface for the link's lifetime.
     if (this.activeLinks.has(destHex)) {
       log("Transport", `Packet to LINK ${destHex}`);
       const link = this.activeLinks.get(destHex);
-      await link.receive(packet);
+      await link.receive(packet, receivingInterface);
       return; // STOP! Success.
     }
 
@@ -1165,6 +1168,20 @@ export class TransportCore extends EventTarget {
         await this._transmit(iface, packet);
       }
       route.timestamp = Date.now();
+    } else if (
+      packet.destinationType === DestType.LINK &&
+      this.activeLinks.get(destHex)?.attachedInterface
+    ) {
+      // §Transport._outbound: with no path-table entry for the link id, a
+      // LINK-destination packet goes out over the link's attached interface —
+      // the return path captured at handshake (LINKREQUEST on the responder,
+      // LRPROOF on the initiator). This keeps a node serving several clients
+      // replying to each over its own connection instead of the current
+      // default interface.
+      await this._transmit(
+        this.activeLinks.get(destHex).attachedInterface,
+        packet,
+      );
     } else if (this.defaultInterface && this.defaultInterface._packetWriter) {
       // No known path: broadcast on the default interface (leaf fallback).
       await this.defaultInterface._packetWriter.write(packet);

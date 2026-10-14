@@ -1078,7 +1078,7 @@ export class Destination extends EventTarget {
       case PacketType.LINKREQUEST:
         this.dispatchEvent(
           new CustomEvent("link_request", {
-            detail: { packet, transport: receivingInterface },
+            detail: { packet, receivingInterface },
           }),
         );
         break;
@@ -1089,10 +1089,11 @@ export class Destination extends EventTarget {
   /**
    * Accepts an incoming LINKREQUEST and returns the established {@link Link}.
    * @param {import('./packet.js').Packet} packet
+   * @param {import('../interfaces/base.js').Interface | null} [receivingInterface]
    * @returns {Promise<import("../transport/link.js").Link>}
    */
-  async acceptLink(packet) {
-    return await this.respondToLinkRequest(packet);
+  async acceptLink(packet, receivingInterface = null) {
+    return await this.respondToLinkRequest(packet, receivingInterface);
   }
 
   /**
@@ -1254,9 +1255,13 @@ export class Destination extends EventTarget {
    * LRPROOF, and registers the link with the transport.
    *
    * @param {import('../core/packet.js').Packet} requestPacket
+   * @param {import('../interfaces/base.js').Interface | null} [receivingInterface] -
+   *   Interface the LINKREQUEST arrived on; captured as the link's return
+   *   path (`Link.attachedInterface`). Callers should pass what they got from
+   *   the `link_request` event (its `detail.receivingInterface` field).
    * @returns {Promise<import('../transport/link.js').Link>}
    */
-  async respondToLinkRequest(requestPacket) {
+  async respondToLinkRequest(requestPacket, receivingInterface = null) {
     if (!this.interfaceLayer || !this.interfaceLayer.transport) {
       throw new Error(
         "Destination not bound to an RNS instance with a transport.",
@@ -1266,6 +1271,7 @@ export class Destination extends EventTarget {
       this,
       this.interfaceLayer.transport,
       requestPacket,
+      receivingInterface,
     );
     log(
       "Destination",

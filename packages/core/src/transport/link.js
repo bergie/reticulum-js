@@ -340,6 +340,20 @@ export class Link extends EventTarget {
     this.expectedHops = null;
     /** Epoch ms of the last path-rebalance, or `null` if none (`Link.rebalanced`). */
     this.rebalanced = null;
+
+    /**
+     * The interface this link's traffic flows over — the interface the
+     * LINKREQUEST arrived on (responder) or the LRPROOF arrived on
+     * (initiator). Mirrors the Python reference's `Link.attached_interface`.
+     *
+     * The transport's {@link TransportCore.sendPacket} routes LINK-destination
+     * packets (LRPROOF, link DATA, keepalives, teardown) over this interface
+     * when no routing-table entry exists for the link id — the link's return
+     * path is its arrival interface for the link's lifetime, independent of
+     * which interface happens to be the node's default.
+     * @type {import("../interfaces/base.js").Interface | null}
+     */
+    this.attachedInterface = null;
   }
 
   /**
@@ -607,9 +621,19 @@ export class Link extends EventTarget {
    * @param {import("../core/destination.js").Destination} destination - IN destination whose identity is this node's.
    * @param {import("../transport/transport.js").TransportCore} transport
    * @param {Packet} requestPacket - The incoming LINKREQUEST (with `raw` populated).
+   * @param {import("../interfaces/base.js").Interface | null} [receivingInterface] -
+   *   The interface the LINKREQUEST arrived on. Captured as the link's return
+   *   path ({@link Link.attachedInterface}), so responder→initiator traffic
+   *   flows back over it regardless of the node's default interface. Matches
+   *   the reference's `link.attached_interface = packet.receiving_interface`.
    * @returns {Promise<Link>}
    */
-  static async accept(destination, transport, requestPacket) {
+  static async accept(
+    destination,
+    transport,
+    requestPacket,
+    receivingInterface = null,
+  ) {
     const linkId = await linkIdFromLrPacket(requestPacket);
     const data = requestPacket.payload;
 
@@ -650,6 +674,10 @@ export class Link extends EventTarget {
     // §Link.expected_hops: the responder records the hop count the LINKREQUEST
     // arrived with.
     link.expectedHops = requestPacket.hops;
+    // §Link.attached_interface: the return path is the arrival interface for
+    // the link's lifetime — set before _sendLRProof so the proof itself
+    // already uses it.
+    link.attachedInterface = receivingInterface;
     link.status = LinkStatus.HANDSHAKE;
     transport.addLink(linkId, link);
 
@@ -884,9 +912,13 @@ export class Link extends EventTarget {
    * Initiator: validate the responder's LRPROOF, derive session keys, send
    * LRRTT, and transition to ACTIVE.
    * @param {Packet} packet
+   * @param {import("../interfaces/base.js").Interface | null} [receivingInterface] -
+   *   Interface the LRPROOF arrived on; captured as {@link Link.attachedInterface}
+   *   once validated (reference `Link.py` sets `attached_interface` at proof
+   *   validation), so initiator→responder traffic returns over it.
    * @private
    */
-  async _handleLRPROOF(packet) {
+  async _handleLRPROOF(packet, receivingInterface = null) {
     if (!this.destination?.identity) {
       throw new Error(
         "Initiator LRPROOF validation requires the responder identity.",
@@ -974,6 +1006,10 @@ export class Link extends EventTarget {
     this.mtu = confirmedMtu;
     this.rtt = (Date.now() - this.requestTimeMs) / 1000;
     this._updateKeepalive();
+
+    // §Link.attached_interface: pin the return path to the interface the
+    // LRPROOF arrived on, before LRRTT goes out over it.
+    if (receivingInterface) this.attachedInterface = receivingInterface;
 
     await this._sendLRRTT();
 
@@ -2048,10 +2084,15 @@ export class Link extends EventTarget {
   /**
    * Queues and processes an inbound packet addressed to this link.
    * @param {Packet} packet
+   * @param {import("../interfaces/base.js").Interface | null} [receivingInterface] -
+   *   Interface the packet arrived on. On the initiator side the LRPROOF's
+   *   arrival interface becomes {@link Link.attachedInterface} (the reference
+   *   sets `attached_interface` at proof validation), pinning the return
+   *   path for the rest of the link's lifetime.
    */
-  async receive(packet) {
+  async receive(packet, receivingInterface = null) {
     this._rxQueue = this._rxQueue
-      .then(() => this._processPacket(packet))
+      .then(() => this._processPacket(packet, receivingInterface))
       .catch((err) => {
         log("Link", `Error processing packet: ${err}`, LogLevel.ERROR);
       });
@@ -2062,9 +2103,10 @@ export class Link extends EventTarget {
    * Handles a single inbound packet after handshake completion: verifies
    * proofs, decrypts Token-encrypted packets, and dispatches by context.
    * @param {Packet} packet
+   * @param {import("../interfaces/base.js").Interface | null} [receivingInterface]
    * @private
    */
-  async _processPacket(packet) {
+  async _processPacket(packet, receivingInterface = null) {
     log(
       "Link",
       `Processing ${getEnumName(PacketType, packet.packetType)} packet (ctx ${getEnumName(ContextType, packet.contextByte)}) for link ${toHex(this.linkId)}`,
@@ -2078,7 +2120,7 @@ export class Link extends EventTarget {
       packet.packetType === PacketType.PROOF &&
       packet.contextByte === ContextType.LRPROOF
     ) {
-      if (this.initiator) await this._handleLRPROOF(packet);
+      if (this.initiator) await this._handleLRPROOF(packet, receivingInterface);
       return;
     }
 
