@@ -11,7 +11,7 @@
     "test:scripts": "node --test scripts/*.test.mjs",
     "check:jsr": "node scripts/check-jsr-entrypoints.mjs",
     "lint": "npm run lint --workspaces --if-present",
-    "types": "npm run types --workspaces --if-present",
+    "types": "node scripts/npm-run-topo.mjs types",
     "format": "npx @biomejs/biome check --use-editorconfig=true --write packages/*/src packages/*/test examples scripts",
     "docs": "npm run types && typedoc"
   },
