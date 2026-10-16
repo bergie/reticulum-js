@@ -71,6 +71,7 @@ import {
 } from "../index.js";
 import { loadLXMFStore, saveLXMFStore } from "../storage/lxmf.js";
 import { loadRFedStores, saveRFedStores } from "../storage/rfed.js";
+import { nodeStamper, stopNodeStamper } from "../utils/stamper.js";
 
 const MAINTENANCE_INTERVAL_DEFAULT = 3600;
 const SYNC_INTERVAL_DEFAULT = 300;
@@ -233,6 +234,10 @@ async function main() {
         name: values.name,
         stampCost,
         stampFlexibility: stampFlex,
+        // Fast node:crypto stamp engine (work doc #45): workblock builds and
+        // stamp searches run in a worker thread instead of blocking the event
+        // loop — essential for nodes with busy stamp traffic.
+        stampEngine: nodeStamper,
         storageLimitBytes: storageLimitBytes ?? undefined,
         blobTtlSecs,
         deferredTtlSecs,
@@ -261,7 +266,9 @@ async function main() {
   /** @type {LXMRouter|null} */
   let lxmfRouter = null;
   if (enableLxmf) {
-    lxmfRouter = new LXMRouter(identity, /** @type {any} */ (rns));
+    lxmfRouter = new LXMRouter(identity, /** @type {any} */ (rns), {
+      stampEngine: nodeStamper,
+    });
     await lxmfRouter.init();
     const lxmfStore = await loadLXMFStore(rfedDir, {
       storageLimitBytes,
@@ -395,6 +402,7 @@ async function main() {
     } catch (err) {
       console.error(`flush failed: ${String(err)}`);
     }
+    await stopNodeStamper();
     process.exit(0);
   };
   process.on("SIGINT", () => shutdown("SIGINT"));

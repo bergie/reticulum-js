@@ -47,6 +47,7 @@ import {
   toHex,
   warnIfFragmented,
 } from "@reticulum/core";
+import { setStamper } from "@reticulum/core/src/utils/stamper.js";
 import {
   parseFanoutPayload,
   parseSendPayload,
@@ -155,6 +156,14 @@ const PENDING_BACKUP_CAP = 1024;
  * @property {Object} [config]
  * @property {number|null} [config.stampCost] Required PoW leading-zero bits.
  *   `null` or `0` disables stamping (default).
+ * @property {import("@reticulum/core/src/utils/stamper.js").StamperEngine} [config.stampEngine]
+ *   Optional proof-of-work stamp engine to install process-wide (work doc
+ *   #45). The engine swap is global: it replaces the WebCrypto default for
+ *   every stamp operation in the process (rfed channel stamps, LXMF message
+ *   stamps, propagation blob validation), which is what a busy node wants.
+ *   Platform packages ship ready-made engines — e.g. `nodeStamper` from
+ *   `@reticulum/node` — and omitting the option keeps the browser-safe
+ *   WebCrypto default.
  * @property {number} [config.stampFlexibility] Downward cost tolerance (default 3).
  * @property {number} [config.pullPageSize] `/rfed/pull` page size (default 25).
  * @property {number} [config.deferredQueueLimit] Per-subscriber deferred cap (default 256).
@@ -209,6 +218,7 @@ export class RFedNode {
    * @param {RFedNodeOptions} opts
    */
   constructor({ identity, rns, config = {}, stores = {} }) {
+    if (config.stampEngine) setStamper(config.stampEngine);
     this.identity = identity;
     this.rns = rns;
     // Split-brain self-check (work doc #37): warn when the provided Reticulum

@@ -22,6 +22,7 @@ import {
   UnknownIdentityError,
   warnIfFragmented,
 } from "@reticulum/core";
+import { setStamper } from "@reticulum/core/src/utils/stamper.js";
 import {
   buildAnnounceAppData,
   parseAnnounceAppData,
@@ -93,9 +94,19 @@ export class LXMRouter extends EventTarget {
    * Creates an LXMF router bound to the given identity and Reticulum instance.
    * @param {import("@reticulum/core").Identity} identity
    * @param {import("@reticulum/core").Reticulum} rnsCore - The Reticulum instance
+   * @param {Object} [options]
+   * @param {import("@reticulum/core/src/utils/stamper.js").StamperEngine} [options.stampEngine]
+   *   Optional proof-of-work stamp engine to install process-wide (work doc
+   *   #45). The engine swap is global: it replaces the WebCrypto default for
+   *   every stamp operation in the process (message stamp generation, propagation
+   *   blob validation, peering), which is what a busy propagation node or heavy
+   *   sender wants. Platform packages ship ready-made engines — e.g.
+   *   `nodeStamper` from `@reticulum/node` — and omitting the option keeps the
+   *   browser-safe WebCrypto default.
    */
-  constructor(identity, rnsCore) {
+  constructor(identity, rnsCore, options = {}) {
     super();
+    if (options.stampEngine) setStamper(options.stampEngine);
     this.identity = identity;
     this.rns = rnsCore;
     // Split-brain self-check (work doc #37): the core module copy we were

@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Fast `node:crypto` stamp engine (work doc #45): `nodeStamper` replaces `@reticulum/core`'s WebCrypto default with an engine that builds workblocks via `hkdfSync` + `createHash` (~18× faster), validates stamps via `hash.copy()` + `update(stamp)` with bytewise comparison against the `2^(256-cost)` threshold (~30× faster per trial, no BigInt/hex round-trips), caches workblocks in an LRU keyed by material + expansion rounds, and runs workblock builds and stamp generation in a `node:worker_threads` worker (mirroring the Python reference's worker-process design) with transparent synchronous fallback when workers are unavailable. Install explicitly with `useNodeStamper()` (importing the package has no side effects); `stopNodeStamper()` releases the worker and cache.
+- `LXMRouter` (via `@reticulum/lxmf`) and `RFedNode` (via `@reticulum/rfed`) accept a `stampEngine` option, so running an LXMF/rfed propagation node can install the fast engine at construction — covering both stamp generation for outbound LXMF and stamp validation on the propagation path.
+- The `rfed` CLI runner now passes the fast stamp engine to the rfed node and the optional LXMF propagation node it boots.
 
 ## [0.9.8] - 2026-10-10
 

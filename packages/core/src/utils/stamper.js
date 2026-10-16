@@ -16,9 +16,39 @@
  *   LXMF-specific validators (peering keys, propagation-node stamps) live in
  *   `@reticulum/lxmf`'s `stamper.js`, which re-exports these primitives under
  *   the `LXStamper` namespace for API continuity.
+ *
+ *   ## Pluggable engines (work doc #45)
+ *
+ *   The default engine is pure WebCrypto (WinterTC minimum common API only),
+ *   so it runs everywhere — browsers included. On runtimes where WebCrypto
+ *   hashing is slow (it re-hashes the entire workblock on every stamp
+ *   trial), a platform package may install a faster engine via
+ *   {@link setStamper} — e.g. `@reticulum/node`'s `node:crypto` engine with
+ *   hash-state copying and worker-thread generation. The wire format and
+ *   validation semantics are engine-invariant: any engine must produce
+ *   byte-identical workblocks and agree on stamp validity.
  */
 
 /* @ts-self-types="../../types/src/utils/stamper.d.ts" */
+
+/**
+ * Pluggable proof-of-work stamp engine. All methods are asynchronous and
+ * return promises; semantics must match the WebCrypto default engine exactly
+ * (byte-identical workblocks, identical validity boundary
+ * `SHA256(workblock || stamp) <= 2^(256 - targetCost)`).
+ *
+ * @typedef {Object} StamperEngine
+ * @property {(data: Uint8Array) => Promise<Uint8Array>} fullHash
+ *   Computes SHA-256 of the input.
+ * @property {(material: Uint8Array, expandRounds?: number) => Promise<Uint8Array>} stampWorkblock
+ *   Builds the memory-hard workblock for the given material.
+ * @property {(stamp: Uint8Array, targetCost: number, workblock: Uint8Array) => Promise<boolean>} stampValid
+ *   Validates a stamp against a target proof-of-work cost.
+ * @property {(workblock: Uint8Array, stamp: Uint8Array) => Promise<number>} stampValue
+ *   Returns the leading-zero-bit value of a stamp.
+ * @property {(messageId: Uint8Array, stampCost: number, expandRounds?: number) => Promise<[Uint8Array, number]>} generateStamp
+ *   Searches for a valid 32-byte stamp, returning `[stamp, value]`.
+ */
 
 import { hkdf } from "../crypto/ciphers.js";
 
@@ -28,10 +58,13 @@ import { hkdf } from "../crypto/ciphers.js";
  * so the workblock is byte-identical to the Python LXMF reference's at any
  * round count (rfed 16, LXMF PN 1000, LXMF message 3000).
  *
+ * Exported so alternative {@link StamperEngine} implementations can build
+ * byte-identical per-round salt inputs.
+ *
  * @param {number} n
  * @returns {Uint8Array}
  */
-function msgpackUint(n) {
+export function msgpackUint(n) {
   if (n < 0x80) return new Uint8Array([n]);
   if (n <= 0xff) return new Uint8Array([0xcc, n]);
   if (n <= 0xffff) return new Uint8Array([0xcd, (n >> 8) & 0xff, n & 0xff]);
@@ -64,11 +97,28 @@ export const WORKBLOCK_EXPAND_ROUNDS_PEERING = 25;
 export const STAMP_SIZE = 32;
 
 /**
+ * Converts a big-endian byte array into a BigInt.
+ * @param {Uint8Array} bytes
+ * @returns {bigint}
+ */
+function bigIntFromBytesBE(bytes) {
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
+  }
+  return hex.length === 0 ? 0n : BigInt(`0x${hex}`);
+}
+
+// ---------------------------------------------------------------------
+// Default engine: pure WebCrypto (WinterTC-only, browser-safe)
+// ---------------------------------------------------------------------
+
+/**
  * Computes SHA-256 of the input.
  * @param {Uint8Array} data
  * @returns {Promise<Uint8Array>}
  */
-export async function fullHash(data) {
+async function webCryptoFullHash(data) {
   const digest = await crypto.subtle.digest(
     "SHA-256",
     /** @type {any} */ (data),
@@ -88,7 +138,7 @@ export async function fullHash(data) {
  * @param {number} [expandRounds] - Number of HKDF expansion rounds.
  * @returns {Promise<Uint8Array>} The concatenated workblock.
  */
-export async function stampWorkblock(
+async function webCryptoStampWorkblock(
   material,
   expandRounds = WORKBLOCK_EXPAND_ROUNDS,
 ) {
@@ -102,7 +152,7 @@ export async function stampWorkblock(
     const saltInput = new Uint8Array(material.length + counter.length);
     saltInput.set(material, 0);
     saltInput.set(counter, material.length);
-    const salt = await fullHash(saltInput);
+    const salt = await webCryptoFullHash(saltInput);
     const derived = await hkdf(material, salt, new Uint8Array(0), 256);
     chunks.push(derived);
   }
@@ -118,19 +168,6 @@ export async function stampWorkblock(
 }
 
 /**
- * Converts a big-endian byte array into a BigInt.
- * @param {Uint8Array} bytes
- * @returns {bigint}
- */
-function bigIntFromBytesBE(bytes) {
-  let hex = "";
-  for (let i = 0; i < bytes.length; i++) {
-    hex += bytes[i].toString(16).padStart(2, "0");
-  }
-  return hex.length === 0 ? 0n : BigInt(`0x${hex}`);
-}
-
-/**
  * Returns the number of leading zero bits in SHA256(workblock || stamp).
  *
  * This is the actual proof-of-work value achieved, which may exceed the
@@ -140,13 +177,13 @@ function bigIntFromBytesBE(bytes) {
  * @param {Uint8Array} stamp
  * @returns {Promise<number>}
  */
-export async function stampValue(workblock, stamp) {
+async function webCryptoStampValue(workblock, stamp) {
   const material = new Uint8Array(workblock.length + stamp.length);
   material.set(workblock, 0);
   material.set(stamp, workblock.length);
-  const hash = await fullHash(material);
-  let value = 0;
+  const hash = await webCryptoFullHash(material);
   const bits = 256;
+  let value = 0;
   let i = bigIntFromBytesBE(hash);
   const highBit = 1n << BigInt(bits - 1);
   while ((i & highBit) === 0n) {
@@ -168,11 +205,11 @@ export async function stampValue(workblock, stamp) {
  * @param {Uint8Array} workblock
  * @returns {Promise<boolean>}
  */
-export async function stampValid(stamp, targetCost, workblock) {
+async function webCryptoStampValid(stamp, targetCost, workblock) {
   const material = new Uint8Array(workblock.length + stamp.length);
   material.set(workblock, 0);
   material.set(stamp, workblock.length);
-  const result = await fullHash(material);
+  const result = await webCryptoFullHash(material);
   const target = 1n << BigInt(256 - targetCost);
   return bigIntFromBytesBE(result) <= target;
 }
@@ -185,18 +222,147 @@ export async function stampValid(stamp, targetCost, workblock) {
  * @param {number} [expandRounds] - HKDF expansion rounds for the workblock.
  * @returns {Promise<[Uint8Array, number]>} `[stamp, value]`.
  */
-export async function generateStamp(
+async function webCryptoGenerateStamp(
   messageId,
   stampCost,
   expandRounds = WORKBLOCK_EXPAND_ROUNDS,
 ) {
-  const workblock = await stampWorkblock(messageId, expandRounds);
+  const workblock = await webCryptoStampWorkblock(messageId, expandRounds);
   const stamp = new Uint8Array(STAMP_SIZE);
   while (true) {
     crypto.getRandomValues(stamp);
-    if (await stampValid(stamp, stampCost, workblock)) {
-      const value = await stampValue(workblock, stamp);
+    if (await webCryptoStampValid(stamp, stampCost, workblock)) {
+      const value = await webCryptoStampValue(workblock, stamp);
       return [stamp, value];
     }
   }
+}
+
+/** @type {StamperEngine} */
+const webCryptoEngine = {
+  fullHash: webCryptoFullHash,
+  stampWorkblock: webCryptoStampWorkblock,
+  stampValid: webCryptoStampValid,
+  stampValue: webCryptoStampValue,
+  generateStamp: webCryptoGenerateStamp,
+};
+
+// ---------------------------------------------------------------------
+// Engine registry (work doc #45)
+// ---------------------------------------------------------------------
+
+/** @type {StamperEngine} */
+let engine = webCryptoEngine;
+
+/**
+ * Returns the currently installed {@link StamperEngine}. The default is the
+ * pure-WebCrypto engine; platform packages may replace it via
+ * {@link setStamper}.
+ *
+ * @returns {StamperEngine}
+ */
+export function getStamper() {
+  return engine;
+}
+
+/**
+ * Installs a {@link StamperEngine} (or resets to the WebCrypto default with
+ * `null`). Callers must pass an object providing all five engine functions;
+ * otherwise a `TypeError` is thrown and the current engine is left untouched.
+ *
+ * This is an explicit opt-in: importing `@reticulum/core` never changes the
+ * engine, and the default keeps the library browser-safe.
+ *
+ * @param {StamperEngine | null} next - The engine to install, or `null` to
+ *   restore the WebCrypto default.
+ * @returns {void}
+ */
+export function setStamper(next) {
+  if (next === null) {
+    engine = webCryptoEngine;
+    return;
+  }
+  if (
+    typeof next !== "object" ||
+    next === null ||
+    typeof next.fullHash !== "function" ||
+    typeof next.stampWorkblock !== "function" ||
+    typeof next.stampValid !== "function" ||
+    typeof next.stampValue !== "function" ||
+    typeof next.generateStamp !== "function"
+  ) {
+    throw new TypeError(
+      "Stamper engine must provide fullHash, stampWorkblock, stampValid, stampValue and generateStamp functions",
+    );
+  }
+  engine = next;
+}
+
+// ---------------------------------------------------------------------
+// Public primitives — delegate to the installed engine
+// ---------------------------------------------------------------------
+
+/**
+ * Computes SHA-256 of the input.
+ * @param {Uint8Array} data
+ * @returns {Promise<Uint8Array>}
+ */
+export function fullHash(data) {
+  return engine.fullHash(data);
+}
+
+/**
+ * Builds the memory-hard workblock used for stamp proof-of-work.
+ *
+ * @param {Uint8Array} material - The 32-byte message_id (or peering_id).
+ * @param {number} [expandRounds] - Number of HKDF expansion rounds.
+ * @returns {Promise<Uint8Array>} The concatenated workblock.
+ */
+export function stampWorkblock(material, expandRounds) {
+  return engine.stampWorkblock(
+    material,
+    expandRounds === undefined ? WORKBLOCK_EXPAND_ROUNDS : expandRounds,
+  );
+}
+
+/**
+ * Returns the number of leading zero bits in SHA256(workblock || stamp).
+ *
+ * This is the actual proof-of-work value achieved, which may exceed the
+ * recipient's required cost.
+ *
+ * @param {Uint8Array} workblock
+ * @param {Uint8Array} stamp
+ * @returns {Promise<number>}
+ */
+export function stampValue(workblock, stamp) {
+  return engine.stampValue(workblock, stamp);
+}
+
+/**
+ * Validates a stamp against a target proof-of-work cost.
+ *
+ * @param {Uint8Array} stamp
+ * @param {number} targetCost
+ * @param {Uint8Array} workblock
+ * @returns {Promise<boolean>}
+ */
+export function stampValid(stamp, targetCost, workblock) {
+  return engine.stampValid(stamp, targetCost, workblock);
+}
+
+/**
+ * Searches for a valid 32-byte stamp by random trial.
+ *
+ * @param {Uint8Array} messageId - The 32-byte LXMF message_id.
+ * @param {number} stampCost - Required leading zero bits.
+ * @param {number} [expandRounds] - HKDF expansion rounds for the workblock.
+ * @returns {Promise<[Uint8Array, number]>} `[stamp, value]`.
+ */
+export function generateStamp(messageId, stampCost, expandRounds) {
+  return engine.generateStamp(
+    messageId,
+    stampCost,
+    expandRounds === undefined ? WORKBLOCK_EXPAND_ROUNDS : expandRounds,
+  );
 }

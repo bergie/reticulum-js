@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `RFedNode` accepts a `config.stampEngine` option: a pluggable proof-of-work stamp engine (work doc #45) installed process-wide via core's `setStamper`, replacing the WebCrypto default for every stamp operation (rfed channel stamps, LXMF message stamps, propagation blob validation). Omitting it keeps the browser-safe default; `@reticulum/node` ships a fast ready-made engine (`nodeStamper`) for Node.js consumers.
+
 ### Fixed
 
 - Inbound link handlers pass the `link_request` event's `receivingInterface` to `acceptLink`, pinning each accepted link's return path to its arrival interface (work doc #43).

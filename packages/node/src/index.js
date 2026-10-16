@@ -47,3 +47,14 @@ export {
   loadRFedStores,
   saveRFedStores,
 } from "./storage/rfed.js";
+// Optional fast stamp engine (work doc #45): Node.js consumers may opt in to
+// replace @reticulum/core's WebCrypto default with a node:crypto engine that
+// caches workblocks and runs stamping in a worker thread. Importing this
+// module has no side effects — only an explicit useNodeStamper() call
+// installs the engine.
+export {
+  nodeStamper,
+  stampWorkerRunning,
+  stopNodeStamper,
+  useNodeStamper,
+} from "./utils/stamper.js";

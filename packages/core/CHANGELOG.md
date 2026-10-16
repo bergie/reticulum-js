@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Pluggable proof-of-work stamp engines (work doc #45): `@reticulum/core/src/utils/stamper.js` now delegates its five stamp primitives (`fullHash`, `stampWorkblock`, `stampValid`, `stampValue`, `generateStamp`) to a swappable engine. The default engine remains the pure-WebCrypto implementation (WinterTC-only, browser-safe, byte-identical wire behavior), and importing the package never changes it — consumers opt in explicitly via `setStamper(engine)` / reset via `setStamper(null)`, with `getStamper()` for introspection. The engine interface is entirely Promise-based, so any runtime can plug in an engine of its own (e.g. one offloading stamping to a Web Worker in the browser). The per-round msgpack counter helper is now exported as `msgpackUint` so alternative engines can build byte-identical workblocks.
+
 ### Fixed
 - **core**: routed sends no longer fail with the opaque "Interface … has no packet writer" error when a known path has no usable egress interface — a route hydrated from storage whose interface never re-associated (e.g. leaf stacks whose default interface is the writer-less AutoInterface parent, which does no transmitting of its own), or an interface mid-reconnect between writer generations. Such a path is now expired before the send, degrading to the leaf fallback exactly like the unresponsive-path case: the packet goes out on the default interface when it can, the caller gets the actionable `No route to host` error otherwise, and a fresh `path?` request or announce rebuilds the route.
 
