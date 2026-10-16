@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-10-16
 ### Added
 
 - `LXMRouter` accepts an optional third `options` argument with `options.stampEngine`: a pluggable proof-of-work stamp engine (work doc #45) installed process-wide via core's `setStamper`, replacing the WebCrypto default for every stamp operation (message stamp generation, propagation blob validation, peering). Omitting it keeps the browser-safe default; `@reticulum/node` ships a fast ready-made engine (`nodeStamper`) for Node.js consumers.

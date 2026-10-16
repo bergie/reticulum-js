@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.9] - 2026-10-16
 ### Added
 - Pluggable proof-of-work stamp engines (work doc #45): `@reticulum/core/src/utils/stamper.js` now delegates its five stamp primitives (`fullHash`, `stampWorkblock`, `stampValid`, `stampValue`, `generateStamp`) to a swappable engine. The default engine remains the pure-WebCrypto implementation (WinterTC-only, browser-safe, byte-identical wire behavior), and importing the package never changes it — consumers opt in explicitly via `setStamper(engine)` / reset via `setStamper(null)`, with `getStamper()` for introspection. The engine interface is entirely Promise-based, so any runtime can plug in an engine of its own (e.g. one offloading stamping to a Web Worker in the browser). The per-round msgpack counter helper is now exported as `msgpackUint` so alternative engines can build byte-identical workblocks.
 

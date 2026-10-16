@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-10-16
 - Upgrade `werift` from `^0.23.0` to `^0.25.0`, resolving the `ip` SSRF advisory (GHSA-2p57-rm9w-gvfp) in its dependency chain
 
 ## [0.9.8] - 2026-10-10
