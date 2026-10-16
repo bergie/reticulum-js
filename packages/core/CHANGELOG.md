@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- **core**: routed sends no longer fail with the opaque "Interface … has no packet writer" error when a known path has no usable egress interface — a route hydrated from storage whose interface never re-associated (e.g. leaf stacks whose default interface is the writer-less AutoInterface parent, which does no transmitting of its own), or an interface mid-reconnect between writer generations. Such a path is now expired before the send, degrading to the leaf fallback exactly like the unresponsive-path case: the packet goes out on the default interface when it can, the caller gets the actionable `No route to host` error otherwise, and a fresh `path?` request or announce rebuilds the route.
 
 ### Fixed
 

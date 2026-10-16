@@ -206,3 +206,134 @@ describe("TransportCore — connectivity lost and regained", () => {
     await waitFor(() => iface.generations[1].packets.length === 1);
   });
 });
+
+/**
+ * A stream-less parent interface like the AutoInterface root: it has no byte
+ * stream of its own (`writable` is `null`, so it never gets a packet writer)
+ * and only serves as the default interface for spawned per-peer interfaces.
+ */
+class StreamlessFakeInterface extends Interface {
+  /**
+   * @param {string} [name]
+   */
+  constructor(name = "fake-auto") {
+    super();
+    this.name = name;
+    this.bitrate = 1_000_000;
+  }
+
+  /** @returns {null} */
+  get readable() {
+    return null;
+  }
+  /** @returns {null} */
+  get writable() {
+    return null;
+  }
+
+  /** @returns {Promise<void>} */
+  async disconnect() {
+    this._dispatchClosed();
+  }
+}
+
+describe("TransportCore — writer-less egress interface on a routed send", () => {
+  test("expires a hydrated route whose interface never re-associated and degrades to the no-path error", async () => {
+    const transport = new TransportCore();
+    // AutoInterface-parent-like default: writer-less, like the TUI's own
+    // stack before any peer has been discovered.
+    transport.addInterface(new StreamlessFakeInterface(), true);
+
+    const destinationHash = crypto.getRandomValues(new Uint8Array(16));
+    // Hydrated-style route: learned through an interface that is not present
+    // in this stack generation, so it carries no live reference and no name
+    // to re-associate by.
+    transport.routingTable.addOrUpdateRoute(destinationHash, {
+      nextHop: destinationHash,
+      hops: 1,
+      viaInterface: null,
+      randomBlob: crypto.getRandomValues(new Uint8Array(10)),
+    });
+    assert.ok(
+      transport.hasPath(destinationHash),
+      "the hydrated route should be present before the send",
+    );
+
+    const mkData = () =>
+      new Packet({
+        packetType: PacketType.DATA,
+        destinationType: DestType.SINGLE,
+        destinationHash,
+        contextByte: ContextType.NONE,
+        payload: new Uint8Array([9, 8, 7]),
+      });
+
+    // The send must fail with the actionable no-path error (which path
+    // solicitation treats as a retry signal) instead of the opaque
+    // "Interface fake-auto has no packet writer".
+    await assert.rejects(
+      () => transport.sendPacket(mkData()),
+      /No route to host/,
+    );
+    assert.ok(
+      !transport.hasPath(destinationHash),
+      "the unusable route must be expired so a fresh announce can rebuild it",
+    );
+  });
+
+  test("degrades when the egress interface loses its writer mid-reconnect, and recovers via a fresh announce", async () => {
+    const transport = new TransportCore();
+    const iface = new ReconnectingFakeInterface();
+    await iface.connect();
+    transport.addInterface(iface, true);
+
+    const destinationHash = crypto.getRandomValues(new Uint8Array(16));
+    transport.routingTable.addOrUpdateRoute(destinationHash, {
+      nextHop: destinationHash,
+      hops: 1,
+      viaInterface: iface,
+      randomBlob: crypto.getRandomValues(new Uint8Array(10)),
+    });
+
+    const mkData = () =>
+      new Packet({
+        packetType: PacketType.DATA,
+        destinationType: DestType.SINGLE,
+        destinationHash,
+        contextByte: ContextType.NONE,
+        payload: new Uint8Array([9, 8, 7]),
+      });
+
+    // Connectivity drops and the stream is torn down (writer gone) before
+    // the reconnection happens: the route's egress cannot carry traffic.
+    iface.drop();
+    iface._packetWriter = null;
+    await assert.rejects(
+      () => transport.sendPacket(mkData()),
+      /No route to host/,
+    );
+    assert.ok(
+      !transport.hasPath(destinationHash),
+      "the unusable route must be expired",
+    );
+
+    // Reconnection plus a fresh announce (new random blob) rebuilds the
+    // route on the live interface, and sends work again.
+    await iface.connect();
+    transport.routingTable.addOrUpdateRoute(destinationHash, {
+      nextHop: destinationHash,
+      hops: 1,
+      viaInterface: iface,
+      randomBlob: crypto.getRandomValues(new Uint8Array(10)),
+    });
+    const packet = mkData();
+    await transport.sendPacket(packet);
+    await waitFor(() => iface.generations[1].packets.length === 1);
+    // Clear the tracked proof receipt so its timeout timer cannot hang the
+    // test runner.
+    const receipt = transport.findReceipt(
+      (await packet.getHash()).slice(0, 16),
+    );
+    receipt?.clearTimeout();
+  });
+});

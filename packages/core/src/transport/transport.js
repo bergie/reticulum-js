@@ -1143,12 +1143,33 @@ export class TransportCore extends EventTarget {
       route = undefined;
     }
 
+    // The egress interface for a known path: the interface it was learned
+    // through, or the default interface for a hydrated (#16) entry until a
+    // fresh announce re-associates it.
+    const egress = route?.interface ?? this.defaultInterface;
+
+    // Interface lifecycle: a route whose learning interface has no live
+    // packet writer cannot carry traffic — a hydrated (#16) entry whose
+    // interface never re-associated (the fallback default interface may be a
+    // writer-less parent like the AutoInterface root, which spawned peers,
+    // not the parent, do the transmitting for), or an interface mid-reconnect
+    // between writer generations. Like the UNRESPONSIVE case above, expire it
+    // so `hasPath()` stops reporting a dead path, this send degrades to the
+    // leaf fallback, and a fresh `path?` request or announce can rebuild the
+    // route — instead of failing with an opaque "has no packet writer" error.
+    if (route && !egress?._packetWriter) {
+      log(
+        "Transport",
+        `Expiring path to ${destHex}: no usable egress interface`,
+        LogLevel.DEBUG,
+      );
+      this.routingTable.expireRoute(packet.destinationHash);
+      route = undefined;
+    }
+
     if (route) {
       // §Transport.outbound: send on the interface the path was learned
-      // through, injecting transport headers when >1 hop away. A hydrated
-      // (#16) path entry carries no live interface reference, so fall back to
-      // the default interface until a fresh announce re-associates it.
-      const iface = route.interface ?? this.defaultInterface;
+      // through, injecting transport headers when >1 hop away.
       if (route.hops > 1 && packet.headerType === HeaderType.HEADER_1) {
         const injected = new Packet({
           headerType: HeaderType.HEADER_2,
@@ -1162,10 +1183,10 @@ export class TransportCore extends EventTarget {
           payload: packet.payload,
           transportId: route.nextHop,
         });
-        await this._transmit(iface, injected);
+        await this._transmit(egress, injected);
       } else {
         // Direct (1 hop) or already in transport: transmit unchanged.
-        await this._transmit(iface, packet);
+        await this._transmit(egress, packet);
       }
       route.timestamp = Date.now();
     } else if (
