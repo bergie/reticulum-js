@@ -967,3 +967,50 @@ test("§6.7 keepalive ping/pong refreshes liveness on a healthy link", async () 
   );
   await initiator.teardown();
 });
+
+// ---------------------------------------------------------------------------
+// §6.1  Establishment timeout — handshake-phase links must expire
+// ---------------------------------------------------------------------------
+
+test("§6.1 establishment timeout closes a link that never completes", async () => {
+  const responderIdentity = await Identity.generate();
+  // No destinations and no peer: the LINKREQUEST goes out, but no LRPROOF
+  // ever comes back — the handshake can never complete.
+  const transport = new MockTransport();
+  // Speed the expiry up: the transport's establishment timeout is what the
+  // link arms (Python `Link.establishment_timeout` parity).
+  transport.establishmentTimeout = () => 0.1;
+
+  const destination = await Destination.create(
+    "never-answers",
+    Direction.OUT,
+    DestType.SINGLE,
+    responderIdentity,
+    /** @type {any} */ ({ transport }),
+  );
+  const link = await Link.initiate(destination, transport);
+  assert.strictEqual(link.status, LinkStatus.HANDSHAKE);
+  assert.ok(
+    transport.links.size >= 1,
+    "pending link registered with transport",
+  );
+
+  // Without the establishment expiry the link would sit in HANDSHAKE —
+  // registered in the transport and holding its ephemeral key material —
+  // forever (every failed establishment in a link storm leaked one).
+  const deadline = Date.now() + 2000;
+  while (link.status !== LinkStatus.CLOSED && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.strictEqual(
+    link.status,
+    LinkStatus.CLOSED,
+    "establishment timeout must close the link",
+  );
+  assert.strictEqual(link.teardownReason, LinkTeardownReason.TIMEOUT);
+  assert.strictEqual(
+    transport.links.size,
+    0,
+    "the dead link must be removed from the transport",
+  );
+});

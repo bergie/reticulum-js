@@ -225,6 +225,9 @@ export class Link extends EventTarget {
   /** @type {ReturnType<typeof setInterval> | null} */
   _watchdogTimer = null;
 
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  _establishmentTimer = null;
+
   /** @type {Promise<void>} */
   _rxQueue = Promise.resolve();
 
@@ -426,8 +429,10 @@ export class Link extends EventTarget {
         }),
       );
       if (newStatus === LinkStatus.ACTIVE) {
+        this._clearEstablishmentTimeout();
         this._startWatchdog();
       } else if (newStatus === LinkStatus.CLOSED) {
+        this._clearEstablishmentTimeout();
         this._stopWatchdog();
         // Tear down the Channel first so its outlet timers / proof listener
         // are cleaned up before the link object becomes inert.
@@ -439,6 +444,19 @@ export class Link extends EventTarget {
         // can never deliver the PROOFs they wait for, so leaving them would
         // leak map entries for the lifetime of the object.
         this._pendingLinkProofs.clear();
+        // §10: cancel in-flight resource transfers. A closed link can never
+        // deliver the remaining parts or proofs, so leaving the
+        // registrations would retain the transfer buffers — and the link
+        // itself, via its own maps — for the lifetime of the object. Waiters
+        // observe the failure through the resource's `failed` event.
+        for (const resource of this.outgoingResources.values()) {
+          resource._linkClosed?.();
+        }
+        this.outgoingResources.clear();
+        for (const resource of this.incomingResources.values()) {
+          resource._linkClosed?.();
+        }
+        this.incomingResources.clear();
         // §7 leaf path-recovery: a pending link that
         // never reached ACTIVE means the path is bad. Expire it and rediscover
         // so the next attempt can pick an alternative next hop. Skipped for
@@ -501,6 +519,54 @@ export class Link extends EventTarget {
       return this.transport.establishmentTimeout(dh) * 1000;
     }
     return 15000;
+  }
+
+  /**
+   * Arms the establishment expiry (Python `Link.establishment_timeout`
+   * parity): if the handshake has not completed within the transport's
+   * establishment timeout, the link is closed locally with TIMEOUT. Without
+   * this, handshake-phase links that never complete stay registered in the
+   * transport's activeLinks forever — every failed establishment leaks the
+   * link object and its ephemeral key material. Both sides arm it: the
+   * initiator waiting for the LRPROOF and the responder waiting for the
+   * LRRTT. No LINKCLOSE is sent — the peer never confirmed the handshake,
+   * and the reference only closes locally on establishment timeout.
+   * @returns {void}
+   * @private
+   */
+  _armEstablishmentTimeout() {
+    if (this._establishmentTimer) return;
+    const timeoutSecs =
+      this.transport &&
+      typeof this.transport.establishmentTimeout === "function"
+        ? this.transport.establishmentTimeout(
+            this.destination?.destinationHash ?? this.linkId,
+          )
+        : 15;
+    const timer = setTimeout(() => {
+      this._establishmentTimer = null;
+      if (this.status !== LinkStatus.HANDSHAKE) return;
+      log(
+        "Link",
+        `Link establishment timed out for ${toHex(this.linkId)}`,
+        LogLevel.DEBUG,
+      );
+      this.teardownReason = LinkTeardownReason.TIMEOUT;
+      this.status = LinkStatus.CLOSED;
+      this.dispatchEvent(
+        new CustomEvent("close", { detail: { link: this.linkId } }),
+      );
+    }, timeoutSecs * 1000);
+    timer?.unref?.();
+    this._establishmentTimer = timer;
+  }
+
+  /** @private */
+  _clearEstablishmentTimeout() {
+    if (this._establishmentTimer) {
+      clearTimeout(this._establishmentTimer);
+      this._establishmentTimer = null;
+    }
   }
 
   /**
@@ -616,6 +682,7 @@ export class Link extends EventTarget {
         ? transport.hopsTo(destination.destinationHash)
         : null;
     link.status = LinkStatus.HANDSHAKE;
+    link._armEstablishmentTimeout();
     await link._sendRaw(packet);
     return link;
   }
@@ -692,6 +759,7 @@ export class Link extends EventTarget {
     link.attachedInterface = receivingInterface;
     link.status = LinkStatus.HANDSHAKE;
     transport.addLink(linkId, link);
+    link._armEstablishmentTimeout();
 
     await link._sendLRProof();
     return link;

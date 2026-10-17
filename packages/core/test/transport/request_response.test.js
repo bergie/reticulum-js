@@ -30,6 +30,7 @@ import {
   Packet,
   PacketType,
 } from "../../src/core/packet.js";
+import { Resource } from "../../src/core/resource.js";
 import { Link, LinkStatus } from "../../src/transport/link.js";
 import { toHex } from "../../src/utils/encoding.js";
 import { MicroMsgPack } from "../../src/utils/msgpack.js";
@@ -629,3 +630,40 @@ test("§11.5 response timeout during an in-flight transmit rejects request()", a
 // require the deferred-delivery loopback transport (a synchronous transport
 // deadlocks on Resource transfers).
 // ---------------------------------------------------------------------------
+
+test("§11.5 teardown cancels in-flight resource transfers (no buffer leak)", async () => {
+  const { initiator } = await makeEstablishedPair();
+  // A failed sync tears its link down (0.9.11), but the link's resource
+  // registries were not cleared on close: the torn-down link was retained by
+  // its own maps together with the transfer buffers — the advertised
+  // oversized /offer Resource on the sender side, accumulated parts on the
+  // receiver side. Over a sync-failure storm this compounded into multi-GB
+  // heap growth (the lille-oe OOM of 2026-10-17).
+  const outgoing = new Resource({
+    data: new Uint8Array(2048).fill(42),
+    link: initiator,
+  });
+  outgoing.hash = new Uint8Array(32).fill(1);
+  initiator._registerOutgoingResource(outgoing);
+  const incoming = new Resource({
+    data: new Uint8Array(64).fill(7),
+    link: initiator,
+  });
+  incoming.hash = new Uint8Array(32).fill(2);
+  initiator._registerIncomingResource(incoming);
+
+  await initiator.teardown();
+
+  assert.strictEqual(
+    initiator.outgoingResources.size,
+    0,
+    "torn-down link must not retain outgoing resources",
+  );
+  assert.strictEqual(
+    initiator.incomingResources.size,
+    0,
+    "torn-down link must not retain incoming resources",
+  );
+  await assert.rejects(outgoing.whenComplete(), /resource already/);
+  await assert.rejects(incoming.whenComplete(), /resource already/);
+});

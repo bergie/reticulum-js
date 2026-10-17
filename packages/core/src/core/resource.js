@@ -1198,6 +1198,35 @@ export class Resource extends EventTarget {
     });
   }
 
+  /**
+   * Called by the link when it transitions to CLOSED: the transfer can never
+   * complete, so the resource fails and drops its transfer buffers. Without
+   * this a torn-down link is retained by its own resource maps, and the
+   * buffers (encrypted payload slices on the sender, accumulated received
+   * parts on the receiver) leak for the lifetime of the object — which
+   * compounds into multi-GB heap growth when links fail in a storm (the
+   * lille-oe OOM of 2026-10-17).
+   * @param {string} [reason]
+   * @returns {void}
+   * @internal
+   */
+  _linkClosed(reason = "Link closed") {
+    if (
+      this.status === ResourceStatus.COMPLETE ||
+      this.status === ResourceStatus.FAILED ||
+      this.status === ResourceStatus.CORRUPT ||
+      this.status === ResourceStatus.REJECTED
+    ) {
+      return;
+    }
+    // Drop the transfer buffers: the encrypted part slices (sender) and the
+    // accumulated received parts (receiver) are the bulk of the retained
+    // memory and are useless without a live link.
+    this.parts = [];
+    this.status = ResourceStatus.FAILED;
+    this._setFailed(reason);
+  }
+
   /** @param {string} reason @private */
   _setFailed(reason) {
     this.dispatchEvent(
