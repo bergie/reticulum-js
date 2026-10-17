@@ -387,7 +387,20 @@ export class WebSocketClientInterface extends Interface {
           }
           const bytes = new Uint8Array(event.data);
           if (framing === "kiss") {
-            controller.enqueue(bytes);
+            // enqueue throws once the stream has been closed, errored or
+            // cancelled (e.g. a message racing the stream teardown); an
+            // escaping throw here would reject the async listener promise
+            // that dispatchEvent discards — an unhandled rejection that
+            // crashes the process.
+            try {
+              controller.enqueue(bytes);
+            } catch (/** @type {any} */ e) {
+              log(
+                "WebSocket",
+                `Dropping inbound frame: inbound stream no longer accepting (${e})`,
+                LogLevel.DEBUG,
+              );
+            }
             return;
           }
           // raw mode: drop anything no larger than the header minimum

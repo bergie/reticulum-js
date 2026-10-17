@@ -1,10 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `LXMPeer.sync()` now tears its link down when anything after link establishment fails (identify error, failed `/offer` request, transfer failure). Previously every failed sync leaked a zombie ACTIVE link whose watchdog later stale-tore it down — the trigger that turned a `@reticulum/core` pending-REQUEST orphan into an unhandled-rejection process crash during propagation peer syncs.
 
 ## [0.9.10] - 2026-10-17
 ### Fixed
-- **lxmf**: the link backchannel `data` listener attached by `LXMRouter._attachLinkMessageListeners` now catches processing failures instead of leaking them as unhandled rejections (which crash the process under Node's default `--unhandled-rejections=throw`). `dispatchEvent` discards listener promises, so a throwing `_processIncomingMessage` (malformed payload, storage failure) previously killed the process; the delivery-destination listener already had this guard.
+- The link backchannel `data` listener attached by `lxmrouter._attachlinkmessagelisteners` now catches processing failures instead of leaking them as unhandled rejections (which crash the process under node's default `--unhandled-rejections=throw`). `dispatchevent` discards listener promises, so a throwing `_processincomingmessage` (malformed payload, storage failure) previously killed the process; the delivery-destination listener already had this guard.
 
 ## [0.9.9] - 2026-10-16
 ### Added

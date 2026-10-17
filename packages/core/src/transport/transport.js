@@ -210,7 +210,19 @@ export class TransportCore extends EventTarget {
 
     // 2. Listen to the Interface's inbound Packet loop
     iface.addEventListener("packet", (/** @type {any} */ event) => {
-      return this._routeIncomingPacket(event.detail.packet, iface);
+      // dispatchEvent discards listener promises: without this guard any
+      // rejection anywhere in the ingress pipeline (announce ingest, dedup,
+      // proofs, path requests, destination/link receive — including app
+      // handlers reached through them) would surface as an unhandled
+      // rejection and crash the process.
+      this._routeIncomingPacket(event.detail.packet, iface).catch(
+        (/** @type {any} */ err) =>
+          log(
+            "Transport",
+            `Ingress processing failed: ${err}`,
+            LogLevel.ERROR,
+          ),
+      );
     });
 
     // 3. Handle graceful teardown
@@ -1503,7 +1515,19 @@ export class TransportCore extends EventTarget {
   async _sweepTick() {
     for (const iface of this.interfaces) {
       if (typeof iface.processHeldAnnounces !== "function") continue;
-      const packet = iface.processHeldAnnounces();
+      let packet = null;
+      try {
+        packet = iface.processHeldAnnounces();
+      } catch (/** @type {any} */ e) {
+        // An interface's held-announce processing must not take down the
+        // sweep — it runs on an interval whose callback discards promises.
+        log(
+          "Transport",
+          `Held-announce processing failed on ${iface.name}: ${e}`,
+          LogLevel.ERROR,
+        );
+        continue;
+      }
       if (packet) {
         log(
           "Transport",
@@ -1567,7 +1591,15 @@ export class TransportCore extends EventTarget {
   _ensureSweep() {
     if (this._sweepTimer) return;
     const timer = setInterval(() => {
-      this._sweepTick();
+      // _sweepTick is async: an interval callback would discard a rejection
+      // from it as unhandled and crash the process.
+      this._sweepTick().catch((/** @type {any} */ err) =>
+        log(
+          "Transport",
+          `Maintenance sweep failed: ${err}`,
+          LogLevel.ERROR,
+        ),
+      );
     }, 5000);
     timer?.unref?.();
     this._sweepTimer = timer;

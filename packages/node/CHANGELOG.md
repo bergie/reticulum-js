@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The HTTP POST server's idle-peer reaper now catches rejections from a peer's `disconnect()`. The reaper runs on an interval whose callback discards promises, so a failing disconnect (e.g. the inbound loop's promise rejecting) previously escaped as an unhandled rejection that crashed the process.
 
 ## [0.9.10] - 2026-10-17
 

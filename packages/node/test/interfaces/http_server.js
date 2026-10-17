@@ -291,3 +291,40 @@ test("HTTP server caps inbound packets at maxBatchPackets and skips oversized en
 
   await server.disconnect();
 });
+
+test("reaping a peer whose disconnect rejects does not crash", async () => {
+  const port = 14106;
+  const server = new HttpPostServerInterface({
+    listenPort: port,
+    listenIp: "127.0.0.1",
+  });
+  /** @type {any[]} */
+  const peers = [];
+  server.addEventListener("connection", (/** @type {any} */ event) => {
+    peers.push(event.detail);
+  });
+  await server.connect();
+
+  const client = new HttpPostClientInterface({
+    baseUrl: `http://127.0.0.1:${port}`,
+    pollIntervalMs: 50,
+  });
+  await client.connect();
+  await waitFor(() => peers.length === 1);
+
+  // Force the peer idle and make its disconnect fail: the reaper must still
+  // remove the peer, and the rejected disconnect must be caught — with the
+  // bug present it escapes the reaper (and the interval callback) as an
+  // unhandled rejection that crashes the process.
+  const peer = peers[0];
+  peer.lastSeen = 0;
+  peer.disconnect = async () => {
+    throw new Error("disconnect exploded");
+  };
+  /** @type {any} */ (server)._reap();
+  assert.equal(server.clients, 0);
+  await new Promise((r) => setTimeout(r, 50));
+
+  await client.disconnect().catch(() => {});
+  await server.disconnect();
+});

@@ -567,6 +567,62 @@ test("§11.5 a failed transmit cleans up the pending REQUEST (no orphan timeout)
   await initiator.teardown();
 });
 
+test("§11.5 teardown during an in-flight transmit rejects request() (no orphan)", async () => {
+  const { initiator } = await makeEstablishedPair();
+  // The transmit hangs (e.g. a wedged interface write, or a stalled bz2
+  // compress inside the Resource advertisement). The pending entry is
+  // registered before transmit, so at that moment nobody holds the response
+  // promise — when the link tears down, _rejectPendingRequests must NOT
+  // reject the unheld promise (that is an unhandled rejection and crashes
+  // the process, the lille-oe crasher of 2026-10-17 09:14). Instead the
+  // entry settles quietly and request() surfaces the teardown to the caller.
+  const originalSendPacket = initiator.transport.sendPacket.bind(
+    initiator.transport,
+  );
+  initiator.transport.sendPacket = async (/** @type {any} */ packet) => {
+    if (packet.contextByte === ContextType.REQUEST) {
+      await new Promise(() => {}); // never settles
+    }
+    return originalSendPacket(packet);
+  };
+  const pending = initiator.request("/rpc/hang", null, { timeout: 5000 });
+  // Wait for the pending entry to land (registered asynchronously after the
+  // prepare/hash chain resolves).
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(initiator.pendingRequests.size, 1);
+
+  await initiator.teardown();
+  await assert.rejects(pending, /Link closed before RESPONSE arrived/);
+  assert.strictEqual(
+    initiator.pendingRequests.size,
+    0,
+    "teardown must consume the unheld pending entry",
+  );
+});
+
+test("§11.5 response timeout during an in-flight transmit rejects request()", async () => {
+  const { initiator } = await makeEstablishedPair();
+  // Same hang, but the entry's own response timeout fires first: the caller
+  // must get the timeout error instead of waiting on the hung transmit
+  // forever (and the timer must not reject a promise nobody holds).
+  const originalSendPacket = initiator.transport.sendPacket.bind(
+    initiator.transport,
+  );
+  initiator.transport.sendPacket = async (/** @type {any} */ packet) => {
+    if (packet.contextByte === ContextType.REQUEST) {
+      await new Promise(() => {}); // never settles
+    }
+    return originalSendPacket(packet);
+  };
+  await assert.rejects(
+    initiator.request("/rpc/hang", null, { timeout: 100 }),
+    /timed out after 100ms/,
+  );
+  assert.strictEqual(initiator.pendingRequests.size, 0);
+  initiator.transport.sendPacket = originalSendPacket;
+  await initiator.teardown();
+});
+
 // ---------------------------------------------------------------------------
 // §11.1  MDU overflow is now handled by the §10 Resource pipeline. Those
 // round-trip tests live in `request_response_resource.test.js` because they

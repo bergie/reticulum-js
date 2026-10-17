@@ -206,8 +206,13 @@ export class LXMPeer {
     // auto-compress, so inbound Resources need bz2 to assemble (§10.2).
     // Harmless when absent.
     this.link.bz2 = this.router.rns.compressionProvider || undefined;
-    await this.link.identify(this.router.identity);
-    this.state = PeerState.LINK_READY;
+    // Everything past link establishment runs against `this.link`; any failure
+    // must tear it down, otherwise every failed sync leaks a zombie ACTIVE
+    // link whose watchdog later stale-tears it — the sequence that turned a
+    // request orphan into a process crash (see @reticulum/core CHANGELOG).
+    try {
+      await this.link.identify(this.router.identity);
+      this.state = PeerState.LINK_READY;
 
     // Apply per-message and per-sync limits, building the offered id list.
     const offeredIds = [];
@@ -298,6 +303,10 @@ export class LXMPeer {
     );
     this._teardown();
     return true;
+    } catch (/** @type {any} */ err) {
+      this._teardown();
+      throw err;
+    }
   }
 
   /**

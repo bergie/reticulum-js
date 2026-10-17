@@ -235,7 +235,15 @@ export class Link extends EventTarget {
    * Initiator-side pending REQUESTs keyed by hex(request_id)
    * (PROTOCOL-SPEC.md §11.5). Each entry resolves/rejects its returned Promise
    * when the matching RESPONSE arrives or the timeout fires.
-   * @type {Map<string, {resolve: Function, reject: Function, onMetadata: ((metadata: any) => void)|undefined, onProgress: ((info: any) => void)|undefined, timer: ReturnType<typeof setTimeout>}>}
+   *
+   * `handedOut` tracks whether `request()` has returned the response promise
+   * to a caller yet. Between registering the entry and returning the promise,
+   * `request()` is still awaiting the transmit — during that window nobody
+   * holds the promise, so settling it with a rejection would surface as an
+   * unhandled rejection and crash the process. Unheld entries are settled
+   * quietly instead (see `_failPendingRequest`), and `request()` rethrows the
+   * recorded error once the transmit settles.
+   * @type {Map<string, {resolve: Function, reject: Function, onMetadata: ((metadata: any) => void)|undefined, onProgress: ((info: any) => void)|undefined, timer: ReturnType<typeof setTimeout>, handedOut: boolean, settledQuietly: boolean, settleError: Error|null, settledSignal: Promise<undefined>, signalSettled: ((value: undefined) => void)|undefined}>}
    */
   pendingRequests = new Map();
 
@@ -1273,7 +1281,17 @@ export class Link extends EventTarget {
    */
   async teardown() {
     if (this.status === LinkStatus.CLOSED) return;
-    await this._sendLinkClose();
+    // Best-effort close: the LINKCLOSE is advisory (the peer also learns from
+    // its own watchdog when the path is dead), so a failed close-send must not
+    // reject teardown() itself — fire-and-forget callers (LXMF peer teardown,
+    // channel timeout) would otherwise leak an unhandled rejection and crash
+    // the process, which is precisely what happens when dead links are being
+    // cleaned up.
+    try {
+      await this._sendLinkClose();
+    } catch (err) {
+      log("Link", `Teardown close send failed: ${err}`, LogLevel.WARNING);
+    }
     this.teardownReason = this.initiator
       ? LinkTeardownReason.INITIATOR_CLOSED
       : LinkTeardownReason.DESTINATION_CLOSED;
@@ -1443,7 +1461,7 @@ export class Link extends EventTarget {
       // field; the responder echoes it back so the pending entry matches.
       const requestId = await Identity.truncatedHash(packedRequest);
       const requestIdHex = toHex(requestId);
-      const responsePromise = this._registerPendingRequest(
+      const { promise: responsePromise, entry } = this._registerPendingRequest(
         requestIdHex,
         path,
         timeout,
@@ -1473,14 +1491,26 @@ export class Link extends EventTarget {
         });
       }
       try {
-        await resource.advertise();
+        // Race the advertisement against entry settlement: if the link tears
+        // down (or the response timeout fires) while the transmit is still in
+        // flight, the entry settles and the caller gets the real failure
+        // instead of waiting on a transmit that may never complete.
+        await Promise.race([resource.advertise(), entry.settledSignal]);
       } catch (err) {
         // The caller never receives `responsePromise` (request() rethrows), so
         // a rejection here would be unhandled and crash the process. Clean the
-        // pending entry up instead.
+        // pending entry up instead. (A settled entry resolves — never rejects
+        // — so a rejection here is always the transmit's own.)
         this._discardPendingRequest(requestIdHex);
         throw err;
       }
+      if (entry.settledQuietly) {
+        // The entry was settled while the transmit was in flight and nobody
+        // held the promise (link teardown or response timeout). Surface the
+        // recorded reason to the caller instead of a bogus resolved value.
+        throw /** @type {Error} */ (entry.settleError);
+      }
+      entry.handedOut = true;
       return responsePromise;
     }
 
@@ -1497,7 +1527,7 @@ export class Link extends EventTarget {
     // on the encrypted form because that's what the server receives & hashes.
     const requestId = await Identity.truncatedHash(outbound.getHashablePart());
     const requestIdHex = toHex(requestId);
-    const responsePromise = this._registerPendingRequest(
+    const { promise: responsePromise, entry } = this._registerPendingRequest(
       requestIdHex,
       path,
       timeout,
@@ -1505,27 +1535,43 @@ export class Link extends EventTarget {
       options.onProgress,
     );
     try {
-      await this.transport.sendPacket(outbound);
+      // Race the transmit against entry settlement (see the Resource path
+      // above): a link teardown or response timeout while the transmit is in
+      // flight must reach the caller instead of hanging on the transmit.
+      await Promise.race([
+        this.transport.sendPacket(outbound),
+        entry.settledSignal,
+      ]);
     } catch (err) {
       // The caller never receives `responsePromise` (request() rethrows), so a
       // rejection here would be unhandled and crash the process. Clean the
-      // pending entry up instead.
+      // pending entry up instead. (A settled entry resolves — never rejects —
+      // so a rejection here is always the transmit's own.)
       this._discardPendingRequest(requestIdHex);
       throw err;
     }
+    if (entry.settledQuietly) {
+      throw /** @type {Error} */ (entry.settleError);
+    }
+    entry.handedOut = true;
     return responsePromise;
   }
 
   /**
    * Registers a pending REQUEST entry keyed by hex request_id and returns the
-   * Promise the caller awaits. Registered BEFORE transmit so a same-tick
-   * (loopback) response still finds its entry.
+   * response promise the caller awaits plus the entry itself. Registered
+   * BEFORE transmit so a same-tick (loopback) response still finds its entry.
+   *
+   * The caller must set `entry.handedOut = true` once it returns `promise` to
+   * its caller; until then the entry is settled quietly instead of rejected
+   * (see `_failPendingRequest`) so no rejection is ever created without a
+   * holder.
    * @param {string} requestIdHex
    * @param {string} path
    * @param {number} timeoutMs
    * @param {(metadata: any) => void} [onMetadata]
    * @param {(info: any) => void} [onProgress]
-   * @returns {Promise<any>}
+   * @returns {{ promise: Promise<any>, entry: {resolve: Function, reject: Function, onMetadata: ((metadata: any) => void)|undefined, onProgress: ((info: any) => void)|undefined, timer: ReturnType<typeof setTimeout>, handedOut: boolean, settledQuietly: boolean, settleError: Error|null, settledSignal: Promise<undefined>, signalSettled: ((value: undefined) => void)|undefined}}}
    * @private
    */
   _registerPendingRequest(
@@ -1535,21 +1581,68 @@ export class Link extends EventTarget {
     onMetadata,
     onProgress,
   ) {
-    return new Promise((resolve, reject) => {
-      const entry = {
-        resolve,
-        reject,
-        onMetadata,
-        onProgress,
-        timer: setTimeout(() => {
-          this.pendingRequests.delete(requestIdHex);
-          reject(
-            new Error(`REQUEST to ${path} timed out after ${timeoutMs}ms`),
-          );
-        }, timeoutMs),
-      };
-      this.pendingRequests.set(requestIdHex, entry);
+    /** @type {(value: any) => void} */
+    let entryResolve = () => {};
+    /** @type {(err: any) => void} */
+    let entryReject = () => {};
+    const promise = new Promise((resolve, reject) => {
+      entryResolve = resolve;
+      entryReject = reject;
     });
+    /** @type {(value: undefined) => void} */
+    let signalSettled = () => {};
+    const settledSignal = new Promise((resolve) => {
+      signalSettled = resolve;
+    });
+    const entry = {
+      resolve: entryResolve,
+      reject: entryReject,
+      onMetadata,
+      onProgress,
+      handedOut: false,
+      settledQuietly: false,
+      settleError: null,
+      settledSignal,
+      signalSettled,
+      timer: setTimeout(() => {
+        const timeoutError = new Error(
+          `REQUEST to ${path} timed out after ${timeoutMs}ms`,
+        );
+        this._failPendingRequest(requestIdHex, timeoutError);
+      }, timeoutMs),
+    };
+    this.pendingRequests.set(requestIdHex, entry);
+    return { promise, entry };
+  }
+
+  /**
+   * Settles and removes a pending REQUEST entry with an error.
+   *
+   * When the response promise has been handed out to a caller, it is rejected
+   * with `error` (the caller observes the failure). When it has NOT —
+   * `request()` is still awaiting the transmit, so nobody holds the promise —
+   * rejecting it would surface as an unhandled rejection and crash the
+   * process under Node's default `--unhandled-rejections=throw`. The entry is
+   * then settled quietly instead, and `error` is recorded so `request()` can
+   * rethrow it to the caller once the transmit settles.
+   * @param {string} requestIdHex
+   * @param {Error} error
+   * @returns {void}
+   * @private
+   */
+  _failPendingRequest(requestIdHex, error) {
+    const entry = this.pendingRequests.get(requestIdHex);
+    if (!entry) return; // already settled
+    clearTimeout(entry.timer);
+    this.pendingRequests.delete(requestIdHex);
+    entry.signalSettled?.(undefined);
+    if (entry.handedOut) {
+      entry.reject(error);
+    } else {
+      entry.settledQuietly = true;
+      entry.settleError = error;
+      entry.resolve(undefined);
+    }
   }
 
   /**
@@ -1570,6 +1663,7 @@ export class Link extends EventTarget {
     if (!entry) return; // already settled (e.g. loopback response)
     clearTimeout(entry.timer);
     this.pendingRequests.delete(requestIdHex);
+    entry.signalSettled?.(undefined);
     entry.resolve(undefined);
   }
 
@@ -1863,6 +1957,7 @@ export class Link extends EventTarget {
       // Deliver metadata before resolving so callers relying on the
       // `onMetadata` hook observe it as soon as `await request()` returns.
       if (entry.onMetadata) entry.onMetadata(resource.metadata);
+      entry.signalSettled?.(undefined);
       entry.resolve(resource.data);
       return;
     }
@@ -1918,6 +2013,7 @@ export class Link extends EventTarget {
     }
     clearTimeout(entry.timer);
     this.pendingRequests.delete(toHex(requestId));
+    entry.signalSettled?.(undefined);
     entry.resolve(response);
   }
 
@@ -1952,10 +2048,8 @@ export class Link extends EventTarget {
    * @private
    */
   _rejectPendingRequests(reason) {
-    for (const [id, entry] of this.pendingRequests) {
-      clearTimeout(entry.timer);
-      this.pendingRequests.delete(id);
-      entry.reject(new Error(reason));
+    for (const [id] of this.pendingRequests) {
+      this._failPendingRequest(id, new Error(reason));
     }
   }
 
@@ -2088,12 +2182,7 @@ export class Link extends EventTarget {
         // Propagate the failure to a pending REQUEST awaiting this transfer
         // instead of letting it run into the response timeout.
         if (segment.requestId) {
-          const entry = this.pendingRequests.get(toHex(segment.requestId));
-          if (entry) {
-            clearTimeout(entry.timer);
-            this.pendingRequests.delete(toHex(segment.requestId));
-            entry.reject(err);
-          }
+          this._failPendingRequest(toHex(segment.requestId), err);
         }
       });
   }

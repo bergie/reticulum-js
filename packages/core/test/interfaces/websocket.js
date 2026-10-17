@@ -705,3 +705,42 @@ test("WebSocket client with framing: 'kiss' decodes KISS-framed inbound messages
   await client.disconnect();
   await server.close();
 });
+
+test("KISS inbound frames after the inbound stream is cancelled are dropped, not unhandled", async () => {
+  const port = 13932;
+  /** @type {any} */
+  let serverConn = null;
+  const server = await startWebSocketServer(port, (conn) => {
+    serverConn = conn;
+  });
+
+  const client = new WebSocketClientInterface({
+    url: `ws://127.0.0.1:${port}`,
+    framing: "kiss",
+    autoReconnect: false,
+  });
+  await client.connect();
+
+  // Error the inbound stream (as a WebSocket error would), then deliver a
+  // late frame. `controller.enqueue` on an errored stream throws from the
+  // async "message" listener — an escaping throw that dispatchEvent
+  // discards, i.e. an unhandled rejection crashing the process. With the
+  // fix it is caught and logged.
+  /** @type {any} */ (client).socket.dispatchEvent(new Event("error"));
+  // Let the error propagate through the pipe chain.
+  await new Promise((r) => setTimeout(r, 20));
+
+  const frame = kissFrame(buildTestPacket("late frame").serialize());
+  const buf = frame.buffer.slice(
+    frame.byteOffset,
+    frame.byteOffset + frame.byteLength,
+  );
+  /** @type {any} */ (client).socket.dispatchEvent(
+    new MessageEvent("message", { data: buf }),
+  );
+  // Stay alive past the listener; with the bug present the run dies here.
+  await new Promise((r) => setTimeout(r, 100));
+
+  await client.disconnect();
+  await server.close();
+});
