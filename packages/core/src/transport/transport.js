@@ -217,11 +217,7 @@ export class TransportCore extends EventTarget {
       // rejection and crash the process.
       this._routeIncomingPacket(event.detail.packet, iface).catch(
         (/** @type {any} */ err) =>
-          log(
-            "Transport",
-            `Ingress processing failed: ${err}`,
-            LogLevel.ERROR,
-          ),
+          log("Transport", `Ingress processing failed: ${err}`, LogLevel.ERROR),
       );
     });
 
@@ -1594,11 +1590,7 @@ export class TransportCore extends EventTarget {
       // _sweepTick is async: an interval callback would discard a rejection
       // from it as unhandled and crash the process.
       this._sweepTick().catch((/** @type {any} */ err) =>
-        log(
-          "Transport",
-          `Maintenance sweep failed: ${err}`,
-          LogLevel.ERROR,
-        ),
+        log("Transport", `Maintenance sweep failed: ${err}`, LogLevel.ERROR),
       );
     }, 5000);
     timer?.unref?.();

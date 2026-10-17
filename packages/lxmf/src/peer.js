@@ -214,95 +214,95 @@ export class LXMPeer {
       await this.link.identify(this.router.identity);
       this.state = PeerState.LINK_READY;
 
-    // Apply per-message and per-sync limits, building the offered id list.
-    const offeredIds = [];
-    let cumulative = 24; // structural overhead estimate
-    const perMessageOverhead = 16;
-    for (const u of unhandled) {
-      const transferSize = u.size + perMessageOverhead;
-      if (
-        this.propagationTransferLimit != null &&
-        transferSize > this.propagationTransferLimit * 1000
-      ) {
-        // Too large for this peer — treat as handled (won't transfer).
-        store.markHandledForPeer(u.transientId, this.destinationHash);
-        continue;
+      // Apply per-message and per-sync limits, building the offered id list.
+      const offeredIds = [];
+      let cumulative = 24; // structural overhead estimate
+      const perMessageOverhead = 16;
+      for (const u of unhandled) {
+        const transferSize = u.size + perMessageOverhead;
+        if (
+          this.propagationTransferLimit != null &&
+          transferSize > this.propagationTransferLimit * 1000
+        ) {
+          // Too large for this peer — treat as handled (won't transfer).
+          store.markHandledForPeer(u.transientId, this.destinationHash);
+          continue;
+        }
+        if (
+          this.propagationSyncLimit != null &&
+          cumulative + transferSize >= this.propagationSyncLimit * 1000
+        ) {
+          continue;
+        }
+        cumulative += transferSize;
+        offeredIds.push(u.transientId);
       }
-      if (
-        this.propagationSyncLimit != null &&
-        cumulative + transferSize >= this.propagationSyncLimit * 1000
-      ) {
-        continue;
+
+      if (offeredIds.length === 0) {
+        this._teardown();
+        return false;
       }
-      cumulative += transferSize;
-      offeredIds.push(u.transientId);
-    }
 
-    if (offeredIds.length === 0) {
-      this._teardown();
-      return false;
-    }
-
-    const peeringKey = /** @type {[Uint8Array, number]} */ (this.peeringKey);
-    const offer = [peeringKey[0], offeredIds];
-    this.lastOffer = offeredIds;
-    this.state = PeerState.REQUEST_SENT;
-    log(
-      "LXMF",
-      `Offering ${offeredIds.length} message(s) to peer ${this.id}`,
-      LogLevel.DEBUG,
-    );
-    const response = await this.link.request(OFFER_REQUEST_PATH, offer);
-
-    const wanted = this._interpretOfferResponse(response, store);
-    if (wanted.length === 0) {
+      const peeringKey = /** @type {[Uint8Array, number]} */ (this.peeringKey);
+      const offer = [peeringKey[0], offeredIds];
+      this.lastOffer = offeredIds;
+      this.state = PeerState.REQUEST_SENT;
       log(
         "LXMF",
-        `Peer ${this.id} did not request any messages; sync complete`,
+        `Offering ${offeredIds.length} message(s) to peer ${this.id}`,
         LogLevel.DEBUG,
       );
+      const response = await this.link.request(OFFER_REQUEST_PATH, offer);
+
+      const wanted = this._interpretOfferResponse(response, store);
+      if (wanted.length === 0) {
+        log(
+          "LXMF",
+          `Peer ${this.id} did not request any messages; sync complete`,
+          LogLevel.DEBUG,
+        );
+        this.offered += offeredIds.length;
+        this._teardown();
+        return false;
+      }
+
+      // Transfer the wanted messages as a Resource (stamped blobs).
+      /** @type {Uint8Array[]} */
+      const lxmfList = [];
+      for (const tid of wanted) {
+        const entry = store.get(tid);
+        if (entry) lxmfList.push(concat(entry.lxmfData, entry.stampData));
+      }
+      const container = packPropagationContainer(lxmfList);
+      this.state = PeerState.RESOURCE_TRANSFERRING;
+      // Match the Python reference, which creates its transfer Resource with
+      // default auto_compress (LXMPeer.py:464). Resource only flags the transfer
+      // compressed when compression actually shrinks the data, so peers without
+      // a provider are unaffected as long as ours can't shrink it either.
+      const resource = new Resource({
+        data: container,
+        link: this.link,
+        bz2: this.link.bz2,
+      });
+      await resource.advertise();
+      // Wait for the full transfer + proof before tearing down the link,
+      // otherwise the link closes mid-transfer and the peer never ingests.
+      await resource.whenComplete();
+
+      for (const tid of wanted) {
+        store.markHandledForPeer(tid, this.destinationHash);
+      }
       this.offered += offeredIds.length;
+      this.outgoing += wanted.length;
+      this.alive = true;
+      this.lastHeard = Date.now() / 1000;
+      log(
+        "LXMF",
+        `Transferred ${wanted.length} message(s) to peer ${this.id}`,
+        LogLevel.DEBUG,
+      );
       this._teardown();
-      return false;
-    }
-
-    // Transfer the wanted messages as a Resource (stamped blobs).
-    /** @type {Uint8Array[]} */
-    const lxmfList = [];
-    for (const tid of wanted) {
-      const entry = store.get(tid);
-      if (entry) lxmfList.push(concat(entry.lxmfData, entry.stampData));
-    }
-    const container = packPropagationContainer(lxmfList);
-    this.state = PeerState.RESOURCE_TRANSFERRING;
-    // Match the Python reference, which creates its transfer Resource with
-    // default auto_compress (LXMPeer.py:464). Resource only flags the transfer
-    // compressed when compression actually shrinks the data, so peers without
-    // a provider are unaffected as long as ours can't shrink it either.
-    const resource = new Resource({
-      data: container,
-      link: this.link,
-      bz2: this.link.bz2,
-    });
-    await resource.advertise();
-    // Wait for the full transfer + proof before tearing down the link,
-    // otherwise the link closes mid-transfer and the peer never ingests.
-    await resource.whenComplete();
-
-    for (const tid of wanted) {
-      store.markHandledForPeer(tid, this.destinationHash);
-    }
-    this.offered += offeredIds.length;
-    this.outgoing += wanted.length;
-    this.alive = true;
-    this.lastHeard = Date.now() / 1000;
-    log(
-      "LXMF",
-      `Transferred ${wanted.length} message(s) to peer ${this.id}`,
-      LogLevel.DEBUG,
-    );
-    this._teardown();
-    return true;
+      return true;
     } catch (/** @type {any} */ err) {
       this._teardown();
       throw err;

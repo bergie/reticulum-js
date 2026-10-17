@@ -722,13 +722,15 @@ export class HttpPostServerInterface extends Interface {
         this.spawnedInterfaces.delete(peer);
         // Fire-and-forget: a failing disconnect (e.g. the inbound loop's
         // promise rejecting) must not become an unhandled rejection.
-        peer.disconnect().catch((/** @type {any} */ e) =>
-          log(
-            "HttpExchange",
-            `Idle peer disconnect failed: ${e}`,
-            LogLevel.DEBUG,
-          ),
-        );
+        peer
+          .disconnect()
+          .catch((/** @type {any} */ e) =>
+            log(
+              "HttpExchange",
+              `Idle peer disconnect failed: ${e}`,
+              LogLevel.DEBUG,
+            ),
+          );
       }
     }
   }
