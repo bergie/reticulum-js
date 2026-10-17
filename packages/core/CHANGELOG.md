@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.11] - 2026-10-17
 ### Fixed
 - `Link.request()` no longer leaves a pending REQUEST entry whose response promise nobody holds when the link tears down (or the response timeout fires) while the transmit is still in flight. The entry is registered before transmit (so a same-tick loopback response finds it), but during the `advertise()`/`sendPacket()` await nobody yet holds the promise — a teardown in that window rejected it unheld, surfacing as an unhandled rejection that crashes the process (observed as a `signalk-server` crash: `Link closed before RESPONSE arrived` from `Link._rejectPendingRequests` during a stale-link teardown). Pending entries now track whether the promise has been handed out: unheld entries settle quietly (and `request()` rethrows the recorded reason once the transmit settles, also no longer hanging forever behind a wedged transmit), held entries reject to their holder as before.
 - `Link.teardown()` is now best-effort: a failed LINKCLOSE send is logged and the link still closes locally. The close packet is advisory (the peer also learns from its own watchdog), and `teardown()` rejecting on a dead path turned every fire-and-forget teardown call (LXMF peer teardown, channel timeout) into a potential unhandled rejection while dead links were being cleaned up.
