@@ -12,6 +12,7 @@ import { Identity } from "@reticulum/core/src/core/identity.js";
 import { concatBytes, toHex } from "@reticulum/core/src/utils/encoding.js";
 import {
   generateStamp,
+  stampValue,
   stampWorkblock,
   WORKBLOCK_EXPAND_ROUNDS,
 } from "@reticulum/lxmf/src/stamper.js";
@@ -23,6 +24,48 @@ import {
 } from "../src/stamp.js";
 
 const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
+
+/**
+ * Asserts a stamp mined for one material is rejected under decoy material.
+ *
+ * PoW validation is `leading_zero_bits(SHA-256(workblock ‖ stamp)) >= cost`, so
+ * a stamp mined for material A is a random 32-byte value with respect to
+ * material B's workblock and false-accepts there with probability 2^-cost.
+ * That is the intended contract (at production cost 16: a 1/65536 false-accept
+ * rate), but these tests use cost 8 for speed, so a plain "expect false"
+ * assertion flakes roughly 1 run in 125. Instead we make the check exact:
+ * measure this particular stamp's value under the decoy workblock and only
+ * assert the rejection when it is genuinely below the cost. If the stamp
+ * coincidentally clears the decoy cost too (p ≈ 2^-8), mine a fresh one —
+ * validation against the decoy is then behaving correctly either way.
+ *
+ * @param {() => Promise<Uint8Array>} mineStamp - Mints a fresh valid stamp for
+ *   the source material.
+ * @param {Uint8Array} decoyHash - Decoy channel hash.
+ * @param {Uint8Array} decoyBlob - Decoy inner blob.
+ * @param {number} stampCost
+ * @returns {Promise<void>}
+ */
+async function assertStampNotValidFor(
+  mineStamp,
+  decoyHash,
+  decoyBlob,
+  stampCost,
+) {
+  let stamp = await mineStamp();
+  for (let attempt = 0; attempt < 64; attempt++) {
+    const { workblock } = await channelStampWorkblock(decoyHash, decoyBlob);
+    if ((await stampValue(workblock, stamp)) < stampCost) {
+      assert.strictEqual(
+        await validateChannelStamp(decoyHash, decoyBlob, stamp, stampCost),
+        false,
+      );
+      return;
+    }
+    stamp = await mineStamp();
+  }
+  assert.fail("decoy value never fell below the cost (p ≈ 2^-512)");
+}
 
 const sha256 = (data) =>
   crypto.subtle.digest("SHA-256", data).then((d) => new Uint8Array(d));
@@ -111,19 +154,21 @@ describe("rfed generateChannelStamp / validateChannelStamp", () => {
 
   test("a stamp for one blob does not validate a different blob", async () => {
     const channelHash = rnd(16);
-    const stamp = (await generateChannelStamp(channelHash, rnd(120), 8))[0];
-    assert.strictEqual(
-      await validateChannelStamp(channelHash, rnd(120), stamp, 8),
-      false,
+    await assertStampNotValidFor(
+      async () => (await generateChannelStamp(channelHash, rnd(120), 8))[0],
+      channelHash,
+      rnd(120),
+      8,
     );
   });
 
   test("a stamp under a different channel_hash does not validate", async () => {
     const innerBlob = rnd(120);
-    const stamp = (await generateChannelStamp(rnd(16), innerBlob, 8))[0];
-    assert.strictEqual(
-      await validateChannelStamp(rnd(16), innerBlob, stamp, 8),
-      false,
+    await assertStampNotValidFor(
+      async () => (await generateChannelStamp(rnd(16), innerBlob, 8))[0],
+      rnd(16),
+      innerBlob,
+      8,
     );
   });
 
