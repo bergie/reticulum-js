@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.12] - 2026-10-17
+
 ## [0.9.11] - 2026-10-17
 ### Fixed
 - `LXMPeer.sync()` now tears its link down when anything after link establishment fails (identify error, failed `/offer` request, transfer failure). Previously every failed sync leaked a zombie ACTIVE link whose watchdog later stale-tore it down — the trigger that turned a `@reticulum/core` pending-REQUEST orphan into an unhandled-rejection process crash during propagation peer syncs.
