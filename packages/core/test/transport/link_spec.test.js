@@ -553,6 +553,41 @@ test("§6.5 responder resolves a proof for DATA it sent (reverse direction)", as
   assert.strictEqual(responder._pendingLinkProofs.size, 0);
 });
 
+test("§6.5 a failed send discards the pending link-proof entry (no leak)", async () => {
+  const { initiator } = await makeEstablishedPair();
+  // Simulate the transport refusing the send (e.g. the link dropped out of
+  // activeLinks between establishment and the send — "Link ... is not
+  // available"). The proof entry is registered before transmit so a
+  // synchronous proof can resolve it; if the transmit throws, the entry must
+  // be discarded — the packet never left, so its proof can never arrive and
+  // the entry would otherwise leak until the link closes.
+  const originalSendPacket = initiator.transport.sendPacket;
+  initiator.transport.sendPacket = async () => {
+    throw new Error("Link is not available");
+  };
+  await assert.rejects(
+    initiator.send(
+      new Packet({
+        packetType: PacketType.DATA,
+        destinationType: DestType.LINK,
+        destinationHash: initiator.linkId,
+        contextByte: ContextType.NONE,
+        payload: new TextEncoder().encode("never delivered"),
+      }),
+    ),
+    /Link is not available/,
+  );
+  assert.strictEqual(
+    initiator._pendingLinkProofs.size,
+    0,
+    "failed send must not leave a pending proof entry behind",
+  );
+  // Restore the transport and tear the link down so the keepalive loop does
+  // not stall the test run.
+  initiator.transport.sendPacket = originalSendPacket;
+  await initiator.teardown();
+});
+
 test("§6.5 link drops a proof with a bad signature", async () => {
   const { initiator } = await makeEstablishedPair();
   let fired = false;

@@ -522,3 +522,69 @@ test("announces only when told to (announceOnInit: false)", async () => {
   sigA.stop();
   sigB.stop();
 });
+
+// -------------------------------------------------------------------------
+// Failed-offer send: the answer waiter must be settled, not orphaned
+// -------------------------------------------------------------------------
+
+test("connect() discards the answer waiter when the offer send fails", async () => {
+  const rnsA = new Reticulum({});
+  const rnsB = new Reticulum({});
+  const [loopA, loopB] = makeLoopbackPair();
+  await loopA.connect();
+  await loopB.connect();
+  rnsA.addInterface(loopA, true);
+  rnsB.addInterface(loopB, true);
+
+  const [pcA, pcB] = createMockPeerConnectionPair();
+  const sigA = new WebRTCSignaling({
+    rns: rnsA,
+    createPeerConnection: () => pcA,
+    iceGatheringTimeoutMs: 200,
+    // Short answer timeout so the would-be orphaned waiter fires quickly.
+    answerTimeoutMs: 200,
+  });
+  // sigB needs a factory too: the responder must accept the inbound LINKREQUEST
+  // for the initiator's handshake to complete at all.
+  const sigB = new WebRTCSignaling({
+    rns: rnsB,
+    createPeerConnection: () => pcB,
+  });
+  await sigA.start();
+  await sigB.start();
+
+  const peerB = await waitForPeer(
+    sigA,
+    /** @type {Uint8Array} */ (sigB.destination.destinationHash),
+  );
+
+  // Simulate the transport refusing the offer's Resource send (e.g. the link
+  // dropped out of activeLinks between establishment and the send). The
+  // answer waiter is armed BEFORE the offer goes out (same-tick loopback
+  // race-safety), so a failed send must settle it — with the bug present the
+  // waiter's timer fires below and the test run dies of an unhandled
+  // rejection.
+  const originalSendSDP = /** @type {any} */ (sigA)._sendSDP;
+  /** @type {any} */ (sigA)._sendSDP = async () => {
+    throw new Error("Link is not available");
+  };
+  await assert.rejects(
+    sigA.connect(peerB.destinationHash),
+    /Link is not available/,
+  );
+  /** @type {any} */ (sigA)._sendSDP = originalSendSDP;
+
+  // Stay alive past the would-be answer timeout.
+  await new Promise((r) => setTimeout(r, 400));
+
+  // Cleanup: tear down the half-established link so its watchdog doesn't
+  // stall the test run.
+  for (const link of rnsA.transport.activeLinks.values()) {
+    await link.teardown();
+  }
+  for (const link of rnsB.transport.activeLinks.values()) {
+    await link.teardown();
+  }
+  sigA.stop();
+  sigB.stop();
+});

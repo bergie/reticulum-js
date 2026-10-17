@@ -385,9 +385,18 @@ export class WebRTCSignaling extends EventTarget {
 
     // Race-safe: arm the answer waiter BEFORE the offer goes out so a
     // same-tick (loopback) responder can't have its answer resource missed.
-    const answerPromise = this._receiveSDP(link, SDP_TYPE_ANSWER);
-    await this._sendSDP(link, SDP_TYPE_OFFER, pc.localDescription.sdp);
-    const answerSdp = await answerPromise;
+    const answer = this._receiveSDP(link, SDP_TYPE_ANSWER);
+    try {
+      await this._sendSDP(link, SDP_TYPE_OFFER, pc.localDescription.sdp);
+    } catch (err) {
+      // The caller never receives `answer.promise` (connect() rethrows), so
+      // leaving the waiter armed would make its timeout reject a promise
+      // nobody holds — an unhandled rejection that crashes the process.
+      // Settle the waiter and surface the send failure instead.
+      answer.cancel();
+      throw err;
+    }
+    const answerSdp = await answer.promise;
     await pc.setRemoteDescription({ type: "answer", sdp: answerSdp });
 
     await waitForChannelOpen(channel, this.channelOpenTimeoutMs);
@@ -521,62 +530,87 @@ export class WebRTCSignaling extends EventTarget {
    * Awaits a single SDP Resource of the expected type on the link. Registered
    * before the matching SDP is sent so a loopback/same-tick responder can't
    * drop its resource before the listener attaches.
+   *
+   * Returns the waiter split into its `promise` and a `cancel()` settle so a
+   * caller whose send fails after arming (see {@link WebRTCSignaling#_connectOnce})
+   * can settle the waiter instead of leaving its timeout to reject a promise
+   * nobody holds — an unhandled rejection that crashes the process.
    * @param {import("../transport/link.js").Link} link
    * @param {number} expectedType
-   * @returns {Promise<string>} The SDP string.
+   * @returns {{ promise: Promise<string>, cancel: () => void }} `cancel()` is
+   *   idempotent; after it runs the promise resolves (never rejects) and the
+   *   timeout timer and resource listener are released.
    * @private
    */
   _receiveSDP(link, expectedType) {
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      /** @param {any} resEvent */
-      const onResource = (resEvent) => {
-        const resource = resEvent.detail?.resource;
-        if (!resource || settled) return;
-        resource
-          .whenComplete()
-          .then((/** @type {import("../core/resource.js").Resource} */ res) => {
-            if (settled) return;
-            const parsed = this._parseSDP(/** @type {Uint8Array} */ (res.data));
-            if (!parsed) {
-              settled = true;
-              cleanup();
-              reject(new Error("Received malformed SDP resource"));
-              return;
-            }
-            if (parsed.type !== expectedType) {
-              settled = true;
-              cleanup();
-              reject(
-                new Error(
-                  `Expected SDP type ${expectedType}, got ${parsed.type}`,
-                ),
-              );
-              return;
-            }
+    let settled = false;
+    /** @type {(value: string) => void} */
+    let settleResolve;
+    /** @type {(err: Error) => void} */
+    let settleReject;
+    const promise = new Promise((resolve, reject) => {
+      settleResolve = resolve;
+      settleReject = reject;
+    });
+    /** @param {any} resEvent */
+    const onResource = (resEvent) => {
+      const resource = resEvent.detail?.resource;
+      if (!resource || settled) return;
+      resource
+        .whenComplete()
+        .then((/** @type {import("../core/resource.js").Resource} */ res) => {
+          if (settled) return;
+          const parsed = this._parseSDP(/** @type {Uint8Array} */ (res.data));
+          if (!parsed) {
             settled = true;
             cleanup();
-            resolve(parsed.sdp);
-          })
-          .catch((/** @type {Error} */ e) => {
-            if (settled) return;
+            settleReject(new Error("Received malformed SDP resource"));
+            return;
+          }
+          if (parsed.type !== expectedType) {
             settled = true;
             cleanup();
-            reject(e);
-          });
-      };
-      const cleanup = () => {
-        link.removeEventListener("resource", onResource);
-        clearTimeout(timer);
-      };
-      const timer = setTimeout(() => {
+            settleReject(
+              new Error(
+                `Expected SDP type ${expectedType}, got ${parsed.type}`,
+              ),
+            );
+            return;
+          }
+          settled = true;
+          cleanup();
+          settleResolve(parsed.sdp);
+        })
+        .catch((/** @type {Error} */ e) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          settleReject(e);
+        });
+    };
+    const cleanup = () => {
+      link.removeEventListener("resource", onResource);
+      clearTimeout(timer);
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      settleReject(new Error("Timed out waiting for SDP answer"));
+    }, this.answerTimeoutMs);
+    link.addEventListener("resource", onResource);
+    return {
+      promise,
+      cancel: () => {
         if (settled) return;
         settled = true;
         cleanup();
-        reject(new Error("Timed out waiting for SDP answer"));
-      }, this.answerTimeoutMs);
-      link.addEventListener("resource", onResource);
-    });
+        // Settle with `undefined` rather than a rejection: the waiter is
+        // being discarded precisely because nobody holds it, and rejecting
+        // an unobserved promise is an unhandled rejection.
+        settleResolve(/** @type {any} */ (undefined));
+      },
+    };
   }
 
   /**

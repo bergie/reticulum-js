@@ -1825,11 +1825,22 @@ export class LXMRouter extends EventTarget {
     const expectedDestHash = this.deliveryDest?.destinationHash;
     if (!expectedDestHash) return;
     link.addEventListener("data", async (/** @type {any} */ pktEvent) => {
-      await this._processIncomingMessage(
-        /** @type {any} */ (pktEvent).detail.packet.payload,
-        pktEvent.detail.link,
-        expectedDestHash,
-      );
+      // dispatchEvent discards listener promises: without this guard a
+      // processing failure would surface as an unhandled rejection and crash
+      // the process under Node's default --unhandled-rejections=throw.
+      try {
+        await this._processIncomingMessage(
+          /** @type {any} */ (pktEvent).detail.packet.payload,
+          pktEvent.detail.link,
+          expectedDestHash,
+        );
+      } catch (/** @type {any} */ err) {
+        log(
+          "LXMF",
+          `[!] Failed to process LXMF message over link: ${err}`,
+          LogLevel.ERROR,
+        );
+      }
     });
     link.addEventListener("resource", (/** @type {any} */ resEvent) => {
       const resource = /** @type {any} */ (resEvent).detail.resource;

@@ -427,6 +427,10 @@ export class Link extends EventTarget {
         if (this.transport) this.transport.removeLink(this.linkId);
         // §11.5: fail any in-flight REQUESTs so their Promises don't dangle.
         this._rejectPendingRequests("Link closed before RESPONSE arrived");
+        // §6.5: drop the pending CTX_NONE link-proof entries — a closed link
+        // can never deliver the PROOFs they wait for, so leaving them would
+        // leak map entries for the lifetime of the object.
+        this._pendingLinkProofs.clear();
         // §7 leaf path-recovery: a pending link that
         // never reached ACTIVE means the path is bad. Expire it and rediscover
         // so the next attempt can pick an alternative next hop. Skipped for
@@ -815,15 +819,26 @@ export class Link extends EventTarget {
     // §6.5: track CTX_NONE DATA BEFORE sending so a proof that returns
     // immediately (loopback / synchronous mock transports) can resolve it —
     // computing the hash here also populates outbound.raw.
+    let pendingProofKey = null;
     if (
       outbound.packetType === PacketType.DATA &&
       outbound.contextByte === ContextType.NONE
     ) {
       const hash = await outbound.getHash();
-      this._pendingLinkProofs.set(toHex(hash), hash);
+      pendingProofKey = toHex(hash);
+      this._pendingLinkProofs.set(pendingProofKey, hash);
     }
 
-    await this.transport.sendPacket(outbound);
+    try {
+      await this.transport.sendPacket(outbound);
+    } catch (err) {
+      // The packet never left, so its PROOF can never arrive: a pending
+      // entry left behind here would leak until the link closes.
+      if (pendingProofKey !== null) {
+        this._pendingLinkProofs.delete(pendingProofKey);
+      }
+      throw err;
+    }
     return outbound;
   }
 
@@ -1457,7 +1472,15 @@ export class Link extends EventTarget {
           });
         });
       }
-      await resource.advertise();
+      try {
+        await resource.advertise();
+      } catch (err) {
+        // The caller never receives `responsePromise` (request() rethrows), so
+        // a rejection here would be unhandled and crash the process. Clean the
+        // pending entry up instead.
+        this._discardPendingRequest(requestIdHex);
+        throw err;
+      }
       return responsePromise;
     }
 
@@ -1481,7 +1504,15 @@ export class Link extends EventTarget {
       options.onMetadata,
       options.onProgress,
     );
-    await this.transport.sendPacket(outbound);
+    try {
+      await this.transport.sendPacket(outbound);
+    } catch (err) {
+      // The caller never receives `responsePromise` (request() rethrows), so a
+      // rejection here would be unhandled and crash the process. Clean the
+      // pending entry up instead.
+      this._discardPendingRequest(requestIdHex);
+      throw err;
+    }
     return responsePromise;
   }
 
@@ -1519,6 +1550,27 @@ export class Link extends EventTarget {
       };
       this.pendingRequests.set(requestIdHex, entry);
     });
+  }
+
+  /**
+   * Removes a pending REQUEST entry after a synchronous `request()` failure
+   * (e.g. the transport refusing to send because the link is gone). The entry
+   * was registered before transmit so a same-tick loopback response finds it;
+   * if the transmit itself throws, the caller gets the thrown error and never
+   * sees `responsePromise`, so the entry's timeout timer would later reject a
+   * promise nobody holds — an unhandled rejection that crashes the process
+   * (Node's default `--unhandled-rejections=throw`). The promise is settled
+   * with `undefined` (never observed) rather than rejected for that reason.
+   * @param {string} requestIdHex
+   * @returns {void}
+   * @private
+   */
+  _discardPendingRequest(requestIdHex) {
+    const entry = this.pendingRequests.get(requestIdHex);
+    if (!entry) return; // already settled (e.g. loopback response)
+    clearTimeout(entry.timer);
+    this.pendingRequests.delete(requestIdHex);
+    entry.resolve(undefined);
   }
 
   /**

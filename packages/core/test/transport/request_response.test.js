@@ -536,6 +536,37 @@ test("§11.5 tearing the link down rejects in-flight requests", async () => {
   assert.strictEqual(initiator.pendingRequests.size, 0);
 });
 
+test("§11.5 a failed transmit cleans up the pending REQUEST (no orphan timeout)", async () => {
+  const { initiator } = await makeEstablishedPair();
+  // Simulate the transport refusing the send (e.g. the link dropped out of
+  // activeLinks between establishment and the REQUEST — "Link ... is not
+  // available"). request() must throw AND disarm the timeout registered
+  // before transmit; otherwise the orphaned timer later rejects the
+  // never-returned responsePromise as an unhandled rejection and crashes
+  // the process (the signalk-reticulum crasher of 2026-10-17).
+  const originalSendPacket = initiator.transport.sendPacket;
+  initiator.transport.sendPacket = async () => {
+    throw new Error("Link is not available");
+  };
+  await assert.rejects(
+    initiator.request("/rpc/unsendable", null, { timeout: 150 }),
+    /Link is not available/,
+  );
+  assert.strictEqual(
+    initiator.pendingRequests.size,
+    0,
+    "pending entry must be discarded on send failure",
+  );
+  // Stay alive past the would-be timeout: with the bug present the orphaned
+  // timer fires here and the test run dies of an unhandled rejection.
+  await new Promise((r) => setTimeout(r, 300));
+  // Restore the transport and tear the link down: a permanently-throwing
+  // sendPacket would keep the keepalive loop failing with backoff until the
+  // link goes stale (~minutes), stalling the whole test run.
+  initiator.transport.sendPacket = originalSendPacket;
+  await initiator.teardown();
+});
+
 // ---------------------------------------------------------------------------
 // §11.1  MDU overflow is now handled by the §10 Resource pipeline. Those
 // round-trip tests live in `request_response_resource.test.js` because they
