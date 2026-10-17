@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.10] - 2026-10-17
 ### Fixed
 - **lxmf**: the link backchannel `data` listener attached by `LXMRouter._attachLinkMessageListeners` now catches processing failures instead of leaking them as unhandled rejections (which crash the process under Node's default `--unhandled-rejections=throw`). `dispatchEvent` discards listener promises, so a throwing `_processIncomingMessage` (malformed payload, storage failure) previously killed the process; the delivery-destination listener already had this guard.
 

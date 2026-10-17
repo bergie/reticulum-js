@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-10-17
+
 ## [0.9.9] - 2026-10-16
 ### Added
 - Fast `node:crypto` stamp engine (work doc #45): `nodeStamper` replaces `@reticulum/core`'s WebCrypto default with an engine that builds workblocks via `hkdfSync` + `createHash` (~18× faster), validates stamps via `hash.copy()` + `update(stamp)` with bytewise comparison against the `2^(256-cost)` threshold (~30× faster per trial, no BigInt/hex round-trips), caches workblocks in an LRU keyed by material + expansion rounds, and runs workblock builds and stamp generation in a `node:worker_threads` worker (mirroring the Python reference's worker-process design) with transparent synchronous fallback when workers are unavailable. Install explicitly with `useNodeStamper()` (importing the package has no side effects); `stopNodeStamper()` releases the worker and cache.

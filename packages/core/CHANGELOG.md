@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.10] - 2026-10-17
 ### Fixed
 - **core**: `Link.request()` no longer leaks an orphaned REQUEST timeout timer when the transmit fails. The pending-request entry is registered before transmit (so a same-tick loopback response finds it), but if `transport.sendPacket()` or the request `Resource` advertisement threw, `request()` rethrew without ever returning the response promise — the entry's timeout timer then rejected a promise nobody held, surfacing as an unhandled rejection that crashes the process under Node's default `--unhandled-rejections=throw` (observed as periodic `signalk-server` crashes: `REQUEST to /offer timed out after 15288ms` from LXMF propagation peer syncs). A failed transmit now discards the pending entry and disarms the timer before rethrowing.
 - **core**: `WebRTCSignaling.connect()` no longer leaks an orphaned SDP-answer waiter when sending the offer fails. The answer waiter is armed before the offer goes out (same-tick loopback race-safety, `_receiveSDP`), but a failed `_sendSDP` rethrew without ever awaiting the waiter — its 20s timeout then rejected a promise nobody held, crashing the process with an unhandled rejection. `_receiveSDP` now returns the waiter split into `promise` + an idempotent `cancel()` (settles the promise and releases the timer/listener), and `connect()` cancels the waiter before rethrowing a send failure.
