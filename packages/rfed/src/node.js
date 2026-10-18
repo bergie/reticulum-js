@@ -275,6 +275,14 @@ export class RFedNode {
      */
     this._pendingBackupPushes = [];
 
+    /** True while a {@link syncPeers} pass is running; overlapping passes skip. */
+    this._syncPeersRunning = false;
+    /**
+     * True while a {@link tickBackupDelivery} pass is running; overlapping
+     * passes skip.
+     */
+    this._backupTickRunning = false;
+
     /**
      * Per-subscriber policy lookup (mirrors Rust `NodeConfig::policy_for`).
      * Defaults to the flat configured limits; a runner overrides this to drive
@@ -567,25 +575,36 @@ export class RFedNode {
    *
    * Called periodically by the runner (e.g., every 10-60 seconds).
    *
+   * Overlapping passes skip: drivers call this on an interval, and a pass can
+   * legitimately outlive one interval (a slow peer, a large gap). Running two
+   * passes concurrently would sync the same peer over two links at once — the
+   * second pass is a no-op returning 0 instead.
+   *
    * @returns {Promise<number>} Total number of blobs ingested from all peers
    */
   async syncPeers() {
-    const duePeers = this._getPeersDueForSync();
-    let totalIngested = 0;
-    for (const peerHash of duePeers) {
-      try {
-        const ingested = await this.syncWithPeer(peerHash);
-        totalIngested += ingested;
-      } catch (error) {
-        log(
-          "RFedNode",
-          `Sync with peer ${toHex(peerHash)} failed: ${error}`,
-          LogLevel.WARNING,
-        );
-        // syncErr was already called internally
+    if (this._syncPeersRunning) return 0;
+    this._syncPeersRunning = true;
+    try {
+      const duePeers = this._getPeersDueForSync();
+      let totalIngested = 0;
+      for (const peerHash of duePeers) {
+        try {
+          const ingested = await this.syncWithPeer(peerHash);
+          totalIngested += ingested;
+        } catch (error) {
+          log(
+            "RFedNode",
+            `Sync with peer ${toHex(peerHash)} failed: ${error}`,
+            LogLevel.WARNING,
+          );
+          // syncErr was already called internally
+        }
       }
+      return totalIngested;
+    } finally {
+      this._syncPeersRunning = false;
     }
-    return totalIngested;
   }
 
   /**
@@ -620,6 +639,26 @@ export class RFedNode {
    * @returns {Promise<{ pushed: number, pruned: number, adopted: number, repushed: number }>}
    */
   async tickBackupDelivery() {
+    // Overlapping passes skip: a pass can outlive the driver's interval (a
+    // slow backup push), and running two concurrently would drain the pending
+    // registration queue twice. The skipped pass reports all-zero counts.
+    if (this._backupTickRunning) {
+      return { pushed: 0, pruned: 0, adopted: 0, repushed: 0 };
+    }
+    this._backupTickRunning = true;
+    try {
+      return await this._tickBackupDeliveryInner();
+    } finally {
+      this._backupTickRunning = false;
+    }
+  }
+
+  /**
+   * The body of {@link tickBackupDelivery}, run under the overlap guard.
+   * @returns {Promise<{ pushed: number, pruned: number, adopted: number, repushed: number }>}
+   * @private
+   */
+  async _tickBackupDeliveryInner() {
     const backupHash = this._resolveBackup();
 
     // ── Part 1: push own pending registrations ──────────────────────
