@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.13] - 2026-10-18
 ### Fixed
 - `LXMPeer.sync()` can no longer be re-entered mid-sync (Python `LXMPeer.sync` IDLE-gate parity): an overlapping driver pass — the sync interval firing while a stalled transfer is still pending — previously started a second link and a second full container against the same peer, piling up in-flight syncs. The gate covers the whole sync, and link establishment moved inside the guarded region so any failure resets the state machine instead of wedging the peer out of all future syncs.
 - `LXMPeer.sync()` now bounds its outbound transfer wait at `RESOURCE_TRANSFER_TIMEOUT_MS` (default 60 s, overridable per peer via `transferTimeoutMs`). The JS Resource has no sender-side watchdog, so a stalled receiver on a keepalive-sustained link — pings answered, parts never pulled — previously hung the sync forever holding the container buffers and the link; the timeout unwinds it through the existing failure teardown.

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.13] - 2026-10-18
 ### Fixed
 - `Resource` transfers are now bounded by a watchdog (Python `Resource.__watchdog_job` parity — the JS port had none). A stalled transfer on a link whose peer keeps answering keepalives — alive at the link layer, wedged at the application layer — previously never completed, never timed out, and never released its buffers: the accumulated received parts on the receiver, the payload plus encrypted part slices on the sender. Such links never go stale, so nothing else would ever free the memory, and every retried sync cycle pinned another stalled transfer — compounding into multi-GB heap growth during sync-failure storms (observed live: 46 outgoing + 10 incoming in-flight resources on a node ~1.5 h before OOM). The sender retries a request-less advertisement a bounded number of times, then cancels; it cancels a part-transfer whose activity dries up for the whole retry window. The receiver re-requests outstanding parts with a shrinking window, and cancels once retries are exhausted. A cancelled/failed transfer now also unregisters from its link's transfer maps and drops its buffers (previously cancelled/rejected transfers stayed registered until the link closed).
 - A failed or timed-out `Link.request()` now cancels its stalled oversized RESPONSE transfer outright (the request id travels in the advertisement's `q` field), instead of leaving a half-received response registered on the cached link — every retry cycle had accumulated another one.

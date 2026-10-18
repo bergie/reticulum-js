@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.13] - 2026-10-18
 ### Changed
 - The `rfed` CLI now defaults `--storage-limit-mb` to 500, matching Python lxmd's default `message_storage_limit` (500 MB). The LXMF message store and rfed blob store live in RAM; without a cap they grow with mesh traffic until the process is OOM-killed. Operators can raise, lower, or — with the argument — override it; an explicit value always wins.
 
