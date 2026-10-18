@@ -51,7 +51,7 @@
  *   --lxmf-message-ttl-days <n>  prune stored LXMF messages older than this (default: none)
  *
  * Storage limits + TTLs (per-role unless noted):
- *   --storage-limit-mb <n>     byte cap for BOTH rfed blobs and LXMF messages
+ *   --storage-limit-mb <n>     byte cap for BOTH rfed blobs and LXMF messages. Default 500
  *   --blob-ttl-days <n>        rfed blob age TTL. Default 30
  *   --deferred-ttl-days <n>    rfed deferred-queue entry TTL. Default 7
  *
@@ -178,10 +178,12 @@ async function main() {
   const lxmfStampCost = Number.parseInt(values["lxmf-stamp-cost"], 10) || 0;
   const lxmfPeeringCost = Number.parseInt(values["lxmf-peering-cost"], 10) || 0;
   const autopeerMaxCost = Number.parseInt(values["autopeer-max-cost"], 10) || 0;
-  // Shared byte cap (MB → bytes) for rfed blobs + LXMF messages.
+  // Shared byte cap (MB → bytes) for rfed blobs + LXMF messages. Defaults
+  // to 500 MB, matching Python lxmd's default message_storage_limit — the
+  // stores live in RAM, so an uncapped store grows until the process OOMs.
   const storageLimitBytes = values["storage-limit-mb"]
     ? Number.parseInt(values["storage-limit-mb"], 10) * 1000 * 1000
-    : null;
+    : 500 * 1000 * 1000;
   const blobTtlSecs =
     (Number.parseInt(values["blob-ttl-days"], 10) || 30) * 24 * 3600;
   const deferredTtlSecs =
