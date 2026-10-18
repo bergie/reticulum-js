@@ -25,7 +25,10 @@ import {
   APP_NAME,
   DEFAULT_SYNC_STRATEGY,
   OFFER_REQUEST_PATH,
+  PEER_ERROR_THROTTLED,
+  PN_STAMP_THROTTLE_SECS,
   RESOURCE_TRANSFER_TIMEOUT_MS,
+  SYNC_BACKOFF_STEP_SECS,
 } from "./constants.js";
 import { packPropagationContainer } from "./propagation.js";
 import { generateStamp, WORKBLOCK_EXPAND_ROUNDS_PEERING } from "./stamper.js";
@@ -88,6 +91,17 @@ export class LXMPeer {
     this.state = PeerState.IDLE;
     /** @type {Uint8Array[]} transient_ids carried by the last offer. */
     this.lastOffer = [];
+    /**
+     * Epoch seconds of the earliest next sync attempt (Python
+     * `LXMPeer.next_sync_attempt`): failed syncs back off cumulatively, a
+     * peer-reported throttle postpones, success resets both.
+     */
+    this.nextSyncAttempt = 0;
+    /**
+     * Current cumulative backoff (seconds) — grows per attempt, reset when
+     * the link becomes ready (Python `LXMPeer.sync_backoff`).
+     */
+    this.syncBackoff = 0;
     /**
      * Upper bound (ms) for waiting on the outbound message transfer. The JS
      * Resource has no sender-side watchdog, so a stalled receiver — a link
@@ -171,6 +185,19 @@ export class LXMPeer {
    * @returns {Promise<boolean>}
    */
   async sync() {
+    // Python `sync_time_reached` gate: backoff and throttle postpone the
+    // attempt.
+    const nowSecs = Date.now() / 1000;
+    if (nowSecs < this.nextSyncAttempt) {
+      log(
+        "LXMF",
+        `Postponing sync with peer ${this.id} for ${Math.round(
+          this.nextSyncAttempt - nowSecs,
+        )}s (backoff ${this.syncBackoff}s)`,
+        LogLevel.DEBUG,
+      );
+      return false;
+    }
     // Python parity (`LXMPeer.sync`): a peer already mid-sync — link
     // establishing through resource transferring — is never re-entered.
     // Without this, an overlapping driver pass (the runner's sync interval
@@ -231,6 +258,12 @@ export class LXMPeer {
     // `this.link` null, which _teardown handles.
     this.state = PeerState.LINK_ESTABLISHING;
     try {
+      // Python LXMPeer: every attempt pre-arms a cumulative backoff, so a
+      // peer that never reaches LINK_READY is retried at growing intervals
+      // (12 min, 24 min, …) instead of every sync pass. Reset on success
+      // (LINK_READY) below.
+      this.syncBackoff += SYNC_BACKOFF_STEP_SECS;
+      this.nextSyncAttempt = Date.now() / 1000 + this.syncBackoff;
       this.link = await peerDest.createLink();
       // Inject the compression provider: Python LXMPeer responses default to
       // auto-compress, so inbound Resources need bz2 to assemble (§10.2).
@@ -238,6 +271,10 @@ export class LXMPeer {
       this.link.bz2 = this.router.rns.compressionProvider || undefined;
       await this.link.identify(this.router.identity);
       this.state = PeerState.LINK_READY;
+      // The link is up and identified — the sync is actually proceeding.
+      // Python resets the backoff at LINK_READY.
+      this.syncBackoff = 0;
+      this.nextSyncAttempt = 0;
 
       // Apply per-message and per-sync limits, building the offered id list.
       const offeredIds = [];
@@ -278,6 +315,20 @@ export class LXMPeer {
         LogLevel.DEBUG,
       );
       const response = await this.link.request(OFFER_REQUEST_PATH, offer);
+
+      // Python LXMPeer: a throttled peer postpones the next attempt by the
+      // node's stamp throttle window and finishes this sync without touching
+      // the handled-state of the offered messages.
+      if (response === PEER_ERROR_THROTTLED) {
+        log(
+          "LXMF",
+          `Peer ${this.id} is throttling syncs; postponing for ${PN_STAMP_THROTTLE_SECS}s`,
+          LogLevel.DEBUG,
+        );
+        this.nextSyncAttempt = Date.now() / 1000 + PN_STAMP_THROTTLE_SECS;
+        this._teardown();
+        return false;
+      }
 
       const wanted = this._interpretOfferResponse(response, store);
       if (wanted.length === 0) {

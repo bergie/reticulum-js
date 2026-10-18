@@ -392,8 +392,27 @@ export class LXMRouter extends EventTarget {
           // an oversized transfer never starts. Also bounds client submissions
           // on the same destination, as in the reference.
           link.maxResourceSize = node.perSyncLimitKb * 1000;
+          // Sync transfers born of an accepted `/offer` are counted against
+          // the node's inbound-sync admission cap (Python
+          // `propagation_resources_transferring`): the offer handler flags
+          // the link when it answers with a wanted-list, and only flagged
+          // links count here — one-off client submits ride the same
+          // destination uncounted, like the reference.
           link.addEventListener("resource", (/** @type {any} */ resEvent) => {
             const resource = /** @type {any} */ (resEvent).detail.resource;
+            const isSyncTransfer =
+              /** @type {any} */ (link)._rfedInboundSync === true;
+            const syncKey = isSyncTransfer
+              ? toHex(/** @type {Uint8Array} */ (resource.hash))
+              : null;
+            if (syncKey) node.beginInboundSync(syncKey);
+            const fail = async (/** @type {Error} */ err) => {
+              log(
+                "LXMF",
+                `Propagation resource transfer failed: ${err}`,
+                LogLevel.ERROR,
+              );
+            };
             resource
               .whenComplete()
               .then(async () => {
@@ -407,15 +426,23 @@ export class LXMRouter extends EventTarget {
                     `Propagation submit ingested: ${res.stored} stored, ${res.delivered} delivered, ${res.rejected} rejected`,
                     LogLevel.DEBUG,
                   );
+                  // Python `lxmf_propagation`: a peer batch containing
+                  // invalid stamps tears the transfer down and throttles the
+                  // peer for PN_STAMP_THROTTLE.
+                  if (
+                    res.rejected > 0 &&
+                    syncKey &&
+                    link.remoteIdentity?.identityHash
+                  ) {
+                    node.throttlePeer(toHex(link.remoteIdentity.identityHash));
+                    await link.teardown();
+                  }
                   // Peer distribution happens via the node's onStored hook.
                 }
               })
-              .catch((/** @type {Error} */ err) => {
-                log(
-                  "LXMF",
-                  `Propagation resource transfer failed: ${err}`,
-                  LogLevel.ERROR,
-                );
+              .catch(fail)
+              .finally(() => {
+                if (syncKey) node.endInboundSync(syncKey);
               });
           });
         } catch (e) {

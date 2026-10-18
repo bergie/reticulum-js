@@ -14,6 +14,7 @@ import { toHex } from "@reticulum/core/src/utils/encoding.js";
 import {
   PEER_ERROR_INVALID_KEY,
   PEER_ERROR_NO_IDENTITY,
+  PEER_ERROR_THROTTLED,
 } from "../src/constants.js";
 import { Message } from "../src/message.js";
 import { MessageStore } from "../src/message_store.js";
@@ -188,6 +189,118 @@ describe("PropagationNode /offer handler", () => {
     const node = new PropagationNode({ peeringCost: 8 });
     const response = await node.handleOfferRequest(null, [rnd(32), []]);
     assert.strictEqual(response, PEER_ERROR_NO_IDENTITY);
+  });
+
+  // ── Admission control (Python LXMRouter.offer_request levers) ──
+
+  /**
+   * Builds a node + a valid offer payload pair (peering key at cost 1) and
+   * returns helpers for the admission tests.
+   */
+  async function admissionFixture(options = {}) {
+    const nodeIdentity = await Identity.generate();
+    const remoteIdentity = await Identity.generate();
+    const node = new PropagationNode({
+      peeringCost: 1,
+      stampCost: 1,
+      getLocalIdentityHash: () => nodeIdentity.identityHash,
+      ...options,
+    });
+    const peeringId = new Uint8Array(32);
+    peeringId.set(nodeIdentity.identityHash, 0);
+    peeringId.set(remoteIdentity.identityHash, 16);
+    const [pk] = await generateStamp(
+      peeringId,
+      1,
+      WORKBLOCK_EXPAND_ROUNDS_PEERING,
+    );
+    const offer = async (link = null) =>
+      node.handleOfferRequest(remoteIdentity, [pk, [rnd(32)]], link);
+    return { node, remoteIdentity, offer };
+  }
+
+  test("offers are throttled while the inbound-sync cap is reached", async () => {
+    const { node, offer } = await admissionFixture({ maxInboundSyncs: 1 });
+
+    // No in-flight syncs → the offer is served normally (a wanted-list).
+    const first = await offer();
+    assert.ok(Array.isArray(first) || first === true || first === false);
+
+    // Simulate the cap's worth of in-flight sync transfers.
+    node.beginInboundSync("aa");
+    assert.strictEqual(await offer(), PEER_ERROR_THROTTLED);
+
+    // The transfer concluding reopens the gate.
+    node.endInboundSync("aa");
+    const reopened = await offer();
+    assert.notStrictEqual(reopened, PEER_ERROR_THROTTLED);
+  });
+
+  test("offers are throttled while a stamp batch validates", async () => {
+    const { node, offer } = await admissionFixture({}); // sequential = true
+
+    node.validatingCount = 1;
+    assert.strictEqual(await offer(), PEER_ERROR_THROTTLED);
+    node.validatingCount = 0;
+    assert.notStrictEqual(await offer(), PEER_ERROR_THROTTLED);
+  });
+
+  test("static peers bypass the validation and sync gates", async () => {
+    const remote = await Identity.generate();
+    const nodeIdentity = await Identity.generate();
+    const node = new PropagationNode({
+      peeringCost: 1,
+      stampCost: 1,
+      getLocalIdentityHash: () => nodeIdentity.identityHash,
+      maxInboundSyncs: 1,
+      sequentialValidation: true,
+      staticPeerHashes: [remote.identityHash],
+    });
+    node.validatingCount = 3;
+    node.beginInboundSync("bb");
+
+    const peeringId = new Uint8Array(32);
+    peeringId.set(nodeIdentity.identityHash, 0);
+    peeringId.set(remote.identityHash, 16);
+    const [pk] = await generateStamp(
+      peeringId,
+      1,
+      WORKBLOCK_EXPAND_ROUNDS_PEERING,
+    );
+    const response = await node.handleOfferRequest(
+      remote,
+      [pk, [rnd(32)]],
+      null,
+    );
+    assert.notStrictEqual(
+      response,
+      PEER_ERROR_THROTTLED,
+      "static peers must bypass the gates",
+    );
+  });
+
+  test("throttled peers are refused until the window passes", async () => {
+    const { node, remoteIdentity, offer } = await admissionFixture({});
+    node.throttlePeer(toHex(remoteIdentity.identityHash));
+    assert.strictEqual(await offer(), PEER_ERROR_THROTTLED);
+    // Expiry reopens the gate.
+    node.throttledPeers.set(
+      toHex(remoteIdentity.identityHash),
+      Date.now() / 1000 - 1,
+    );
+    assert.notStrictEqual(await offer(), PEER_ERROR_THROTTLED);
+  });
+
+  test("an accepted offer flags its link for inbound-sync counting", async () => {
+    const { offer } = await admissionFixture({});
+    const fakeLink = { _rfedInboundSync: false };
+    const response = await offer(fakeLink);
+    assert.notStrictEqual(response, PEER_ERROR_THROTTLED);
+    assert.equal(
+      fakeLink._rfedInboundSync,
+      true,
+      "a wanted-list response must flag the link",
+    );
   });
 });
 

@@ -20,6 +20,7 @@ import { Identity } from "@reticulum/core/src/core/identity.js";
 import { ContextType, DestType } from "@reticulum/core/src/core/packet.js";
 import { TransportCore } from "@reticulum/core/src/transport/transport.js";
 import { toHex } from "@reticulum/core/src/utils/encoding.js";
+import { PEER_ERROR_THROTTLED } from "../src/constants.js";
 import { PeerState } from "../src/peer.js";
 import { LXMRouter } from "../src/router.js";
 
@@ -374,4 +375,151 @@ test("syncPeers() skips overlapping passes", async () => {
   // Once the first pass finished, a new pass runs again.
   await router.syncPeers();
   assert.equal(syncCalls, 2);
+});
+
+test("a sync attempt arms cumulative backoff; failure postpones the next", async () => {
+  const wire = new Wire();
+  const clientTransport = new LoopbackTransport();
+  wire.attach(clientTransport);
+
+  const clientIdentity = await Identity.generate();
+  const router = new LXMRouter(clientIdentity, {
+    transport: clientTransport,
+    registerDestination() {},
+  });
+  await router.init();
+  await router.enablePropagation({ stampCost: 0 });
+
+  // The peer identity must be recallable under the peer's destination hash
+  // so the sync reaches establishment.
+  const peerIdentity = await Identity.generate();
+  const peerDestHash = rnd(16);
+  await clientTransport.rememberIdentity(
+    rnd(16),
+    peerDestHash,
+    peerIdentity.publicKey,
+    null,
+  );
+  const peer = router.peer(peerDestHash, { stampCost: 0, peeringCost: 1 });
+
+  // One unhandled message so the sync proceeds to link establishment.
+  const tid = rnd(32);
+  router.propagationNode.store.add({
+    transientId: tid,
+    destinationHash: rnd(16),
+    lxmfData: new Uint8Array(8),
+    stampData: new Uint8Array(0),
+    received: Date.now() / 1000,
+    stampValue: 0,
+    size: 40,
+  });
+  router.propagationNode.store.markUnhandledForPeer(tid, peerDestHash);
+
+  // Make establishment fail fast (peer unreachable): the LINKREQUEST transmit
+  // throws, so the sync never reaches LINK_READY and the backoff stands.
+  let linkRequestAttempts = 0;
+  const originalSend = clientTransport.sendPacket.bind(clientTransport);
+  clientTransport.sendPacket = async (packet) => {
+    if (packet.packetType === 2 /* LINKREQUEST */) {
+      linkRequestAttempts++;
+      throw new Error("unreachable");
+    }
+    return originalSend(packet);
+  };
+
+  await assert.rejects(peer.sync(), /unreachable/);
+  assert.ok(
+    peer.syncBackoff >= 720,
+    "first failed attempt arms the 12-minute backoff step",
+  );
+  assert.ok(peer.nextSyncAttempt > Date.now() / 1000 + 600);
+
+  // The next attempt is postponed without touching the network.
+  assert.equal(await peer.sync(), false, "postponed");
+  assert.equal(
+    linkRequestAttempts,
+    1,
+    "the postponed attempt must not reach the network",
+  );
+  assert.equal(peer.syncBackoff, 720);
+});
+
+test("a throttled peer offer postpones without marking messages handled", async () => {
+  const wire = new Wire();
+  const clientTransport = new LoopbackTransport();
+  const remoteTransport = new LoopbackTransport();
+  wire.attach(clientTransport);
+  wire.attach(remoteTransport);
+
+  const remoteIdentity = await Identity.generate();
+  const remoteDest = await Destination.create(
+    "lxmf.propagation",
+    Direction.IN,
+    DestType.SINGLE,
+    remoteIdentity,
+    /** @type {any} */ ({ transport: remoteTransport }),
+  );
+  remoteTransport.addDestination(remoteDest.destinationHash, remoteDest);
+  remoteDest.addEventListener("link_request", async (event) => {
+    await remoteDest.acceptLink(
+      /** @type {any} */ (event).detail.packet,
+      /** @type {any} */ (event).detail.receivingInterface ?? null,
+    );
+  });
+  // The node answers every offer with the throttle error.
+  await remoteDest.registerRequestHandler("/offer", {
+    responseGenerator: async () => PEER_ERROR_THROTTLED,
+  });
+
+  const clientIdentity = await Identity.generate();
+  const router = new LXMRouter(clientIdentity, {
+    transport: clientTransport,
+    registerDestination() {},
+  });
+  await router.init();
+  await router.enablePropagation({ stampCost: 0 });
+
+  await clientTransport.rememberIdentity(
+    rnd(16),
+    remoteDest.destinationHash,
+    remoteIdentity.publicKey,
+    null,
+  );
+  const peer = router.peer(remoteDest.destinationHash, {
+    stampCost: 0,
+    peeringCost: 1,
+  });
+  // One unhandled message so the sync reaches the offer stage.
+  const tid = rnd(32);
+  router.propagationNode.store.add({
+    transientId: tid,
+    destinationHash: rnd(16),
+    lxmfData: new Uint8Array(8),
+    stampData: new Uint8Array(0),
+    received: Date.now() / 1000,
+    stampValue: 0,
+    size: 40,
+  });
+  router.propagationNode.store.markUnhandledForPeer(
+    tid,
+    remoteDest.destinationHash,
+  );
+
+  const result = await peer.sync();
+  assert.equal(result, false, "throttled sync completes without transfer");
+  // The throttle postponement must be armed (within the throttle window).
+  const now = Date.now() / 1000;
+  assert.ok(
+    peer.nextSyncAttempt > now + 60 && peer.nextSyncAttempt <= now + 181,
+    "throttle postpones the next attempt by the throttle window",
+  );
+  // The offered message must NOT be marked handled by a throttled sync.
+  assert.equal(
+    router.propagationNode.store.unhandledEntriesForPeer(
+      remoteDest.destinationHash,
+      0,
+    ).length,
+    1,
+    "the offered message stays unhandled",
+  );
 });

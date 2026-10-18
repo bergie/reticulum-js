@@ -891,6 +891,10 @@ export class Resource extends EventTarget {
 
     const resource = new Resource({ link, bz2: options.bz2 });
     resource.status = ResourceStatus.TRANSFERRING;
+    // Python Resource.accept: resume at the window the link's last incoming
+    // transfer adapted to, instead of re-learning throughput from 4 parts
+    // per round-trip on every transfer.
+    if (link.lastResourceWindow) resource.window = link.lastResourceWindow;
     resource.totalSize = adv.t;
     resource.uncompressedSize = adv.d;
     resource.totalParts = adv.n;
@@ -1198,6 +1202,9 @@ export class Resource extends EventTarget {
       this.link._unregisterIncomingResource(
         /** @type {Uint8Array} */ (this.hash),
       );
+      // Python `Link.resource_concluded`: remember the window this transfer
+      // adapted to, so the next incoming transfer on the link resumes there.
+      if (this.link) this.link.lastResourceWindow = this.window;
       log("Resource", "Incoming resource COMPLETE", LogLevel.DEBUG);
       this.dispatchEvent(
         new CustomEvent("complete", {

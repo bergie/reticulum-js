@@ -6,6 +6,8 @@
 - A failed or timed-out `Link.request()` now cancels its stalled oversized RESPONSE transfer outright (the request id travels in the advertisement's `q` field), instead of leaving a half-received response registered on the cached link — every retry cycle had accumulated another one.
 - The receiver request window now adapts like the Python reference instead of sitting frozen at 4 parts per round-trip: it grows while the transfer drains healthily (ceiling 10 on slow links, 75 on fast ones — probed from the achieved window rate), and shrinks on watchdog stalls. A frozen window of 4 made large transfers crawl (a 10 MB peer-sync container took thousands of round-trips), keeping transfer concurrency — and with it the retained in-flight buffers — artificially maximal. This matters especially now that fast worker-based stamping no longer throttles the pipeline.
 - The sender drops its redundant payload reference once a transfer is prepared (part slices are the wire form and all the sender ever needs again), and split transfers drop the caller's `data` once the full plaintext is captured for segmenting — halving the per-transfer retained footprint in both cases.
+- Incoming transfers on a link now remember the request window the last transfer adapted to (Python `Link.last_resource_window`): new incoming transfers resume at the earned window instead of re-learning throughput from 4 parts per round-trip on every transfer, so repeated peer syncs / client fetches over one link keep the earned drain rate.
+- REQUEST handlers now receive the arrival link as a sixth argument (Python's `link_id`), so destination-scoped services can correlate it — used by the LXMF propagation node's inbound-sync admission control.
 
 ## [0.9.12] - 2026-10-17
 

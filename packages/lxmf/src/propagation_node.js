@@ -10,15 +10,18 @@
  * destination's request handler and Resource-receive path.
  */
 
-import { Destination, DestType, toHex } from "@reticulum/core";
+import { Destination, DestType, LogLevel, log, toHex } from "@reticulum/core";
 import { buildPropagationNodeAppData } from "./announce_data.js";
 import {
   APP_NAME,
+  MAX_INBOUND_SYNCS,
   PEER_ERROR_INVALID_DATA,
   PEER_ERROR_INVALID_KEY,
   PEER_ERROR_NO_ACCESS,
   PEER_ERROR_NO_IDENTITY,
+  PEER_ERROR_THROTTLED,
   PEERING_COST,
+  PN_STAMP_THROTTLE_SECS,
   PROCESSED_PRUNE_INTERVAL_SECS,
   PROCESSED_TID_TTL_SECS,
   PROPAGATION_COST,
@@ -59,6 +62,18 @@ const DESTINATION_LENGTH = 16;
  *   for local delivery of messages addressed to this node's own identities.
  *   Returns null when the recipient is not local.
  * @property {(message: Message, transientId: Uint8Array) => void|Promise<void>} [onLocalDelivery]
+ * @property {number} [maxInboundSyncs=3] Cap on concurrent inbound peer-sync
+ *   transfers; `/offer` replies `ERROR_THROTTLED` beyond it (Python
+ *   `MAX_INBOUND_SYNCS`).
+ * @property {number} [stampThrottleSecs=180] Throttle window for peers whose
+ *   batches contained invalid stamps, and the postponement the
+ *   `ERROR_THROTTLED` reply asks of the peer (Python `PN_STAMP_THROTTLE`).
+ * @property {boolean} [sequentialValidation=true] Only one stamp batch may
+ *   validate at a time; offers arriving during a validation are refused with
+ *   `ERROR_THROTTLED` (Python `propagation_sequential_validation`).
+ * @property {Uint8Array[]} [staticPeerHashes] Peered node destination hashes
+ *   that bypass the validation and inbound-sync gates (Python
+ *   `static_peers` + `static_peers_bypass_sequential`).
  *   Invoked when a propagated message addressed to a local identity decrypts.
  * @property {(storedIds: Uint8Array[]) => void} [onStored]
  *   Invoked with the transient_ids newly stored by {@link ingestBlobs}. The
@@ -91,6 +106,45 @@ export class PropagationNode {
     this.perTransferLimitKb = options.perTransferLimitKb ?? PROPAGATION_LIMIT;
     this.perSyncLimitKb = options.perSyncLimitKb ?? SYNC_LIMIT;
     this.peeringCost = options.peeringCost ?? PEERING_COST;
+    /**
+     * Cap on concurrent inbound peer-sync transfers (Python
+     * `MAX_INBOUND_SYNCS`, lxmd default 3). Offers arriving while this many
+     * sync transfers are in flight are refused with `ERROR_THROTTLED`;
+     * the throttled peer postpones its next sync by `stampThrottleSecs`.
+     * @type {number}
+     */
+    this.maxInboundSyncs = options.maxInboundSyncs ?? MAX_INBOUND_SYNCS;
+    /**
+     * Throttle window (seconds) applied to peers whose transferred batches
+     * contained invalid stamps, and the postponement the `ERROR_THROTTLED`
+     * reply asks of the peer (Python `PN_STAMP_THROTTLE`).
+     * @type {number}
+     */
+    this.stampThrottleSecs =
+      options.stampThrottleSecs ?? PN_STAMP_THROTTLE_SECS;
+    /**
+     * Whether only one stamp batch may validate at a time — offers arriving
+     * during a validation are refused with `ERROR_THROTTLED` (Python
+     * `propagation_sequential_validation`, lxmd default on). Static peers
+     * listed in `staticPeerHashes` bypass the gates.
+     * @type {boolean}
+     */
+    this.sequentialValidation = options.sequentialValidation ?? true;
+    /**
+     * Peered node destination hashes (hex) that bypass the sequential
+     * validation and inbound-sync gates (Python `static_peers` +
+     * `static_peers_bypass_sequential`).
+     * @type {Set<string>}
+     */
+    this.staticPeerHashes = new Set(
+      (options.staticPeerHashes ?? []).map((h) => toHex(h)),
+    );
+    /** hex(identityHash) → throttle-until epoch seconds (invalid-stamp bans). */
+    this.throttledPeers = new Map();
+    /** hex(resource hash) → in-flight inbound peer-sync transfers. */
+    this.inboundSyncs = new Map();
+    /** Number of stamp batches currently validating. */
+    this.validatingCount = 0;
     this.name = options.name ?? null;
     this.nodeState = options.nodeState ?? true;
     this.identityAllowed = options.identityAllowed ?? (() => true);
@@ -117,6 +171,41 @@ export class PropagationNode {
   /** Minimum accepted stamp value = max(0, cost − flexibility). */
   minAcceptedCost() {
     return Math.max(0, this.stampCost - this.stampCostFlexibility);
+  }
+
+  /**
+   * Marks an inbound peer-sync transfer as in flight (Python
+   * `propagation_resources_transferring`). The owning router calls this when
+   * a transfer born of an accepted offer begins, and {@link endInboundSync}
+   * when it concludes. While {@link maxInboundSyncs} transfers are in
+   * flight, `/offer` replies `ERROR_THROTTLED`.
+   * @param {string} key hex(resource hash)
+   * @returns {void}
+   */
+  beginInboundSync(key) {
+    this.inboundSyncs.set(key, Date.now() / 1000);
+  }
+
+  /**
+   * Marks an inbound peer-sync transfer concluded.
+   * @param {string} key hex(resource hash)
+   * @returns {void}
+   */
+  endInboundSync(key) {
+    this.inboundSyncs.delete(key);
+  }
+
+  /**
+   * Throttles a peer identity for {@link stampThrottleSecs} — used when a
+   * transferred batch contained invalid stamps (Python `throttled_peers`).
+   * @param {string} remoteHex hex(identityHash) of the offender
+   * @returns {void}
+   */
+  throttlePeer(remoteHex) {
+    this.throttledPeers.set(
+      remoteHex,
+      Date.now() / 1000 + this.stampThrottleSecs,
+    );
   }
 
   /**
@@ -193,6 +282,27 @@ export class PropagationNode {
     if (now - this._lastDedupPrune >= PROCESSED_PRUNE_INTERVAL_SECS) {
       this._pruneDedupCaches(now);
     }
+    // Sequential validation (Python `propagation_sequential_validation`):
+    // while a stamp batch is being validated, `/offer` replies THROTTLED to
+    // other peers, so at most one batch's blobs are in memory for validation
+    // at a time. Static peers bypass at the offer gate.
+    this.validatingCount++;
+    try {
+      return await this._ingestBlobsInner(transientList);
+    } finally {
+      this.validatingCount--;
+    }
+  }
+
+  /**
+   * The body of {@link ingestBlobs}, run under the sequential-validation
+   * counter.
+   * @param {Uint8Array[]} transientList
+   * @returns {Promise<{stored: number, delivered: number, rejected: number, storedIds: Uint8Array[]}>}
+   * @private
+   */
+  async _ingestBlobsInner(transientList) {
+    const now = Date.now() / 1000;
     const minCost = this.minAcceptedCost();
     const validated = await validatePnStamps(transientList, minCost);
     const rejected = transientList.length - validated.length;
@@ -341,7 +451,7 @@ export class PropagationNode {
    * @returns {Promise<boolean|Uint8Array[]|number>} the offer response, or a
    *   peer-error code.
    */
-  async handleOfferRequest(remoteIdentity, data) {
+  async handleOfferRequest(remoteIdentity, data, link = null) {
     if (!remoteIdentity) return PEER_ERROR_NO_IDENTITY;
     if (!this.identityAllowed(remoteIdentity)) return PEER_ERROR_NO_ACCESS;
     if (!Array.isArray(data) || data.length < 2) return PEER_ERROR_INVALID_DATA;
@@ -357,6 +467,36 @@ export class PropagationNode {
     if (!(await validatePeeringKey(peeringId, peeringKey, this.peeringCost)))
       return PEER_ERROR_INVALID_KEY;
 
+    // ── Admission control (Python LXMRouter.offer_request) ──
+    // Static peers bypass the sequential-validation and inbound-sync gates.
+    const remoteHex = toHex(remoteHash);
+    const bypass = this.staticPeerHashes.has(remoteHex);
+    const nowSecs = Date.now() / 1000;
+    const throttleUntil = this.throttledPeers.get(remoteHex);
+    if (throttleUntil !== undefined) {
+      if (nowSecs < throttleUntil) return PEER_ERROR_THROTTLED;
+      this.throttledPeers.delete(remoteHex);
+    }
+    if (!bypass) {
+      if (this.sequentialValidation && this.validatingCount > 0) {
+        log(
+          "PropagationNode",
+          `Offer postponed: already validating ${this.validatingCount} stamp batch(es)`,
+        );
+        return PEER_ERROR_THROTTLED;
+      }
+      if (
+        this.maxInboundSyncs > 0 &&
+        this.inboundSyncs.size >= this.maxInboundSyncs
+      ) {
+        log(
+          "PropagationNode",
+          `Offer postponed: ${this.inboundSyncs.size} sync transfer(s) already in flight`,
+        );
+        return PEER_ERROR_THROTTLED;
+      }
+    }
+
     /** @type {Uint8Array[]} */
     const offered = data[1];
     /** @type {Uint8Array[]} */
@@ -365,16 +505,25 @@ export class PropagationNode {
       if (!this.store.has(tid)) wanted.push(tid);
     }
     if (wanted.length === 0) return false;
+    // A wanted-list means a sync transfer will follow on this link: flag it
+    // so the router counts it against the inbound-sync admission cap.
+    if (link) /** @type {any} */ (link)._rfedInboundSync = true;
     if (wanted.length === offered.length) return true;
     return wanted;
   }
 
   /**
    * Builds the `responseGenerator` for `registerRequestHandler("/offer", …)`.
-   * @returns {(path: string, data: any, requestId: Uint8Array, remoteIdentity: import("@reticulum/core").Identity|null, requestedAt: number) => Promise<boolean|Uint8Array[]|number>}
+   * @returns {function(string, any, Uint8Array, import("@reticulum/core").Identity|null, number, import("@reticulum/core").Link): Promise<boolean|Uint8Array[]|number>} The §11 response generator.
    */
   getOfferRequestHandler() {
-    return async (_path, data, _requestId, remoteIdentity) =>
-      this.handleOfferRequest(remoteIdentity, data);
+    return async (
+      /** @type {string} */ _path,
+      /** @type {any} */ data,
+      /** @type {Uint8Array} */ _requestId,
+      /** @type {import("@reticulum/core").Identity|null} */ remoteIdentity,
+      /** @type {number} */ _requestedAt,
+      /** @type {any} */ link,
+    ) => this.handleOfferRequest(remoteIdentity, data, link);
   }
 }

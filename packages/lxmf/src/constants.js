@@ -103,6 +103,30 @@ export const PEER_ERROR_INVALID_STAMP = 0xf5;
 /** Peer error: the requester is being rate-limited / throttled. */
 export const PEER_ERROR_THROTTLED = 0xf6;
 
+/**
+ * Default cap on concurrent inbound peer-sync transfers the propagation node
+ * accepts before replying `ERROR_THROTTLED` (Python `LXMRouter
+ * .MAX_INBOUND_SYNCS`). This is the node-side admission control that bounds
+ * how much ingest work (and buffer) the node carries at once; the throttled
+ * peer postpones its next sync by {@link PN_STAMP_THROTTLE_SECS}.
+ */
+export const MAX_INBOUND_SYNCS = 3;
+
+/**
+ * Cumulative backoff step (seconds) added to a peered node's next sync
+ * attempt each time a sync is attempted, reset when the sync link becomes
+ * ready (Python `LXMPeer.SYNC_BACKOFF_STEP`). A failing or unreachable peer
+ * is re-attempted at growing intervals instead of every sync pass.
+ */
+export const SYNC_BACKOFF_STEP_SECS = 12 * 60;
+
+/**
+ * How long (seconds) a peer told us `ERROR_THROTTLED` (or that we throttled
+ * for invalid stamps, server-side) before the next sync attempt (Python
+ * `LXMRouter.PN_STAMP_THROTTLE`).
+ */
+export const PN_STAMP_THROTTLE_SECS = 180;
+
 // --- Propagation transfer states (LXMRouter.py PR_*) ---
 /** Lifecycle states of a propagation transfer (`LXMRouter.py` `PR_*`). */
 export const TransferState = Object.freeze({

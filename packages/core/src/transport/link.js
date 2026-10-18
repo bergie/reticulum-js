@@ -365,6 +365,16 @@ export class Link extends EventTarget {
      * @type {import("../interfaces/base.js").Interface | null}
      */
     this.attachedInterface = null;
+    /**
+     * The request window the most recently concluded incoming transfer on
+     * this link had adapted to (Python `Link.last_resource_window`). New
+     * incoming transfers seed their window from it, so repeated transfers
+     * over one link — repeated peer syncs, repeated client fetches — resume
+     * at the earned throughput instead of re-learning it from 4 parts per
+     * round-trip every time.
+     * @type {number|null}
+     */
+    this.lastResourceWindow = null;
   }
 
   /**
@@ -1886,6 +1896,11 @@ export class Link extends EventTarget {
         requestId,
         this.remoteIdentity ?? null,
         requestTime,
+        // The link the REQUEST arrived on (Python's link_id) — lets
+        // destination-scoped services mark the link, e.g. an LXMF
+        // propagation node flagging a peer-sync transfer for its
+        // inbound-sync admission count.
+        this,
       );
     } catch (err) {
       log(

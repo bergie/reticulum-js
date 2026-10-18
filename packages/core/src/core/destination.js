@@ -62,6 +62,10 @@ export const Allow = {
  * @param {import("./identity.js").Identity|null} remoteIdentity - The
  *   requester's long-term identity, set iff they called `link.identify()`.
  * @param {number} requestTime - The requester's timestamp (envelope [0]).
+ * @param {import("../transport/link.js").Link} link - The link the REQUEST
+ *   arrived on; lets destination-scoped services correlate the link (e.g. an
+ *   LXMF propagation node flagging peer-sync transfers for admission
+ *   control).
  * @returns {Promise<any>|any}
  */
 
