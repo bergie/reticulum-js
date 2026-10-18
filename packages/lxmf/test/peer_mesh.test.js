@@ -254,7 +254,16 @@ describe("PropagationNode /offer handler", () => {
       getLocalIdentityHash: () => nodeIdentity.identityHash,
       maxInboundSyncs: 1,
       sequentialValidation: true,
-      staticPeerHashes: [remote.identityHash],
+      staticPeerHashes: [
+        (
+          await Destination.OUT(
+            "lxmf.propagation",
+            DestType.SINGLE,
+            remote,
+            null,
+          )
+        ).destinationHash,
+      ],
     });
     node.validatingCount = 3;
     node.beginInboundSync("bb");
@@ -281,13 +290,18 @@ describe("PropagationNode /offer handler", () => {
 
   test("throttled peers are refused until the window passes", async () => {
     const { node, remoteIdentity, offer } = await admissionFixture({});
-    node.throttlePeer(toHex(remoteIdentity.identityHash));
+    // Peers are keyed by their derived propagation destination hash.
+    const peerDest = await Destination.OUT(
+      "lxmf.propagation",
+      DestType.SINGLE,
+      remoteIdentity,
+      null,
+    );
+    const peerHex = toHex(/** @type {Uint8Array} */ (peerDest.destinationHash));
+    node.throttlePeer(peerHex);
     assert.strictEqual(await offer(), PEER_ERROR_THROTTLED);
     // Expiry reopens the gate.
-    node.throttledPeers.set(
-      toHex(remoteIdentity.identityHash),
-      Date.now() / 1000 - 1,
-    );
+    node.throttledPeers.set(peerHex, Date.now() / 1000 - 1);
     assert.notStrictEqual(await offer(), PEER_ERROR_THROTTLED);
   });
 

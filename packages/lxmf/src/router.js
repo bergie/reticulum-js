@@ -30,19 +30,24 @@ import {
 } from "./announce_data.js";
 import {
   ALL_MESSAGES,
+  AUTOPEER_MAXDEPTH,
   DEFAULT_SYNC_STRATEGY,
   DELIVERY_LIMIT,
   MAX_PEERING_COST,
+  MAX_PEERS,
   MESSAGE_GET_PATH,
   OFFER_REQUEST_PATH,
+  PEER_MAX_UNREACHABLE_SECS,
   PROCESSED_PRUNE_INTERVAL_SECS,
   PROCESSED_TID_TTL_SECS,
   PROPAGATION_COST,
   RESOURCE_TRANSFER_TIMEOUT_MS,
+  ROTATION_AR_MAX,
+  ROTATION_HEADROOM_PCT,
   STAMP_SIZE,
 } from "./constants.js";
 import { Message } from "./message.js";
-import { LXMPeer } from "./peer.js";
+import { LXMPeer, PeerState } from "./peer.js";
 import {
   packPropagationContainer,
   unpackPropagationContainer,
@@ -183,6 +188,25 @@ export class LXMRouter extends EventTarget {
     // --- Peer mesh (§5.8.4): peered propagation nodes keyed by dest hash. ---
     /** @type {Map<string, LXMPeer>} */
     this.peers = new Map();
+    /**
+     * Cap on peered propagation nodes (Python `LXMRouter.MAX_PEERS`, lxmd
+     * default 20). Peering beyond the cap is refused; {@link rotatePeers}
+     * makes headroom by dropping the least-useful peers.
+     * @type {number}
+     */
+    this.maxPeers = MAX_PEERS;
+    /**
+     * Peered node destination hashes protected from rotation and culling
+     * (Python `static_peers`).
+     * @type {Set<string>}
+     */
+    this.staticPeers = new Set();
+    /**
+     * Maximum announce hop count a node is auto-peered at (Python
+     * `AUTOPEER_MAXDEPTH`).
+     * @type {number}
+     */
+    this.autopeerMaxDepth = AUTOPEER_MAXDEPTH;
     // --- Autopeer (the Python reference's lxmd): auto-peer with discovered ---
     // propagation nodes whose advertised peering cost ≤ this threshold.
     /** @type {boolean} */
@@ -306,10 +330,24 @@ export class LXMRouter extends EventTarget {
    *
    * @param {number} [maxPeeringCost] Max advertised peering cost to auto-peer
    *   at (default {@link MAX_PEERING_COST}).
+   * @param {object} [options]
+   * @param {number} [options.maxPeers] Override the peer-table cap (default
+   *   {@link MAX_PEERS}).
+   * @param {number} [options.autopeerMaxDepth] Max announce hop count to
+   *   auto-peer at (default {@link AUTOPEER_MAXDEPTH}).
+   * @param {Uint8Array[]} [options.staticPeers] Peered destination hashes
+   *   protected from rotation and culling (Python `static_peers`).
    */
-  enableAutopeer(maxPeeringCost = MAX_PEERING_COST) {
+  enableAutopeer(maxPeeringCost = MAX_PEERING_COST, options = {}) {
     this.autopeerEnabled = true;
     this.autopeerMaxPeeringCost = maxPeeringCost;
+    if (options.maxPeers != null) this.maxPeers = options.maxPeers;
+    if (options.autopeerMaxDepth != null) {
+      this.autopeerMaxDepth = options.autopeerMaxDepth;
+    }
+    for (const hash of options.staticPeers ?? []) {
+      this.staticPeers.add(toHex(hash));
+    }
   }
 
   /**
@@ -434,7 +472,19 @@ export class LXMRouter extends EventTarget {
                     syncKey &&
                     link.remoteIdentity?.identityHash
                   ) {
-                    node.throttlePeer(toHex(link.remoteIdentity.identityHash));
+                    // Key the throttle by the peer's derived propagation
+                    // destination hash (Python's remote_hash).
+                    const peerDest = await Destination.OUT(
+                      "lxmf.propagation",
+                      DestType.SINGLE,
+                      link.remoteIdentity,
+                      null,
+                    );
+                    node.throttlePeer(
+                      toHex(
+                        /** @type {Uint8Array} */ (peerDest.destinationHash),
+                      ),
+                    );
                     await link.teardown();
                   }
                   // Peer distribution happens via the node's onStored hook.
@@ -509,6 +559,14 @@ export class LXMRouter extends EventTarget {
     if (this.peers.has(key)) {
       peer = /** @type {LXMPeer} */ (this.peers.get(key));
     } else {
+      if (this.peers.size >= this.maxPeers) {
+        log(
+          "LXMF",
+          `Max peers reached (${this.maxPeers}), not peering with ${key} — run rotatePeers() to make headroom`,
+          LogLevel.DEBUG,
+        );
+        return null;
+      }
       peer = new LXMPeer(this, destinationHash.slice(), DEFAULT_SYNC_STRATEGY);
       this.peers.set(key, peer);
       isNewPeer = true;
@@ -575,6 +633,25 @@ export class LXMRouter extends EventTarget {
     if (this._peerSyncRunning) return;
     this._peerSyncRunning = true;
     try {
+      // Unreachable culling (Python sync_peers): a peer not heard from in
+      // PEER_MAX_UNREACHABLE_SECS is broken off, unless it is a static peer.
+      const nowSecs = Date.now() / 1000;
+      for (const [key, peer] of [...this.peers]) {
+        if (
+          !this.staticPeers.has(key) &&
+          nowSecs > peer.lastHeard + PEER_MAX_UNREACHABLE_SECS
+        ) {
+          log(
+            "LXMF",
+            `Unpeering unreachable peer ${key} (not heard for ${Math.round((nowSecs - peer.lastHeard) / 3600)}h)`,
+            LogLevel.INFO,
+          );
+          this.unpeer(/** @type {Uint8Array} */ (peer.destinationHash));
+        }
+      }
+      // Peer rotation (Python's job-loop rotate_peers): keep headroom under
+      // the peer cap by dropping the least-useful peers.
+      this.rotatePeers();
       for (const peer of this.peers.values()) {
         try {
           await peer.sync();
@@ -588,6 +665,72 @@ export class LXMRouter extends EventTarget {
       }
     } finally {
       this._peerSyncRunning = false;
+    }
+  }
+
+  /**
+   * Peer rotation (Python `LXMRouter.rotate_peers`): when the peer table is
+   * at or over {@link maxPeers}, drop just enough of the least-useful peers
+   * to restore {@link ROTATION_HEADROOM_PCT} headroom. Candidates are
+   * non-static, IDLE peers: unreachable ones first, then peers that have
+   * been offered messages but accepted none at a rate below
+   * {@link ROTATION_AR_MAX}. Peers with nothing offered yet are spared, as
+   * are static peers and peers still mid-sync.
+   * @returns {number} count of peers dropped.
+   */
+  rotatePeers() {
+    try {
+      if (this.peers.size <= this.maxPeers) return 0;
+      const headroom = Math.max(
+        1,
+        Math.floor((this.maxPeers * ROTATION_HEADROOM_PCT) / 100),
+      );
+      const requiredDrops = this.peers.size - (this.maxPeers - headroom);
+      if (this.peers.size - requiredDrops <= 1) return 0;
+
+      /** @type {LXMPeer[]} */
+      const unresponsive = [];
+      /** @type {LXMPeer[]} */
+      const waiting = [];
+      for (const [key, peer] of this.peers) {
+        if (this.staticPeers.has(key)) continue;
+        if (peer.state !== PeerState.IDLE) continue;
+        if (!peer.alive) {
+          unresponsive.push(peer);
+        } else if (peer.offered > 0) {
+          waiting.push(peer);
+        }
+        // Peers never offered anything are spared (Python's rule).
+      }
+
+      const dropPool =
+        unresponsive.length > 0 ? [...unresponsive, ...waiting] : waiting;
+      if (dropPool.length === 0) return 0;
+
+      // Lowest acceptance rate first (Python's ordering).
+      const sorted = dropPool
+        .map((peer) => ({
+          peer,
+          acceptanceRate: peer.offered === 0 ? 0 : peer.outgoing / peer.offered,
+        }))
+        .sort((a, b) => a.acceptanceRate - b.acceptanceRate);
+
+      let dropped = 0;
+      for (const { peer, acceptanceRate } of sorted) {
+        if (dropped >= requiredDrops) break;
+        if (acceptanceRate >= ROTATION_AR_MAX) break;
+        log(
+          "LXMF",
+          `Rotating out peer ${peer.id} (acceptance rate ${(acceptanceRate * 100).toFixed(1)}%, ${peer.outgoing}/${peer.offered})`,
+          LogLevel.DEBUG,
+        );
+        this.unpeer(peer.destinationHash);
+        dropped++;
+      }
+      return dropped;
+    } catch (/** @type {any} */ e) {
+      log("LXMF", `Peer rotation failed: ${e}`, LogLevel.ERROR);
+      return 0;
     }
   }
 
@@ -1192,12 +1335,17 @@ export class LXMRouter extends EventTarget {
       );
       // Autopeer: a `lxmf.propagation` announce advertises the node's costs in
       // its app_data. If autopeering is on and the announced peering cost is
-      // within our threshold, establish a peering relationship (Python lxmd).
+      // within our threshold — and the announce is within the autopeer hop
+      // depth (Python `autopeer_maxdepth`) — establish a peering
+      // relationship (Python lxmd). The peer() cap bounds the total.
       if (this.autopeerEnabled && this.propagationNode) {
+        const hops =
+          /** @type {CustomEvent} */ (event).detail?.packet?.hops ?? 0;
         const pn = parsePropagationNodeAppData(appData);
         if (
           pn &&
           pn.nodeState &&
+          hops <= this.autopeerMaxDepth &&
           pn.peeringCost <= this.autopeerMaxPeeringCost &&
           !this.peers.has(toHex(destinationHash))
         ) {

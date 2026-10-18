@@ -469,7 +469,17 @@ export class PropagationNode {
 
     // ── Admission control (Python LXMRouter.offer_request) ──
     // Static peers bypass the sequential-validation and inbound-sync gates.
-    const remoteHex = toHex(remoteHash);
+    // Peers are keyed by their derived `lxmf.propagation` destination hash
+    // (Python's remote_hash) — the form operators configure static peers in.
+    const remoteDest = await Destination.OUT(
+      APP_NAME + ".propagation",
+      DestType.SINGLE,
+      remoteIdentity,
+      null,
+    );
+    const remoteHex = toHex(
+      /** @type {Uint8Array} */ (remoteDest.destinationHash),
+    );
     const bypass = this.staticPeerHashes.has(remoteHex);
     const nowSecs = Date.now() / 1000;
     const throttleUntil = this.throttledPeers.get(remoteHex);

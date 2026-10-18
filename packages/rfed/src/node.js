@@ -149,6 +149,22 @@ const BACKUP_TICK_SECS = 30;
 const PENDING_BACKUP_CAP = 1024;
 
 /**
+ * Cap on concurrent inbound publish Resource transfers (the LXMF
+ * propagation node's `MAX_INBOUND_SYNCS` lever, applied to the rfed
+ * publish path). Oversized publishes arriving beyond the cap are refused
+ * with RESOURCE_RCL at advertisement time; small single-packet publishes
+ * are unaffected.
+ */
+const MAX_INBOUND_PUBLISHES = 3;
+/** Throttle window (seconds) for identified publishers whose publish failed
+ * stamp validation (the LXMF `PN_STAMP_THROTTLE` lever). */
+const STAMP_THROTTLE_SECS = 180;
+/** Default cap on a single inbound publish Resource (bytes) — bounds what an
+ * unidentified publisher can pin in transfer buffers. Trusted peers keep the
+ * core's default ceiling instead. */
+const MAX_PUBLISH_BYTES = 1024 * 1024;
+
+/**
  * @typedef {Object} RFedNodeOptions
  * @property {Identity} identity - The node's identity; shared by all rfed.* destinations.
  * @property {any} rns - The Reticulum instance whose `.transport` routes packets
@@ -200,6 +216,18 @@ const PENDING_BACKUP_CAP = 1024;
  * @property {boolean} [config.fromStaticOnly] When true, only `staticPeers`
  *   are tracked by `FedSync`; otherwise every seen `rfed.node` announce is
  *   tracked (Rust `from_static_only`, default false).
+ * @property {number} [config.maxInboundPublishes=3] Cap on concurrent inbound
+ *   publish Resource transfers; oversized publishes beyond the cap are
+ *   refused with RESOURCE_RCL (the LXMF `MAX_INBOUND_SYNCS` lever).
+ * @property {number} [config.stampThrottleSecs=180] Throttle window for
+ *   identified publishers whose publish failed stamp validation (the LXMF
+ *   `PN_STAMP_THROTTLE` lever).
+ * @property {number} [config.maxPublishBytes=1048576] Cap on a single inbound
+ *   publish Resource for untrusted publishers (bounds transfer-buffer
+ *   pinning; trusted peers keep the core default ceiling).
+ * @property {Uint8Array[]} [config.trustedPublishers] Publisher destination
+ *   hashes bypassing the publish admission gates (the LXMF
+ *   `staticPeerHashes` lever).
  * @property {{ blobStore?: BlobStore, subscriptions?: SubscriptionTable, deferred?: DeferredQueue, notify?: NotifyRegistry }} [stores]
  *   Pre-built stores to adopt instead of fresh in-memory ones. A runner passes
  *   stores loaded from disk (via `@reticulum/node`'s `loadRFedStores`) so state
@@ -266,6 +294,41 @@ export class RFedNode {
      * @type {Uint8Array[]}
      */
     this.trustedBackupPeers = config.trustedBackupPeers ?? [];
+
+    // ── Publish admission control (the LXMF propagation node's levers,
+    // applied to the rfed publish path) ──
+    /**
+     * Cap on concurrent inbound publish Resource transfers. Oversized
+     * publishes arriving beyond the cap are refused with RESOURCE_RCL at
+     * advertisement; single-packet publishes are unaffected.
+     * @type {number}
+     */
+    this.maxInboundPublishes = config.maxInboundPublishes ?? MAX_INBOUND_PUBLISHES;
+    /**
+     * Throttle window (seconds) for identified publishers whose publish
+     * failed stamp validation.
+     * @type {number}
+     */
+    this.stampThrottleSecs = config.stampThrottleSecs ?? STAMP_THROTTLE_SECS;
+    /**
+     * Cap on a single inbound publish Resource (bytes) for unidentified or
+     * untrusted publishers — bounds what one publisher can pin in transfer
+     * buffers. Trusted peers keep the core's default ceiling.
+     * @type {number}
+     */
+    this.maxPublishBytes = config.maxPublishBytes ?? MAX_PUBLISH_BYTES;
+    /**
+     * Publisher destination hashes (hex) bypassing the admission gates
+     * (the LXMF `staticPeerHashes` lever).
+     * @type {Set<string>}
+     */
+    this.trustedPublishers = new Set(
+      (config.trustedPublishers ?? []).map((h) => toHex(h)),
+    );
+    /** hex(identityHash) → throttle-until epoch seconds (stamp offenders). */
+    this.throttledPublishers = new Map();
+    /** hex(resource hash) → in-flight inbound publish transfers. */
+    this.inboundPublishes = new Map();
     /**
      * Pending `(subscriberHash, channelHash)` pairs awaiting push to the
      * backup node. Drained by {@link tickBackupDelivery}. Mirrors Rust
@@ -451,8 +514,47 @@ export class RFedNode {
             event.detail.receivingInterface ?? null,
           );
           link.bz2 = this.rns.compressionProvider || undefined;
+          // Inbound publish size cap for untrusted publishers: bounds what
+          // one publisher can pin in transfer buffers. The admission gates
+          // (throttle / concurrent cap) are evaluated when the link is
+          // identified — identity arrives before any oversized advertisement
+          // on the same ordered link.
+          const applyPublishGates = (/** @type {any} */ link) => {
+            const remoteHex = link.remoteIdentity
+              ? toHex(link.remoteIdentity.identityHash)
+              : null;
+            const trusted = remoteHex ? this.trustedPublishers.has(remoteHex) : false;
+            if (trusted) {
+              link.maxResourceSize = undefined;
+              return;
+            }
+            link.maxResourceSize = this.maxPublishBytes;
+            if (remoteHex) {
+              const until = this.throttledPublishers.get(remoteHex);
+              if (until !== undefined) {
+                if (Date.now() / 1000 < until) {
+                  link.maxResourceSize = 0; // refuse everything
+                  return;
+                }
+                this.throttledPublishers.delete(remoteHex);
+              }
+            }
+            if (
+              this.maxInboundPublishes > 0 &&
+              this.inboundPublishes.size >= this.maxInboundPublishes
+            ) {
+              link.maxResourceSize = 0;
+            }
+          };
+          applyPublishGates(link);
+          link.addEventListener("identify", () => applyPublishGates(link));
           link.addEventListener("resource", (/** @type {any} */ resEvent) => {
             const resource = resEvent.detail.resource;
+            const key = toHex(/** @type {Uint8Array} */ (resource.hash));
+            this.inboundPublishes.set(key, Date.now() / 1000);
+            const remoteHex = link.remoteIdentity
+              ? toHex(link.remoteIdentity.identityHash)
+              : null;
             resource
               .whenComplete()
               .then(async () => {
@@ -461,7 +563,28 @@ export class RFedNode {
                   `SEND arrived as resource (${resource.data?.length} bytes)`,
                   LogLevel.DEBUG,
                 );
-                await this._handleSend(resource.data);
+                const res = await this._handleSend(
+                  /** @type {Uint8Array} */ (resource.data),
+                  remoteHex,
+                );
+                // An identified publisher whose publish failed stamp
+                // validation is throttled (the LXMF invalid-stamp lever).
+                if (
+                  !res.ok &&
+                  res.reason === "stamp" &&
+                  remoteHex &&
+                  !this.trustedPublishers.has(remoteHex)
+                ) {
+                  this.throttledPublishers.set(
+                    remoteHex,
+                    Date.now() / 1000 + this.stampThrottleSecs,
+                  );
+                  log(
+                    "RFedNode",
+                    `Publisher ${remoteHex.slice(0, 8)}… throttled for ${this.stampThrottleSecs}s (stamp failure)`,
+                    LogLevel.NOTICE,
+                  );
+                }
               })
               .catch((/** @type {Error} */ err) =>
                 log(
@@ -469,7 +592,10 @@ export class RFedNode {
                   `SEND resource failed: ${String(err).slice(0, 160)}`,
                   LogLevel.WARNING,
                 ),
-              );
+              )
+              .finally(() => {
+                this.inboundPublishes.delete(key);
+              });
           });
         } catch (err) {
           log(
@@ -1125,10 +1251,19 @@ export class RFedNode {
    *
    * @param {Uint8Array} data - Decrypted SEND payload.
    */
-  async _handleSend(data) {
+  /**
+   * Ingests a published SEND payload (both the fire-and-forget DATA path and
+   * the oversized Resource path land here).
+   *
+   * @param {Uint8Array} data
+   * @param {string|null} [senderHex] hex(identityHash) of an identified
+   *   publisher (resource path only); used for stamp-failure throttling.
+   * @returns {Promise<{ok: boolean, reason?: "malformed"|"stamp"}>}
+   */
+  async _handleSend(data, senderHex = null) {
     if (data.length < HASH_LENGTH + 1) {
       log("RFedNode", "SEND too short", LogLevel.WARNING);
-      return;
+      return { ok: false, reason: "malformed" };
     }
 
     let channelHash;
@@ -1137,7 +1272,7 @@ export class RFedNode {
       const minLen = HASH_LENGTH + STAMP_SIZE + 1;
       if (data.length < minLen) {
         log("RFedNode", "SEND rejected: too short for stamp", LogLevel.WARNING);
-        return;
+        return { ok: false, reason: "stamp" };
       }
       const parts = parseSendPayload(data);
       channelHash = parts.channelHash;
@@ -1155,7 +1290,7 @@ export class RFedNode {
           "SEND rejected: stamp below required cost",
           LogLevel.WARNING,
         );
-        return;
+        return { ok: false, reason: "stamp" };
       }
     } else {
       channelHash = data.subarray(0, HASH_LENGTH);
@@ -1163,6 +1298,7 @@ export class RFedNode {
     }
 
     await this._ingest(channelHash, innerBlob);
+    return { ok: true };
   }
 
   // ── ingest / fanout / defer ───────────────────────────────────────────────

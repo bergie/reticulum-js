@@ -127,6 +127,21 @@ export const SYNC_BACKOFF_STEP_SECS = 12 * 60;
  */
 export const PN_STAMP_THROTTLE_SECS = 180;
 
+/** Maximum peered propagation nodes kept (Python `LXMRouter.MAX_PEERS`). */
+export const MAX_PEERS = 20;
+/** Maximum announce hop count a node is auto-peered at (Python
+ * `LXMRouter.AUTOPEER_MAXDEPTH`). */
+export const AUTOPEER_MAXDEPTH = 4;
+/** Headroom (fraction of maxPeers) peer rotation restores when at cap
+ * (Python `LXMRouter.ROTATION_HEADROOM_PCT`). */
+export const ROTATION_HEADROOM_PCT = 10;
+/** Acceptance rate (outgoing/offered) below which a peer is rotatable
+ * (Python `LXMRouter.ROTATION_AR_MAX`). */
+export const ROTATION_AR_MAX = 0.5;
+/** Seconds since a peer was last heard before it is culled as unreachable
+ * (Python `LXMPeer.MAX_UNREACHABLE`, 14 days). */
+export const PEER_MAX_UNREACHABLE_SECS = 14 * 24 * 60 * 60;
+
 // --- Propagation transfer states (LXMRouter.py PR_*) ---
 /** Lifecycle states of a propagation transfer (`LXMRouter.py` `PR_*`). */
 export const TransferState = Object.freeze({
