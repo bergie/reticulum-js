@@ -279,16 +279,26 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
-    // Compressed node responses need bz2 on the receiving link (§10.2);
-    // Python peers auto-compress by default. Harmless when absent.
-    link.bz2 = this.rns.compressionProvider || undefined;
-    await link.identify(this.identity);
-    const response = await link.request(SUBSCRIBE_PATH, payload);
-    const decoded = decodeSubscribeResponse(response);
-    if (decoded.ok) {
-      this.stampCosts.set(toHex(channelHash), decoded.stampCost);
+    // Single-shot exchange: tear the link down when done, success or failure.
+    // An abandoned idle link never expires — the initiator watchdog pings,
+    // the responder pongs, and the pong refreshes `lastInboundTime` — so the
+    // zombie link (key material, maps, 1 Hz watchdog timer) lives forever on
+    // both ends and accumulates one link per call into OOM on busy clients
+    // and nodes. `teardown()` is best-effort (safe on a dead link).
+    try {
+      // Compressed node responses need bz2 on the receiving link (§10.2);
+      // Python peers auto-compress by default. Harmless when absent.
+      link.bz2 = this.rns.compressionProvider || undefined;
+      await link.identify(this.identity);
+      const response = await link.request(SUBSCRIBE_PATH, payload);
+      const decoded = decodeSubscribeResponse(response);
+      if (decoded.ok) {
+        this.stampCosts.set(toHex(channelHash), decoded.stampCost);
+      }
+      return decoded;
+    } finally {
+      await link.teardown();
     }
-    return decoded;
   }
 
   /**
@@ -310,15 +320,20 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
-    link.bz2 = this.rns.compressionProvider || undefined;
-    await link.identify(this.identity);
-    const response = await link.request(UNSUBSCRIBE_PATH, payload);
-    // Clear any raw-channel marking so a later subscribe (lxmf or raw) starts
-    // from a clean decode routing state.
-    this.rawChannels.delete(channelName);
-    return {
-      ok: Array.isArray(response) ? response[0] === true : response === true,
-    };
+    // Single-shot exchange: tear the link down when done (see subscribe).
+    try {
+      link.bz2 = this.rns.compressionProvider || undefined;
+      await link.identify(this.identity);
+      const response = await link.request(UNSUBSCRIBE_PATH, payload);
+      // Clear any raw-channel marking so a later subscribe (lxmf or raw) starts
+      // from a clean decode routing state.
+      this.rawChannels.delete(channelName);
+      return {
+        ok: Array.isArray(response) ? response[0] === true : response === true,
+      };
+    } finally {
+      await link.teardown();
+    }
   }
 
   /**
@@ -436,19 +451,24 @@ export class RFedClient {
     );
     if (rfedPayload.length > PUBLISH_DATA_MAX) {
       const link = await dest.createLink();
-      // Keep the compressor on the link too so any inbound Resource on it
-      // (e.g. an error response) can be assembled (§10.2).
-      link.bz2 = this.rns.compressionProvider || undefined;
-      const resource = new Resource({
-        data: rfedPayload,
-        link,
-        bz2: this.rns.compressionProvider || undefined,
-      });
-      await resource.advertise();
-      // advertise() only sends the advertisement; the node pulls the payload
-      // via RESOURCE_REQ. Wait for the transfer to COMPLETE before reporting
-      // success — otherwise the message may never be stored.
-      await resource.whenComplete();
+      // Single-shot exchange: tear the link down when done (see subscribe).
+      try {
+        // Keep the compressor on the link too so any inbound Resource on it
+        // (e.g. an error response) can be assembled (§10.2).
+        link.bz2 = this.rns.compressionProvider || undefined;
+        const resource = new Resource({
+          data: rfedPayload,
+          link,
+          bz2: this.rns.compressionProvider || undefined,
+        });
+        await resource.advertise();
+        // advertise() only sends the advertisement; the node pulls the payload
+        // via RESOURCE_REQ. Wait for the transfer to COMPLETE before reporting
+        // success — otherwise the message may never be stored.
+        await resource.whenComplete();
+      } finally {
+        await link.teardown();
+      }
       return;
     }
     const packet = new Packet({
@@ -492,26 +512,31 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
-    link.bz2 = this.rns.compressionProvider || undefined;
-    await link.identify(this.identity);
-    const response = await link.request(PULL_PATH, channelHash);
+    // Single-shot exchange: tear the link down when done (see subscribe).
+    try {
+      link.bz2 = this.rns.compressionProvider || undefined;
+      await link.identify(this.identity);
+      const response = await link.request(PULL_PATH, channelHash);
 
-    if (typeof response === "number" && response >= 0xf0) {
-      throw new Error(`rfed pull error code 0x${response.toString(16)}`);
+      if (typeof response === "number" && response >= 0xf0) {
+        throw new Error(`rfed pull error code 0x${response.toString(16)}`);
+      }
+      if (!Array.isArray(response) || response.length < 2) {
+        return { items: [], morePending: false };
+      }
+      /** @type {any[]} */
+      const pairs = response[0];
+      const morePending = response[1] === true;
+      const items = (Array.isArray(pairs) ? pairs : []).map(
+        /** @param {any} pair */ (pair) => ({
+          channelHash: pair[0],
+          blob: pair[1],
+        }),
+      );
+      return { items, morePending };
+    } finally {
+      await link.teardown();
     }
-    if (!Array.isArray(response) || response.length < 2) {
-      return { items: [], morePending: false };
-    }
-    /** @type {any[]} */
-    const pairs = response[0];
-    const morePending = response[1] === true;
-    const items = (Array.isArray(pairs) ? pairs : []).map(
-      /** @param {any} pair */ (pair) => ({
-        channelHash: pair[0],
-        blob: pair[1],
-      }),
-    );
-    return { items, morePending };
   }
 
   /**
@@ -576,10 +601,15 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
-    link.bz2 = this.rns.compressionProvider || undefined;
-    await link.identify(this.identity);
-    const response = await link.request(NOTIFY_CLEAR_PATH, payload);
-    return response === true;
+    // Single-shot exchange: tear the link down when done (see subscribe).
+    try {
+      link.bz2 = this.rns.compressionProvider || undefined;
+      await link.identify(this.identity);
+      const response = await link.request(NOTIFY_CLEAR_PATH, payload);
+      return response === true;
+    } finally {
+      await link.teardown();
+    }
   }
 
   /**
@@ -611,10 +641,15 @@ export class RFedClient {
       this.rns,
     );
     const link = await dest.createLink();
-    link.bz2 = this.rns.compressionProvider || undefined;
-    await link.identify(this.identity);
-    const response = await link.request(path, payload);
-    return response === true;
+    // Single-shot exchange: tear the link down when done (see subscribe).
+    try {
+      link.bz2 = this.rns.compressionProvider || undefined;
+      await link.identify(this.identity);
+      const response = await link.request(path, payload);
+      return response === true;
+    } finally {
+      await link.teardown();
+    }
   }
 
   /**

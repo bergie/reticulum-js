@@ -674,26 +674,42 @@ describe("rfed client — raw (non-LXMF) payloads", () => {
     };
     client.rns.compressionProvider = fakeBz2;
 
-    await client.subscribe(nodeHash, "public.bz2");
-    assert.ok(
-      client.rns.transport.activeLinks.size >= 1,
-      "subscribe must leave an active client link",
+    // Single-shot client links are torn down when the call settles (link
+    // teardown regression coverage lives in client_link_teardown.test.js),
+    // so capture each link as the transport registers it and assert on the
+    // captured objects afterwards.
+    /** @type {any[]} */
+    const seenLinks = [];
+    const originalAddLink = client.rns.transport.addLink.bind(
+      client.rns.transport,
     );
-    for (const [hash, link] of client.rns.transport.activeLinks) {
+    client.rns.transport.addLink = (
+      /** @type {any} */ hash,
+      /** @type {any} */ link,
+    ) => {
+      seenLinks.push(link);
+      originalAddLink(hash, link);
+    };
+
+    await client.subscribe(nodeHash, "public.bz2");
+    assert.ok(seenLinks.length >= 1, "subscribe must open a client link");
+    for (const link of seenLinks) {
       assert.strictEqual(
         link.bz2,
         fakeBz2,
-        `client link ${hash} must carry the compression provider`,
+        `client link must carry the compression provider`,
       );
     }
 
     // Pull opens a fresh link to the pull destination — same requirement.
     await client.pull(nodeHash, "public.bz2");
-    for (const [hash, link] of client.rns.transport.activeLinks) {
+    const pullLinks = seenLinks.slice(1);
+    assert.ok(pullLinks.length >= 1, "pull must open a client link");
+    for (const link of pullLinks) {
       assert.strictEqual(
         link.bz2,
         fakeBz2,
-        `client link ${hash} must carry the compression provider`,
+        `client link must carry the compression provider`,
       );
     }
   });

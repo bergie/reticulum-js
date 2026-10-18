@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `RFedClient` now tears down the single-shot link behind every call (subscribe, unsubscribe, oversized publish, pull, notify register/unregister/clear) when the call settles, success or failure. Previously each call abandoned its link: an idle link never expires on its own — the initiator watchdog pings, the responder pongs, and the pong refreshes `lastInboundTime` — so the zombie link (ephemeral key material, per-link maps, a 1 Hz watchdog timer) lived forever on both the client and the node, accumulating one link pair per call into heap exhaustion on busy clients and nodes. This is the remaining member of the LXMF-propagation/RFed OOM family addressed in 0.9.10–0.9.12 (verified by driving 60 subscribe calls on a loopback mesh: link tables previously grew to 60 on both ends and never drained; now they return to 0 per call and heap stays flat). The node side of the same contract was already correct — `RFedNode` peer-sync and backup-push links tear down in `finally`.
 
 ## [0.9.12] - 2026-10-17
 
