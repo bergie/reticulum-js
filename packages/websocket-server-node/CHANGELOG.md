@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The WebSocket server now drops a spawned client interface from its tracking set when the connection goes away. Previously every accepted connection was added but never removed — a server-side adoption never reconnects, so each disconnected client (websocket, streams, IFAC state) was pinned for the lifetime of the server, accumulating one dead interface per disconnected client on browser-facing nodes where clients reconnect aggressively.
 
 ## [0.9.12] - 2026-10-17
 

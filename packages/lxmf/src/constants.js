@@ -41,6 +41,21 @@ export const OFFER_REQUEST_PATH = "/offer";
 export const MESSAGE_GET_PATH = "/get";
 
 /**
+ * TTL (seconds) for sync-dedup caches (processed transient ids, the
+ * propagation node's locally-processed/delivered sets), matching the Python
+ * reference's cleanup (`MESSAGE_EXPIRY * 6.0` with `MESSAGE_EXPIRY = 30`
+ * days). Entries past the TTL can no longer collide with a live message.
+ */
+export const PROCESSED_TID_TTL_SECS = 30 * 24 * 60 * 60 * 6;
+
+/**
+ * Minimum interval (seconds) between lazy in-line prunes of the sync-dedup
+ * caches. Embedders that never run a maintenance tick still get bounded
+ * growth: the caches prune themselves at most this often on the ingest path.
+ */
+export const PROCESSED_PRUNE_INTERVAL_SECS = 300;
+
+/**
  * Upper bound (ms) for waiting on an outbound propagation Resource transfer
  * (submit, peer-mesh sync). The JS Resource has no sender-side watchdog, so
  * without this a stalled receiver — a link kept ACTIVE by keepalive pongs

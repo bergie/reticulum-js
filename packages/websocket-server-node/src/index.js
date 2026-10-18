@@ -244,6 +244,14 @@ export class WebSocketServerInterface extends Interface {
           client.bitrate = this.bitrate;
           await client.connect();
           this.spawnedInterfaces.add(client);
+          // Drop the client from the set when its connection goes away: a
+          // server-side adoption never reconnects, so the interface is
+          // terminal — keeping it pins its websocket, streams and IFAC state
+          // for the lifetime of the server, accumulating one dead interface
+          // per disconnected client (browsers reconnect aggressively).
+          client.addEventListener("closed", () => {
+            this.spawnedInterfaces.delete(client);
+          });
           this.dispatchEvent(new CustomEvent("connection", { detail: client }));
         },
       );

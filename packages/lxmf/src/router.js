@@ -35,6 +35,8 @@ import {
   MAX_PEERING_COST,
   MESSAGE_GET_PATH,
   OFFER_REQUEST_PATH,
+  PROCESSED_PRUNE_INTERVAL_SECS,
+  PROCESSED_TID_TTL_SECS,
   PROPAGATION_COST,
   RESOURCE_TRANSFER_TIMEOUT_MS,
   STAMP_SIZE,
@@ -85,21 +87,13 @@ const PATH_REQUEST_WAIT_MS = 7_000;
 const DELIVERED_MESSAGE_CACHE_MAX = 4096;
 
 /**
- * TTL (seconds) for remembered processed transient ids, matching the Python
- * reference's cleanup (`MESSAGE_EXPIRY * 6.0` with `MESSAGE_EXPIRY = 30
- * days`). Entries older than this can no longer collide with a live message
- * and are dropped so the dedup map cannot grow without bound on long-running
- * nodes.
+ * Total cap on messages parked while their sender's identity is unknown,
+ * across every link bucket plus the opportunistic bucket. Parking is meant
+ * to span a handshake gap (LINKIDENTIFY or an announce), not to queue for an
+ * absent sender — the cap bounds what a flood of unknown-sender traffic can
+ * pin in memory, dropping the oldest parked messages first.
  */
-const PROCESSED_TID_TTL_SECS = 30 * 24 * 60 * 60 * 6;
-
-/**
- * Minimum interval (seconds) between lazy in-line prunes of the processed
- * transient-id map. Embedders that never call {@link LXMRouter.tickMaintenance}
- * still get bounded growth: the map prunes itself at most this often on the
- * insert path.
- */
-const PROCESSED_PRUNE_INTERVAL_SECS = 300;
+export const MAX_PARKED_MESSAGES = 128;
 
 /**
  * Handles LXMF routing and message processing.
@@ -143,6 +137,16 @@ export class LXMRouter extends EventTarget {
     this.outboundPropagationLink = null;
     /** Client per-transfer download limit (KB) advertised in `/get` requests. */
     this.deliveryPerTransferLimit = DELIVERY_LIMIT;
+    /**
+     * Messages parked while their sender's identity is unknown, keyed by
+     * hex(link_id) (or `"opportunistic"`) → bucket of parked wire buffers.
+     * A link's bucket is dropped when the link closes (LINKIDENTIFY can
+     * never arrive on a dead link), re-processed when the link identifies or
+     * an announce lands, and the total is capped at
+     * {@link MAX_PARKED_MESSAGES} so unknown-sender floods cannot pin
+     * memory.
+     * @type {Map<string, Array<{ wireData: Uint8Array, linkId: Uint8Array|null, sourceHash: Uint8Array }>>}
+     */
     this.pendingMessages = new Map();
     this.pendingLinks = new Map();
     // Tracks outbound links (by hex link_id) we have already sent LINKIDENTIFY
@@ -1227,9 +1231,19 @@ export class LXMRouter extends EventTarget {
       // delivery that happens on LINKIDENTIFY; for opportunistic delivery
       // (linkId == null) it happens when the sender's announce — solicited
       // by the path request below — arrives and triggers
-      // processAllPendingMessages.
-      const alreadyParked = this.pendingMessages.has(linkId);
-      this.pendingMessages.set(linkId, wireData);
+      // processAllPendingMessages. Parked per-link in buckets (a sender may
+      // deliver several messages before identifying; previously all of them
+      // shared one slot per link and silently clobbered each other), capped
+      // at {@link MAX_PARKED_MESSAGES} in total and dropped wholesale when
+      // their link closes (see _attachLinkMessageListeners).
+      const key = this._pendingMessageKey(linkId);
+      const bucket = this.pendingMessages.get(key) ?? [];
+      const alreadyParked = bucket.some(
+        (entry) => toHex(entry.sourceHash) === toHex(message.sourceHash),
+      );
+      bucket.push({ wireData, linkId, sourceHash: message.sourceHash });
+      this.pendingMessages.set(key, bucket);
+      this._capParkedMessages();
       log(
         "LXMF",
         `Identity unknown for ${toHex(message.sourceHash)}; requesting path`,
@@ -1237,8 +1251,8 @@ export class LXMRouter extends EventTarget {
       // Solicit the sender's identity/path (SPEC §7.2) the first time we park
       // for it, so a first-contact opportunistic message isn't stuck forever
       // waiting for an announce the peer may not emit on its own. Re-requests
-      // are suppressed by `alreadyParked` to avoid flooding on every re-process
-      // triggered by unrelated announces.
+      // are suppressed per sender by `alreadyParked` to avoid flooding on
+      // every re-process triggered by unrelated announces.
       if (!alreadyParked) {
         try {
           await this.rns?.transport?.requestPath(message.sourceHash);
@@ -1252,7 +1266,19 @@ export class LXMRouter extends EventTarget {
     // The sender identity is already known, so there is no need to wait for
     // LINKIDENTIFY. Python's lxmf_delivery delivers immediately in this case;
     // we match that behaviour and only park when the identity is unknown.
-    this.pendingMessages.delete(linkId);
+    // Only this message's own parked entry (if any) is removed — the bucket
+    // may still hold other senders' messages whose identities are unknown.
+    const parkedKey = this._pendingMessageKey(linkId);
+    const parkedBucket = this.pendingMessages.get(parkedKey);
+    if (parkedBucket) {
+      const idx = parkedBucket.findIndex(
+        (entry) => entry.wireData === wireData,
+      );
+      if (idx !== -1) {
+        parkedBucket.splice(idx, 1);
+        if (parkedBucket.length === 0) this.pendingMessages.delete(parkedKey);
+      }
+    }
 
     // 3. Verify the signature with §5.6 msgpack-variant tolerance.
     if (!(await message.verifySignature(senderIdentity))) {
@@ -1326,6 +1352,38 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
+   * Map key for a parked-message bucket: hex(link_id), or `"opportunistic"`
+   * for linkless delivery.
+   * @param {Uint8Array|null} linkId
+   * @returns {string}
+   * @private
+   */
+  _pendingMessageKey(linkId) {
+    return linkId ? toHex(linkId) : "opportunistic";
+  }
+
+  /**
+   * Enforces {@link MAX_PARKED_MESSAGES} across every bucket, dropping the
+   * oldest parked messages first (bucket insertion order, then order within
+   * the bucket).
+   * @private
+   */
+  _capParkedMessages() {
+    let total = 0;
+    for (const bucket of this.pendingMessages.values()) {
+      total += bucket.length;
+    }
+    for (const [key, bucket] of this.pendingMessages) {
+      while (bucket.length > 0 && total > MAX_PARKED_MESSAGES) {
+        bucket.shift();
+        total--;
+      }
+      if (bucket.length === 0) this.pendingMessages.delete(key);
+      if (total <= MAX_PARKED_MESSAGES) break;
+    }
+  }
+
+  /**
    * Call this when a new Identity is cached (e.g., in your IDENTIFY handler).
    * It checks if any parked messages are now ready for processing.
    *
@@ -1333,18 +1391,38 @@ export class LXMRouter extends EventTarget {
    * @param {Uint8Array|null} linkId
    */
   async processPendingMessages(linkId) {
+    const key = this._pendingMessageKey(linkId);
     const hashHex = linkId ? toHex(linkId) : "opportunistic";
     const expectedDestHash = this.deliveryDest?.destinationHash;
     if (!expectedDestHash) {
       return;
     }
-    if (this.pendingMessages.has(linkId)) {
+    const bucket = this.pendingMessages.get(key);
+    if (bucket && bucket.length > 0) {
       log(
         "LXMF",
         `Identity acquired. Re-processing parked message for ${hashHex}`,
       );
-      const wireData = this.pendingMessages.get(linkId);
-      await this._processIncomingMessage(wireData, linkId, expectedDestHash);
+      // Take the whole bucket out first: re-processing re-parks the entries
+      // whose identities are still unknown, and mutating while iterating the
+      // live bucket would revisit them.
+      const entries = [...bucket];
+      this.pendingMessages.delete(key);
+      for (const entry of entries) {
+        try {
+          await this._processIncomingMessage(
+            entry.wireData,
+            entry.linkId,
+            expectedDestHash,
+          );
+        } catch (/** @type {any} */ e) {
+          log(
+            "LXMF",
+            `Re-processing parked message failed: ${e}`,
+            LogLevel.ERROR,
+          );
+        }
+      }
     }
   }
 
@@ -1365,14 +1443,21 @@ export class LXMRouter extends EventTarget {
     if (!expectedDestHash || this.pendingMessages.size === 0) {
       return;
     }
-    // Snapshot the keys: _processIncomingMessage mutates the map (deletes on
-    // success, re-sets on a still-unknown identity), so iterating the live
-    // map could skip or revisit entries.
-    for (const linkId of [...this.pendingMessages.keys()]) {
-      const wireData = this.pendingMessages.get(linkId);
-      if (!wireData) continue;
+    // Snapshot the buckets: _processIncomingMessage mutates the map (deletes
+    // on success, re-parks on a still-unknown identity), so iterating the
+    // live map could skip or revisit entries.
+    const entries = [];
+    for (const bucket of this.pendingMessages.values()) {
+      entries.push(...bucket);
+    }
+    this.pendingMessages.clear();
+    for (const entry of entries) {
       try {
-        await this._processIncomingMessage(wireData, linkId, expectedDestHash);
+        await this._processIncomingMessage(
+          entry.wireData,
+          entry.linkId,
+          expectedDestHash,
+        );
       } catch (/** @type {any} */ e) {
         log(
           "LXMF",
@@ -1908,6 +1993,16 @@ export class LXMRouter extends EventTarget {
   _attachLinkMessageListeners(link) {
     const expectedDestHash = this.deliveryDest?.destinationHash;
     if (!expectedDestHash) return;
+    // A closed link can never deliver the LINKIDENTIFY its parked messages
+    // are waiting for — drop the bucket on close, or every link that sent a
+    // message before identifying (and never announced) pins its parked wire
+    // buffers for the router's lifetime.
+    const parkedKey = toHex(link.linkId);
+    link.addEventListener("statuschange", (/** @type {any} */ ev) => {
+      if (ev.detail?.status === LinkStatus.CLOSED) {
+        this.pendingMessages.delete(parkedKey);
+      }
+    });
     link.addEventListener("data", async (/** @type {any} */ pktEvent) => {
       // dispatchEvent discards listener promises: without this guard a
       // processing failure would surface as an unhandled rejection and crash

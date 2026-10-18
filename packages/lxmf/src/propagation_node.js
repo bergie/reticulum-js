@@ -19,6 +19,8 @@ import {
   PEER_ERROR_NO_ACCESS,
   PEER_ERROR_NO_IDENTITY,
   PEERING_COST,
+  PROCESSED_PRUNE_INTERVAL_SECS,
+  PROCESSED_TID_TTL_SECS,
   PROPAGATION_COST,
   PROPAGATION_COST_FLEX,
   PROPAGATION_LIMIT,
@@ -99,10 +101,17 @@ export class PropagationNode {
     this.getLocalIdentityHash =
       options.getLocalIdentityHash ?? (() => new Uint8Array(0));
 
-    /** @type {Set<string>} hex(transientId) already processed (dedup). */
-    this.locallyProcessed = new Set();
-    /** @type {Set<string>} hex(transientId) delivered to a local identity. */
-    this.locallyDelivered = new Set();
+    /**
+     * hex(transientId) already processed (dedup) → epoch seconds. TTL-pruned
+     * (see {@link tickMaintenance}) so the set cannot grow without bound on
+     * long-running nodes.
+     * @type {Map<string, number>}
+     */
+    this.locallyProcessed = new Map();
+    /** hex(transientId) delivered to a local identity → epoch seconds. */
+    this.locallyDelivered = new Map();
+    /** Epoch seconds of the last dedup-cache prune (0 = due immediately). */
+    this._lastDedupPrune = 0;
   }
 
   /** Minimum accepted stamp value = max(0, cost − flexibility). */
@@ -131,14 +140,40 @@ export class PropagationNode {
   }
 
   /**
-   * Periodic maintenance — prunes aged entries (when `messageTtlSecs` is set)
-   * and re-runs capacity eviction. A runner calls this hourly (the Python
-   * reference runs the same cull from its job loop).
+   * Periodic maintenance — prunes aged entries (when `messageTtlSecs` is set),
+   * re-runs capacity eviction, and TTL-prunes the dedup caches. A runner
+   * calls this hourly (the Python reference runs the same cull from its job
+   * loop).
    *
-   * @returns {{ aged: number }}
+   * @returns {{ aged: number, dedupPruned: number }}
    */
   tickMaintenance() {
-    return this.store.prune();
+    const { aged } = this.store.prune();
+    const dedupPruned = this._pruneDedupCaches();
+    return { aged, dedupPruned };
+  }
+
+  /**
+   * Drops dedup-cache (locally processed / delivered) entries older than
+   * {@link PROCESSED_TID_TTL_SECS} (the Python reference's `MESSAGE_EXPIRY *
+   * 6` cleanup). Called from {@link tickMaintenance} and lazily from
+   * {@link ingestBlobs}, so the caches stay bounded even without a driver.
+   *
+   * @param {number} [now] Epoch seconds; defaults to now.
+   * @returns {number} count of pruned entries.
+   */
+  _pruneDedupCaches(now = Date.now() / 1000) {
+    this._lastDedupPrune = now;
+    let pruned = 0;
+    for (const cache of [this.locallyProcessed, this.locallyDelivered]) {
+      for (const [key, timestamp] of cache) {
+        if (now > timestamp + PROCESSED_TID_TTL_SECS) {
+          cache.delete(key);
+          pruned++;
+        }
+      }
+    }
+    return pruned;
   }
 
   /**
@@ -154,6 +189,10 @@ export class PropagationNode {
    * @returns {Promise<{stored: number, delivered: number, rejected: number, storedIds: Uint8Array[]}>}
    */
   async ingestBlobs(transientList) {
+    const now = Date.now() / 1000;
+    if (now - this._lastDedupPrune >= PROCESSED_PRUNE_INTERVAL_SECS) {
+      this._pruneDedupCaches(now);
+    }
     const minCost = this.minAcceptedCost();
     const validated = await validatePnStamps(transientList, minCost);
     const rejected = transientList.length - validated.length;
@@ -168,14 +207,14 @@ export class PropagationNode {
       if (this.store.has(v.transientId) || this.locallyProcessed.has(key)) {
         continue;
       }
-      this.locallyProcessed.add(key);
+      this.locallyProcessed.set(key, now);
 
       const destinationHash = v.lxmfData.subarray(0, DESTINATION_LENGTH);
       const deliveryDest = this.getDeliveryDestination(destinationHash);
       if (deliveryDest) {
         const msg = await Message.fromPropagationData(v.lxmfData, deliveryDest);
         if (msg) {
-          this.locallyDelivered.add(key);
+          this.locallyDelivered.set(key, now);
           delivered++;
           await this.onLocalDelivery(msg, v.transientId);
           continue;

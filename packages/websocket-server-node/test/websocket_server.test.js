@@ -154,6 +154,44 @@ test("WebSocketServer spawns a client per connection that inherits its bitrate",
   assert.equal(server.online, false, "disconnect clears online state");
 });
 
+test("WebSocketServer drops spawned clients from its set when they disconnect", async () => {
+  // Regression: the server added every accepted connection to its
+  // spawnedInterfaces set but never removed them on disconnect — a
+  // server-side adoption never reconnects, so each dead client (websocket,
+  // streams, IFAC state) was pinned for the lifetime of the server.
+  const server = new WebSocketServerInterface({ listenPort: 0 });
+  await server.connect();
+  const port = /** @type {any} */ (server.server).address().port;
+
+  const spawned = new Promise((resolve) => {
+    server.addEventListener("connection", (event) => resolve(event.detail));
+  });
+
+  const client = new WebSocketClientInterface({ host: "127.0.0.1", port });
+  await client.connect();
+  await spawned;
+  assert.equal(
+    server.spawnedInterfaces.size,
+    1,
+    "the accepted connection is tracked while connected",
+  );
+
+  await client.disconnect();
+  // The spawned interface learns of the drop asynchronously (its read loop
+  // errors, then it dispatches terminal `closed`).
+  const deadline = Date.now() + 2000;
+  while (server.spawnedInterfaces.size > 0 && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(
+    server.spawnedInterfaces.size,
+    0,
+    "the dead client interface must leave the server's set",
+  );
+
+  await server.disconnect();
+});
+
 // ------------------------------------------------------------------
 // TLS / wss:// (the browser secure-context use case)
 // ------------------------------------------------------------------
