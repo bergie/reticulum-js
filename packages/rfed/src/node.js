@@ -303,7 +303,8 @@ export class RFedNode {
      * advertisement; single-packet publishes are unaffected.
      * @type {number}
      */
-    this.maxInboundPublishes = config.maxInboundPublishes ?? MAX_INBOUND_PUBLISHES;
+    this.maxInboundPublishes =
+      config.maxInboundPublishes ?? MAX_INBOUND_PUBLISHES;
     /**
      * Throttle window (seconds) for identified publishers whose publish
      * failed stamp validation.
@@ -523,7 +524,9 @@ export class RFedNode {
             const remoteHex = link.remoteIdentity
               ? toHex(link.remoteIdentity.identityHash)
               : null;
-            const trusted = remoteHex ? this.trustedPublishers.has(remoteHex) : false;
+            const trusted = remoteHex
+              ? this.trustedPublishers.has(remoteHex)
+              : false;
             if (trusted) {
               link.maxResourceSize = undefined;
               return;
@@ -565,7 +568,6 @@ export class RFedNode {
                 );
                 const res = await this._handleSend(
                   /** @type {Uint8Array} */ (resource.data),
-                  remoteHex,
                 );
                 // An identified publisher whose publish failed stamp
                 // validation is throttled (the LXMF invalid-stamp lever).
@@ -1246,21 +1248,14 @@ export class RFedNode {
   }
 
   /**
-   * SEND ingest (the publish destination's DATA callback): validate the stamp
-   * (when configured), store the blob, and fan out / defer to subscribers.
-   *
-   * @param {Uint8Array} data - Decrypted SEND payload.
-   */
-  /**
    * Ingests a published SEND payload (both the fire-and-forget DATA path and
-   * the oversized Resource path land here).
+   * the oversized Resource path land here): validate the stamp (when
+   * configured), store the blob, and fan out / defer to subscribers.
    *
    * @param {Uint8Array} data
-   * @param {string|null} [senderHex] hex(identityHash) of an identified
-   *   publisher (resource path only); used for stamp-failure throttling.
    * @returns {Promise<{ok: boolean, reason?: "malformed"|"stamp"}>}
    */
-  async _handleSend(data, senderHex = null) {
+  async _handleSend(data) {
     if (data.length < HASH_LENGTH + 1) {
       log("RFedNode", "SEND too short", LogLevel.WARNING);
       return { ok: false, reason: "malformed" };
