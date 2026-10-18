@@ -225,9 +225,11 @@ const MAX_PUBLISH_BYTES = 1024 * 1024;
  * @property {number} [config.maxPublishBytes=1048576] Cap on a single inbound
  *   publish Resource for untrusted publishers (bounds transfer-buffer
  *   pinning; trusted peers keep the core default ceiling).
- * @property {Uint8Array[]} [config.trustedPublishers] Publisher destination
+ * @property {Uint8Array[]} [config.trustedPublishers] Publisher identity
  *   hashes bypassing the publish admission gates (the LXMF
- *   `staticPeerHashes` lever).
+ *   `staticPeerHashes` lever, keyed by identity rather than a derived
+ *   destination — a publisher is an arbitrary client with no single
+ *   canonical destination).
  * @property {{ blobStore?: BlobStore, subscriptions?: SubscriptionTable, deferred?: DeferredQueue, notify?: NotifyRegistry }} [stores]
  *   Pre-built stores to adopt instead of fresh in-memory ones. A runner passes
  *   stores loaded from disk (via `@reticulum/node`'s `loadRFedStores`) so state
@@ -319,8 +321,9 @@ export class RFedNode {
      */
     this.maxPublishBytes = config.maxPublishBytes ?? MAX_PUBLISH_BYTES;
     /**
-     * Publisher destination hashes (hex) bypassing the admission gates
-     * (the LXMF `staticPeerHashes` lever).
+     * Publisher identity hashes (hex) bypassing the admission gates
+     * (the LXMF `staticPeerHashes` lever, keyed by identity — publishers
+     * have no single canonical destination to derive a hash from).
      * @type {Set<string>}
      */
     this.trustedPublishers = new Set(
