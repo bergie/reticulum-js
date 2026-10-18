@@ -74,6 +74,19 @@ const DESTINATION_LENGTH = 16;
  * @property {Uint8Array[]} [staticPeerHashes] Peered node destination hashes
  *   that bypass the validation and inbound-sync gates (Python
  *   `static_peers` + `static_peers_bypass_sequential`).
+ * @property {(candidate: { transientId: Uint8Array, destinationHash: Uint8Array, size: number, stampValue: number }) => boolean|Promise<boolean>} [ingestFilter]
+ *   Application hook deciding whether a **mirrored** propagation blob — one
+ *   received via a peer-sync transfer — is stored for its recipient. Called
+ *   only for offer-born peer-sync copies, never for direct submissions to
+ *   this node: for those this node is the origin custodian and the only
+ *   copy, so dropping would silently destroy the sender's message. Return
+ *   `false` to drop the mirror. Dropped blobs are dedup-recorded, so peers'
+ *   later offers of the same transient_id are declined instead of re-pulled;
+ *   a policy change does not backfill previously dropped messages unless the
+ *   application clears {@link PropagationNode.locallyProcessed} entries.
+ *   Note the deployment trade-off: a node that drops mirrors is a personal
+ *   store-and-forward node, not a mesh transit — peers relying on it as
+ *   their only propagation node will not see mirrored third-party traffic.
  *   Invoked when a propagated message addressed to a local identity decrypts.
  * @property {(storedIds: Uint8Array[]) => void} [onStored]
  *   Invoked with the transient_ids newly stored by {@link ingestBlobs}. The
@@ -139,6 +152,13 @@ export class PropagationNode {
     this.staticPeerHashes = new Set(
       (options.staticPeerHashes ?? []).map((h) => toHex(h)),
     );
+    /**
+     * Application hook deciding which non-local blobs to store (see
+     * {@link PropagationNodeOptions.ingestFilter}). `null` stores everything
+     * (the Python reference's behavior).
+     * @type {((candidate: { transientId: Uint8Array, destinationHash: Uint8Array, size: number, stampValue: number }) => boolean|Promise<boolean>)|null}
+     */
+    this.ingestFilter = options.ingestFilter ?? null;
     /** hex(identityHash) → throttle-until epoch seconds (invalid-stamp bans). */
     this.throttledPeers = new Map();
     /** hex(resource hash) → in-flight inbound peer-sync transfers. */
@@ -277,7 +297,20 @@ export class PropagationNode {
    * @param {Uint8Array[]} transientList
    * @returns {Promise<{stored: number, delivered: number, rejected: number, storedIds: Uint8Array[]}>}
    */
-  async ingestBlobs(transientList) {
+  /**
+   * Ingests a list of propagation blobs received in a submit/sync Resource
+   * container (LXMRouter.propagation_resource_concluded → lxmf_propagation).
+   *
+   * @param {Uint8Array[]} transientList
+   * @param {object} [options]
+   * @param {"peer-sync"|"submission"} [options.origin="submission"] Where the
+   *   blobs came from: `"peer-sync"` for offer-born peer-sync transfers
+   *   (mirrored copies — subject to {@link PropagationNodeOptions.ingestFilter}),
+   *   `"submission"` for direct submissions to this node (always kept — this
+   *   node is their origin custodian, and the only copy).
+   * @returns {Promise<{stored: number, delivered: number, rejected: number, dropped: number, storedIds: Uint8Array[]}>}
+   */
+  async ingestBlobs(transientList, { origin = "submission" } = {}) {
     const now = Date.now() / 1000;
     if (now - this._lastDedupPrune >= PROCESSED_PRUNE_INTERVAL_SECS) {
       this._pruneDedupCaches(now);
@@ -288,7 +321,7 @@ export class PropagationNode {
     // at a time. Static peers bypass at the offer gate.
     this.validatingCount++;
     try {
-      return await this._ingestBlobsInner(transientList);
+      return await this._ingestBlobsInner(transientList, origin);
     } finally {
       this.validatingCount--;
     }
@@ -298,10 +331,11 @@ export class PropagationNode {
    * The body of {@link ingestBlobs}, run under the sequential-validation
    * counter.
    * @param {Uint8Array[]} transientList
-   * @returns {Promise<{stored: number, delivered: number, rejected: number, storedIds: Uint8Array[]}>}
+   * @param {"peer-sync"|"submission"} origin
+   * @returns {Promise<{stored: number, delivered: number, rejected: number, dropped: number, storedIds: Uint8Array[]}>}
    * @private
    */
-  async _ingestBlobsInner(transientList) {
+  async _ingestBlobsInner(transientList, origin) {
     const now = Date.now() / 1000;
     const minCost = this.minAcceptedCost();
     const validated = await validatePnStamps(transientList, minCost);
@@ -309,6 +343,7 @@ export class PropagationNode {
 
     let stored = 0;
     let delivered = 0;
+    let dropped = 0;
     /** @type {Uint8Array[]} */
     const storedIds = [];
 
@@ -334,6 +369,26 @@ export class PropagationNode {
         continue;
       }
 
+      // Mirrored copies (peer-sync transfers) may be dropped by the
+      // application's ingest filter — a policy decision about which
+      // third-party traffic to carry. Direct submissions are always kept:
+      // this node is their origin custodian and the only copy, so dropping
+      // one would silently destroy the sender's message (a black hole).
+      // Dropped ids stay in locallyProcessed, so the /offer want-list
+      // declines them instead of re-pulling them next sync round.
+      if (this.ingestFilter && origin === "peer-sync") {
+        const keep = await this.ingestFilter({
+          transientId: v.transientId,
+          destinationHash,
+          size: v.lxmfData.length + v.stampData.length,
+          stampValue: v.stampValue,
+        });
+        if (keep === false) {
+          dropped++;
+          continue;
+        }
+      }
+
       this.store.add({
         transientId: v.transientId,
         destinationHash: destinationHash.slice(),
@@ -351,7 +406,7 @@ export class PropagationNode {
 
     if (storedIds.length > 0) this.onStored(storedIds);
 
-    return { stored, delivered, rejected, storedIds };
+    return { stored, delivered, rejected, dropped, storedIds };
   }
 
   /**
@@ -512,7 +567,15 @@ export class PropagationNode {
     /** @type {Uint8Array[]} */
     const wanted = [];
     for (const tid of offered) {
-      if (!this.store.has(tid)) wanted.push(tid);
+      // Never re-want what we have processed: stored (in the store),
+      // delivered locally, or deliberately dropped by the ingest filter —
+      // each is remembered here, so a dropped mirror is not re-pulled on
+      // the next sync round (and not re-pulled in bulk when a peer re-peers
+      // after rotation or restart and offers its backlog afresh).
+      if (this.store.has(tid) || this.locallyProcessed.has(toHex(tid))) {
+        continue;
+      }
+      wanted.push(tid);
     }
     if (wanted.length === 0) return false;
     // A wanted-list means a sync transfer will follow on this link: flag it

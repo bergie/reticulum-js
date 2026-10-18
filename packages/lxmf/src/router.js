@@ -458,7 +458,15 @@ export class LXMRouter extends EventTarget {
                   /** @type {Uint8Array} */ (resource.data),
                 );
                 if (container) {
-                  const res = await node.ingestBlobs(container.messages);
+                  const res = await node.ingestBlobs(container.messages, {
+                    // Offer-born transfers are mirrored copies (subject to
+                    // the ingest filter); unprompted client submits are
+                    // origin custody — always kept.
+                    origin:
+                      /** @type {any} */ (link)._rfedInboundSync === true
+                        ? "peer-sync"
+                        : "submission",
+                  });
                   log(
                     "LXMF",
                     `Propagation submit ingested: ${res.stored} stored, ${res.delivered} delivered, ${res.rejected} rejected`,
