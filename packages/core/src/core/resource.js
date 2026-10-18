@@ -93,11 +93,26 @@ export class Resource extends EventTarget {
 
   /** Initial receiver request window (§10.10). */
   static WINDOW = 4;
-
-  /** Default window cap used for the collision-guard span (§10.10 WINDOW_MAX_SLOW). */
+  /** Floor the request window shrinks to under losses (§10.10). */
+  static WINDOW_MIN = 2;
+  /** Request-window ceiling on slow links (§10.10). */
   static WINDOW_MAX_SLOW = 10;
+  /** Request-window ceiling on very slow links (§10.10). */
+  static WINDOW_MAX_VERY_SLOW = 4;
+  /** Request-window ceiling on fast links (§10.10). */
+  static WINDOW_MAX_FAST = 75;
+  /** How far the window may drift above the floor before the floor creeps. */
+  static WINDOW_FLEXIBILITY = 4;
+  /** Consecutive fast windows before the ceiling escalates to fast. */
+  static FAST_RATE_THRESHOLD = Resource.WINDOW_MAX_SLOW - Resource.WINDOW - 2;
+  /** Consecutive very-slow windows before the ceiling drops to very slow. */
+  static VERY_SLOW_RATE_THRESHOLD = 2;
+  /** Window rate (bytes/s) considered fast enough for the large window. */
+  static RATE_FAST = (50 * 1000) / 8;
+  /** Window rate (bytes/s) considered very slow. */
+  static RATE_VERY_SLOW = (2 * 1000) / 8;
 
-  /** Constants in the advertisement-size formula `HASHMAP_MAX_LEN = (MDU-134)/4`. */
+  /** Collision-guard span uses the slow-link window cap (§10.10). */
   static HASHMAP_FIXED_OVERHEAD = 134;
 
   /** Cap on advertised transfer/logical size at accept time (§10.4 bomb defense). */
@@ -112,9 +127,6 @@ export class Resource extends EventTarget {
    * (219 → sdu 183 → ~183k parts for 32 MiB) still fits, with headroom.
    */
   static DEFAULT_MAX_PARTS = 262144;
-
-  /** Receiver request window during a transfer. */
-  window = Resource.WINDOW;
 
   /** Max encodable metadata size: 3-byte length prefix limits it to 16 MiB-1. */
   static METADATA_MAX_SIZE = 0xffffff;
@@ -135,6 +147,53 @@ export class Resource extends EventTarget {
    * per-segment `t`/`d` caps bound each transfer, this bounds their sum.
    */
   static DEFAULT_MAX_TOTAL_SIZE = 256 * 1024 * 1024;
+
+  /** Receiver request window during a transfer. */
+  window = Resource.WINDOW;
+
+  /** Ceiling the request window grows toward (fast links earn the large one). */
+  windowMax = Resource.WINDOW_MAX_SLOW;
+
+  /** Floor the request window shrinks to under losses. */
+  windowMin = Resource.WINDOW_MIN;
+
+  /** How far the window may drift above the floor before the floor creeps. */
+  windowFlexibility = Resource.WINDOW_FLEXIBILITY;
+
+  /** Consecutive fast windows observed (escalates the ceiling). */
+  fastRateRounds = 0;
+
+  /** Consecutive very-slow windows observed (drops the ceiling). */
+  verySlowRateRounds = 0;
+
+  /** Epoch ms the current window's RESOURCE_REQ went out. */
+  reqSentAt = 0;
+
+  /** Part bytes received within the current window. */
+  reqWindowRxd = 0;
+
+  /**
+   * Watchdog constants mirroring the Python reference's `Resource`
+   * (`MAX_RETRIES`, `PART_TIMEOUT_FACTOR`, `PER_RETRY_DELAY`,
+   * `SENDER_GRACE_TIME`, `PROCESSING_GRACE`, `RETRY_GRACE_TIME`,
+   * `PROOF_TIMEOUT_FACTOR`). The JS watchdog ticks from the link's 1 Hz
+   * watchdog instead of a per-resource thread; the semantics — bounded
+   * stalls, bounded retries, then a failing cancel that drops the transfer
+   * buffers — are the same.
+   */
+  static MAX_RETRIES = 16;
+  /** Multiplier on the expected part-transfer time before a receiver retry. */
+  static PART_TIMEOUT_FACTOR = 4;
+  /** Extra per-retry wait (seconds), applied cumulatively (receiver). */
+  static PER_RETRY_DELAY = 0.5;
+  /** Sender grace over the whole request window (seconds). */
+  static SENDER_GRACE_TIME = 10.0;
+  /** Grace over the advertisement timeout (seconds). */
+  static PROCESSING_GRACE = 1.0;
+  /** Grace over the part-stall timeout (seconds). */
+  static RETRY_GRACE_TIME = 0.25;
+  /** Multiplier on RTT when waiting for the final proof (vs a full req/resp). */
+  static PROOF_TIMEOUT_FACTOR = 3;
 
   /**
    * @param {Object} options
@@ -219,6 +278,16 @@ export class Resource extends EventTarget {
     this.outstanding = 0;
     /** Whether sender preparation is done. */
     this._prepared = false;
+
+    // ── Watchdog state (Python Resource.__watchdog_job parity) ──
+    /** Retries left before the watchdog cancels a stalled transfer. */
+    this.retriesLeft = Resource.MAX_RETRIES;
+    /** Epoch ms of the last transfer activity in either direction. */
+    this.lastActivity = Date.now();
+    /** Epoch ms the current segment's advertisement was (re)sent (sender). */
+    this.advSentAt = 0;
+    /** Whether any part request has arrived (sender) — adv vs transfer stall. */
+    this._gotPartRequests = false;
   }
 
   /**
@@ -284,6 +353,10 @@ export class Resource extends EventTarget {
       this.totalSegments =
         Math.floor((plaintext.length - 1) / Resource.MAX_EFFICIENT_SIZE) + 1;
       this._fullPlaintext = plaintext;
+      // Segment preparation reads `_fullPlaintext`; the original `data`
+      // reference (the caller's payload) is redundant from here on — drop it
+      // so a split transfer holds one copy of the payload, not two.
+      this.data = undefined;
       await this._prepareSegment();
       this._prepared = true;
       return;
@@ -313,6 +386,13 @@ export class Resource extends EventTarget {
     }
 
     await this._buildIntegrityAndParts(plaintext, body);
+    // Non-split transfer fully prepared: the encrypted part slices are the
+    // wire form and the only thing the sender ever needs again (re-serves on
+    // RESOURCE_REQ, waits for the proof). The plaintext payload reference is
+    // redundant — drop it, halving the transfer's retained footprint. Large
+    // (split) transfers drop `data` earlier, right after `_fullPlaintext` is
+    // captured.
+    this.data = undefined;
     this._prepared = true;
   }
 
@@ -530,6 +610,11 @@ export class Resource extends EventTarget {
 
     this.link._registerOutgoingResource(this);
     await this.link.send(packet);
+    this.advSentAt = Date.now();
+    this.lastActivity = this.advSentAt;
+    // A (re)sent advertisement opens a fresh "waiting for the first part
+    // request" window — the sender watchdog's advertisement-retry branch.
+    this._gotPartRequests = false;
     log(
       "Resource",
       `Advertised ${this.totalParts} parts (${this.totalSize}B)` +
@@ -550,6 +635,9 @@ export class Resource extends EventTarget {
    */
   async handleRequest(body) {
     const { requested, exhausted, lastMapHash } = this._parseRequest(body);
+    // Watchdog bookkeeping: a part request is sender-side transfer activity.
+    this._gotPartRequests = true;
+    this.lastActivity = Date.now();
     // §10.7: fulfil parts for EVERY req, including exhausted ones.
     for (const mh of requested) {
       const idx = this._findPartByMapHash(mh);
@@ -649,6 +737,8 @@ export class Resource extends EventTarget {
       );
       this.segmentIndex++;
       await this._prepareSegment();
+      // A new segment is a fresh transfer: re-arm its retry budget.
+      this.retriesLeft = Resource.MAX_RETRIES;
       this.status = ResourceStatus.QUEUED;
       await this._advertiseSegment();
       this.status = ResourceStatus.ADVERTISED;
@@ -820,6 +910,7 @@ export class Resource extends EventTarget {
     resource.hashmap = Resource._splitHashmap(adv.m);
     resource.receivedCount = 0;
     resource.outstanding = 0;
+    resource.lastActivity = Date.now();
 
     link._registerIncomingResource(resource);
     log(
@@ -882,7 +973,49 @@ export class Resource extends EventTarget {
     if (!exhausted && requested.length === 0) return;
 
     this.outstanding = requested.length;
+    this.reqSentAt = Date.now();
+    this.reqWindowRxd = 0;
     await this._sendRequest(requested, exhausted, exhausted ? lastKnown : null);
+  }
+
+  /**
+   * Receiver: the request window drained while the transfer is healthy —
+   * grow the window toward its ceiling and probe the achieved transfer rate
+   * to pick that ceiling (Python `Resource.receive_part` window adaptation).
+   * Fast links escalate the ceiling to the large fast window (75 parts per
+   * round-trip vs the initial 4 — a ~19× drain-rate difference that decides
+   * whether concurrent transfers pile up on a busy node); very slow links
+   * are pinned to the small window.
+   * @param {number} nowMs Epoch ms of the drain.
+   * @private
+   */
+  _onWindowDrained(nowMs) {
+    if (this.window < this.windowMax) {
+      this.window++;
+      if (this.window - this.windowMin > this.windowFlexibility - 1) {
+        this.windowMin++;
+      }
+    }
+    const elapsedSecs = (nowMs - this.reqSentAt) / 1000;
+    const rate = elapsedSecs > 0 ? this.reqWindowRxd / elapsedSecs : Infinity;
+    if (
+      rate > Resource.RATE_FAST &&
+      this.fastRateRounds < Resource.FAST_RATE_THRESHOLD
+    ) {
+      this.fastRateRounds++;
+      if (this.fastRateRounds === Resource.FAST_RATE_THRESHOLD) {
+        this.windowMax = Resource.WINDOW_MAX_FAST;
+      }
+    } else if (
+      this.fastRateRounds === 0 &&
+      rate < Resource.RATE_VERY_SLOW &&
+      this.verySlowRateRounds < Resource.VERY_SLOW_RATE_THRESHOLD
+    ) {
+      this.verySlowRateRounds++;
+      if (this.verySlowRateRounds === Resource.VERY_SLOW_RATE_THRESHOLD) {
+        this.windowMax = Resource.WINDOW_MAX_VERY_SLOW;
+      }
+    }
   }
 
   /**
@@ -934,6 +1067,8 @@ export class Resource extends EventTarget {
         this.parts[i] = chunk;
         this.receivedCount++;
         if (this.outstanding > 0) this.outstanding--;
+        this.lastActivity = Date.now();
+        this.reqWindowRxd += chunk.length;
         this.dispatchEvent(
           new CustomEvent("progress", {
             detail: {
@@ -946,6 +1081,13 @@ export class Resource extends EventTarget {
         if (this.receivedCount >= this.totalParts) {
           await this.assemble();
         } else if (this.outstanding <= 0) {
+          // Python Resource window adaptation: the window drained while
+          // healthy — grow it, probe the achieved rate to pick the ceiling,
+          // then request the next window. This is the transfer's throughput
+          // governor: a fixed window of 4 parts per round-trip made large
+          // transfers crawl, piling up concurrent transfers (and their
+          // buffers) on busy nodes.
+          this._onWindowDrained(Date.now());
           await this.requestNext();
         }
         return true;
@@ -966,6 +1108,7 @@ export class Resource extends EventTarget {
     const segment = decoded[1];
     if (!(segment instanceof Uint8Array)) return;
     for (const mh of Resource._splitHashmap(segment)) this.hashmap.push(mh);
+    this.lastActivity = Date.now();
     log(
       "Resource",
       `Applied HMU (${this.hashmap.length} map_hashes known) for ${toHex(resourceHash.subarray(0, 8))}…`,
@@ -1106,6 +1249,15 @@ export class Resource extends EventTarget {
    */
   async cancel() {
     if (this.status === ResourceStatus.COMPLETE) return;
+    // Already terminal: `failed` fired once (whenComplete waiters settled);
+    // firing it again would double-reject.
+    if (
+      this.status === ResourceStatus.FAILED ||
+      this.status === ResourceStatus.CORRUPT ||
+      this.status === ResourceStatus.REJECTED
+    ) {
+      return;
+    }
     const wasSending =
       this.parts.length > 0 && this._prepared && this.hashmap.length > 0;
     // Heuristic: the side that advertised (sender) emits ICL.
@@ -1175,7 +1327,7 @@ export class Resource extends EventTarget {
    */
   whenComplete() {
     return new Promise((resolve, reject) => {
-      const onComplete = (/** @type {any} */ e) => {
+      const onComplete = () => {
         this.removeEventListener("complete", onComplete);
         this.removeEventListener("failed", onFailed);
         resolve(this);
@@ -1219,16 +1371,171 @@ export class Resource extends EventTarget {
     ) {
       return;
     }
-    // Drop the transfer buffers: the encrypted part slices (sender) and the
-    // accumulated received parts (receiver) are the bulk of the retained
-    // memory and are useless without a live link.
-    this.parts = [];
     this.status = ResourceStatus.FAILED;
     this._setFailed(reason);
   }
 
-  /** @param {string} reason @private */
+  /**
+   * One watchdog step, driven by the owning link's 1 Hz watchdog tick while
+   * the transfer is registered on it (Python `Resource.__watchdog_job`
+   * parity — there it runs as a per-resource thread instead).
+   *
+   * Sender side: an advertisement nobody requested is retried a bounded
+   * number of times, then cancelled; a transfer whose part requests dried up
+   * is cancelled after the whole retry window (`rtt × traffic-timeout ×
+   * max-retries + grace`) elapses with no activity — this also bounds the
+   * final proof wait, which Python tightens with `PROOF_TIMEOUT_FACTOR`
+   * (the tighter bound only speeds recovery; the max window already covers
+   * it).
+   *
+   * Receiver side: a part stall longer than `PART_TIMEOUT_FACTOR` × the
+   * expected transfer time re-requests the missing parts (resetting the
+   * window); exhausted retries cancel the transfer. Without this, a stalled
+   * peer on a keepalive-sustained link — alive at the link layer, wedged at
+   * the application layer — held its half-received parts (receiver) or its
+   * full payload and encrypted part slices (sender) forever: links whose
+   * endpoints keep answering keepalives never go stale, so nothing else
+   * would ever release the buffers. Each retried sync cycle then
+   * accumulated another stalled transfer, compounding into multi-GB heap
+   * growth during sync-failure storms.
+   *
+   * @param {number} nowMs Current epoch ms (injected for testability).
+   * @returns {void}
+   * @internal
+   */
+  _watchdogTick(nowMs) {
+    // RTT floor: a loopback/local link measures ~0 and every derived
+    // timeout would collapse to the bare grace times, cancelling healthy
+    // transfers at the first tick.
+    const rttSecs = Math.max(this.link?.rtt ?? 0, 0.5);
+    // Link.TRAFFIC_TIMEOUT_FACTOR (6) written numerically — importing Link
+    // here would create a module cycle (link.js imports resource.js).
+    const trafficTimeout = rttSecs * 6;
+    const lastActivitySecs = this.lastActivity / 1000;
+
+    if (this.status === ResourceStatus.ADVERTISED) {
+      // ── Sender ──
+      if (!this._gotPartRequests) {
+        // No part request since the advertisement went out.
+        const advTimeout =
+          this.advSentAt / 1000 + trafficTimeout + Resource.PROCESSING_GRACE;
+        if (nowMs / 1000 >= advTimeout) {
+          if (this.retriesLeft > 0) {
+            this.retriesLeft--;
+            log(
+              "Resource",
+              "No part requests received, retrying resource advertisement",
+              LogLevel.DEBUG,
+            );
+            this._advertiseSegment().catch((/** @type {Error} */ e) => {
+              log(
+                "Resource",
+                `Advertisement retry failed, cancelling: ${e}`,
+                LogLevel.DEBUG,
+              );
+              this._watchdogCancel("Advertisement retry failed");
+            });
+          } else {
+            this._watchdogCancel(
+              "Resource transfer timed out after sending advertisement",
+            );
+          }
+        }
+      } else {
+        // Parts were flowing; wait out the whole retry window for activity
+        // (part requests — and implicitly the final proof) before cancelling.
+        // The retry budget already spent widens the wait like the reference's
+        // PER_RETRY_DELAY accumulation.
+        const maxExtraWait =
+          ((Resource.MAX_RETRIES * (Resource.MAX_RETRIES + 1)) / 2) *
+          Resource.PER_RETRY_DELAY;
+        const maxWaitSecs =
+          trafficTimeout * Resource.MAX_RETRIES +
+          Resource.SENDER_GRACE_TIME +
+          maxExtraWait;
+        if (lastActivitySecs + maxWaitSecs <= nowMs / 1000) {
+          this._watchdogCancel("Resource timed out waiting for part requests");
+        }
+      }
+      return;
+    }
+
+    if (this.status === ResourceStatus.TRANSFERRING) {
+      // ── Receiver ──
+      const retriesUsed = Resource.MAX_RETRIES - this.retriesLeft;
+      // Expected time for the outstanding window: one window round-trip per
+      // outstanding part batch (a simplified stand-in for the reference's
+      // effective-rate estimate; generous rather than tight).
+      const expectedSecs =
+        trafficTimeout +
+        this.outstanding * rttSecs * Resource.PROOF_TIMEOUT_FACTOR;
+      const stallTimeoutSecs =
+        lastActivitySecs +
+        Resource.PART_TIMEOUT_FACTOR * expectedSecs +
+        Resource.RETRY_GRACE_TIME +
+        retriesUsed * Resource.PER_RETRY_DELAY;
+      if (nowMs / 1000 >= stallTimeoutSecs) {
+        if (this.retriesLeft > 0) {
+          this.retriesLeft--;
+          log(
+            "Resource",
+            `Timed out waiting for ${this.outstanding} part(s), requesting retry`,
+            LogLevel.DEBUG,
+          );
+          // Shrink the window like the Python reference's stall path — lost
+          // parts mean the window outran the link.
+          if (this.window > this.windowMin) {
+            this.window--;
+            if (this.windowMax > this.windowMin) {
+              this.windowMax--;
+              if (this.windowMax - this.window > this.windowFlexibility - 1) {
+                this.windowMax--;
+              }
+            }
+          }
+          // Re-request the missing parts: reset the window so requestNext
+          // picks up every still-unfilled slot (a lost part would otherwise
+          // leave the stop-and-wait window wedged forever).
+          this.outstanding = 0;
+          this.lastActivity = nowMs;
+          this.requestNext().catch(() => {});
+        } else {
+          this._watchdogCancel("Resource part requests timed out");
+        }
+      }
+    }
+  }
+
+  /**
+   * Watchdog cancel: fails the resource (dropping its transfer buffers via
+   * the shared failure path). Fire-and-forget — the §10.9 ICL a sender
+   * cancel emits is best-effort, exactly like every other cancel here.
+   * @param {string} reason
+   * @private
+   */
+  _watchdogCancel(reason) {
+    log("Resource", reason, LogLevel.DEBUG);
+    this.cancel().catch(() => {});
+  }
+
+  /**
+   * Marks the resource failed: unregisters it from its link's transfer map,
+   * drops the transfer buffers (the encrypted part slices on the sender, the
+   * accumulated received parts on the receiver — and the sender's payload:
+   * nothing can complete once failed), and emits `failed` so
+   * `whenComplete()` waiters observe it. Without the unregister, a
+   * cancelled/rejected/corrupt resource stayed pinned in the link's map
+   * until the link itself closed — and links whose endpoints keep answering
+   * keepalives never close.
+   * @param {string} reason @private
+   */
   _setFailed(reason) {
+    if (this.link && this.hash) {
+      this.link._unregisterIncomingResource(this.hash);
+      this.link._unregisterOutgoingResource(this.hash);
+    }
+    this.parts = [];
+    this.data = undefined;
     this.dispatchEvent(
       new CustomEvent("failed", { detail: { resource: this, reason } }),
     );

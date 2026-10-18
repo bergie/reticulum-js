@@ -1703,6 +1703,22 @@ export class Link extends EventTarget {
     if (!entry) return; // already settled
     clearTimeout(entry.timer);
     this.pendingRequests.delete(requestIdHex);
+    // §11.5: a failed/timed-out REQUEST may have an oversized RESPONSE
+    // transfer in flight on this link — cancel it now. Its received parts
+    // would otherwise stay registered until the link closed, and a link whose
+    // peer keeps answering keepalives never closes; every retried sync cycle
+    // would accumulate another half-received response (up to the transfer
+    // cap) on the same long-lived link. Receiver cancels are local-only
+    // (§10.9).
+    for (const resource of [...this.incomingResources.values()]) {
+      if (
+        resource.isResponse &&
+        resource.requestId &&
+        toHex(resource.requestId) === requestIdHex
+      ) {
+        resource.cancel().catch(() => {});
+      }
+    }
     entry.signalSettled?.(undefined);
     if (entry.handedOut) {
       entry.reject(error);
@@ -2551,6 +2567,24 @@ export class Link extends EventTarget {
   _watchdogJob() {
     log("Link", `Watchdog tick for ${toHex(this.linkId)}`, LogLevel.EXTREME);
     const now = Date.now();
+    // Resource watchdog (Python Resource.__watchdog_job parity): drive every
+    // registered transfer's stall detection while the link is alive. This is
+    // the only thing that bounds a stalled transfer on a link whose peer
+    // keeps answering keepalives — such links never go stale.
+    for (const resource of this.outgoingResources.values()) {
+      try {
+        resource._watchdogTick?.(now);
+      } catch (/** @type {any} */ e) {
+        log("Link", `Resource watchdog tick failed: ${e}`, LogLevel.ERROR);
+      }
+    }
+    for (const resource of this.incomingResources.values()) {
+      try {
+        resource._watchdogTick?.(now);
+      } catch (/** @type {any} */ e) {
+        log("Link", `Resource watchdog tick failed: ${e}`, LogLevel.ERROR);
+      }
+    }
     if (now >= this.lastInboundTime + this.staleTime * 1000) {
       // Send the LINKCLOSE like the reference implementations do when a link
       // goes stale (status STALE → teardown packet → CLOSED with TIMEOUT).
