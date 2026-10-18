@@ -25,6 +25,7 @@ import {
   APP_NAME,
   DEFAULT_SYNC_STRATEGY,
   OFFER_REQUEST_PATH,
+  RESOURCE_TRANSFER_TIMEOUT_MS,
 } from "./constants.js";
 import { packPropagationContainer } from "./propagation.js";
 import { generateStamp, WORKBLOCK_EXPAND_ROUNDS_PEERING } from "./stamper.js";
@@ -87,6 +88,15 @@ export class LXMPeer {
     this.state = PeerState.IDLE;
     /** @type {Uint8Array[]} transient_ids carried by the last offer. */
     this.lastOffer = [];
+    /**
+     * Upper bound (ms) for waiting on the outbound message transfer. The JS
+     * Resource has no sender-side watchdog, so a stalled receiver — a link
+     * kept ACTIVE by keepalive pings while its application never pulls the
+     * parts — would otherwise hold this sync's container buffers and the
+     * link forever. Override for tests.
+     * @type {number}
+     */
+    this.transferTimeoutMs = RESOURCE_TRANSFER_TIMEOUT_MS;
 
     // Statistics
     this.offered = 0; // messages offered to this peer
@@ -161,6 +171,20 @@ export class LXMPeer {
    * @returns {Promise<boolean>}
    */
   async sync() {
+    // Python parity (`LXMPeer.sync`): a peer already mid-sync — link
+    // establishing through resource transferring — is never re-entered.
+    // Without this, an overlapping driver pass (the runner's sync interval
+    // firing while a stalled transfer is still pending) starts a second link
+    // and a second full container against the same peer, piling up
+    // in-flight syncs.
+    if (this.state !== PeerState.IDLE) {
+      log(
+        "LXMF",
+        `Postponing sync with peer ${this.id}: a sync is already in progress`,
+        LogLevel.DEBUG,
+      );
+      return false;
+    }
     if (!this.peeringKeyReady()) {
       if (!(await this.generatePeeringKey()) || !this.peeringKeyReady()) {
         log(
@@ -200,17 +224,18 @@ export class LXMPeer {
       peerIdentity,
       this.router.rns,
     );
+    // Everything from establishment onward runs inside the guarded region: a
+    // failure of ANY step must reset the state machine (via _teardown in the
+    // catch), otherwise the IDLE gate above would postpone this peer's syncs
+    // forever. Establishment itself is included — a failed createLink leaves
+    // `this.link` null, which _teardown handles.
     this.state = PeerState.LINK_ESTABLISHING;
-    this.link = await peerDest.createLink();
-    // Inject the compression provider: Python LXMPeer responses default to
-    // auto-compress, so inbound Resources need bz2 to assemble (§10.2).
-    // Harmless when absent.
-    this.link.bz2 = this.router.rns.compressionProvider || undefined;
-    // Everything past link establishment runs against `this.link`; any failure
-    // must tear it down, otherwise every failed sync leaks a zombie ACTIVE
-    // link whose watchdog later stale-tears it — the sequence that turned a
-    // request orphan into a process crash (see @reticulum/core CHANGELOG).
     try {
+      this.link = await peerDest.createLink();
+      // Inject the compression provider: Python LXMPeer responses default to
+      // auto-compress, so inbound Resources need bz2 to assemble (§10.2).
+      // Harmless when absent.
+      this.link.bz2 = this.router.rns.compressionProvider || undefined;
       await this.link.identify(this.router.identity);
       this.state = PeerState.LINK_READY;
 
@@ -287,7 +312,29 @@ export class LXMPeer {
       await resource.advertise();
       // Wait for the full transfer + proof before tearing down the link,
       // otherwise the link closes mid-transfer and the peer never ingests.
-      await resource.whenComplete();
+      // Bounded by the transfer timeout: the JS Resource has no sender-side
+      // watchdog, so a stalled receiver on a keepalive-sustained link would
+      // otherwise hang this sync forever (the link would never go stale to
+      // unwind it).
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          reject(
+            new Error(
+              `LXMF peer transfer timed out after ${this.transferTimeoutMs}ms`,
+            ),
+          );
+        }, this.transferTimeoutMs);
+        resource.whenComplete().then(
+          (value) => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          (error) => {
+            clearTimeout(timer);
+            reject(error);
+          },
+        );
+      });
 
       for (const tid of wanted) {
         store.markHandledForPeer(tid, this.destinationHash);

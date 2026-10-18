@@ -36,6 +36,7 @@ import {
   MESSAGE_GET_PATH,
   OFFER_REQUEST_PATH,
   PROPAGATION_COST,
+  RESOURCE_TRANSFER_TIMEOUT_MS,
   STAMP_SIZE,
 } from "./constants.js";
 import { Message } from "./message.js";
@@ -73,8 +74,6 @@ const DIRECT_LINK_TIMEOUT_MS = 10_000;
  */
 const PATH_REQUEST_WAIT_MS = 7_000;
 
-const RESOURCE_TRANSFER_TIMEOUT_MS = 60_000;
-
 /**
  * Upper bound on remembered message ids for inbound deduplication. Entries
  * are only ever inserted once (a repeat delivery is dropped, not re-inserted),
@@ -84,6 +83,23 @@ const RESOURCE_TRANSFER_TIMEOUT_MS = 60_000;
  * days of mesh traffic in one process while staying trivially small.
  */
 const DELIVERED_MESSAGE_CACHE_MAX = 4096;
+
+/**
+ * TTL (seconds) for remembered processed transient ids, matching the Python
+ * reference's cleanup (`MESSAGE_EXPIRY * 6.0` with `MESSAGE_EXPIRY = 30
+ * days`). Entries older than this can no longer collide with a live message
+ * and are dropped so the dedup map cannot grow without bound on long-running
+ * nodes.
+ */
+const PROCESSED_TID_TTL_SECS = 30 * 24 * 60 * 60 * 6;
+
+/**
+ * Minimum interval (seconds) between lazy in-line prunes of the processed
+ * transient-id map. Embedders that never call {@link LXMRouter.tickMaintenance}
+ * still get bounded growth: the map prunes itself at most this often on the
+ * insert path.
+ */
+const PROCESSED_PRUNE_INTERVAL_SECS = 300;
 
 /**
  * Handles LXMF routing and message processing.
@@ -149,6 +165,10 @@ export class LXMRouter extends EventTarget {
     // the Python reference's processed-transient-id tracking).
     /** @type {Map<string, number>} */
     this.processedTransientIds = new Map();
+    /** Epoch seconds of the last lazy processed-id prune (0 = due immediately). */
+    this._lastProcessedPrune = 0;
+    /** True while a {@link syncPeers} pass is running; overlapping passes skip. */
+    this._peerSyncRunning = false;
     // Tracks message ids (§5.5) of messages already
     // delivered through the "message" event, so the same message arriving
     // over another path (link + opportunistic + a propagation sync, or a
@@ -513,15 +533,30 @@ export class LXMRouter extends EventTarget {
   /**
    * Runs one outbound sync pass against every peered node. Resolves when all
    * peers have completed (or postponed) their sync.
+   *
+   * Overlapping passes skip: drivers call this on an interval, and a pass can
+   * legitimately outlive one interval (a slow transfer, a backlog of peers).
+   * Running two passes concurrently would sync the same peer over two links
+   * at once — the second pass is a no-op instead.
    * @returns {Promise<void>}
    */
   async syncPeers() {
-    for (const peer of this.peers.values()) {
-      try {
-        await peer.sync();
-      } catch (err) {
-        log("LXMF", `Sync with peer ${peer.id} failed: ${err}`, LogLevel.ERROR);
+    if (this._peerSyncRunning) return;
+    this._peerSyncRunning = true;
+    try {
+      for (const peer of this.peers.values()) {
+        try {
+          await peer.sync();
+        } catch (err) {
+          log(
+            "LXMF",
+            `Sync with peer ${peer.id} failed: ${err}`,
+            LogLevel.ERROR,
+          );
+        }
       }
+    } finally {
+      this._peerSyncRunning = false;
     }
   }
 
@@ -807,6 +842,55 @@ export class LXMRouter extends EventTarget {
   }
 
   /**
+   * Records a transient id as locally processed (sync dedup, matching the
+   * Python reference's locally_processed_transient_ids), lazily pruning
+   * expired entries so the map stays bounded on long-running nodes even when
+   * no driver calls {@link tickMaintenance}.
+   * @param {string} tidHex
+   * @private
+   */
+  _rememberProcessedTransientId(tidHex) {
+    const now = Date.now() / 1000;
+    if (now - this._lastProcessedPrune >= PROCESSED_PRUNE_INTERVAL_SECS) {
+      this._pruneProcessedTransientIds(now);
+    }
+    this.processedTransientIds.set(tidHex, now);
+  }
+
+  /**
+   * Drops processed-transient-id entries older than
+   * {@link PROCESSED_TID_TTL_SECS} (the Python reference's
+   * `MESSAGE_EXPIRY * 6` cleanup). Entries past the TTL can no longer
+   * collide with a live message; without the sweep the dedup map grows
+   * without bound over a node's lifetime.
+   * @param {number} [now] Epoch seconds; defaults to now.
+   * @returns {number} count of pruned entries.
+   * @private
+   */
+  _pruneProcessedTransientIds(now = Date.now() / 1000) {
+    this._lastProcessedPrune = now;
+    let pruned = 0;
+    for (const [tidHex, timestamp] of this.processedTransientIds) {
+      if (now > timestamp + PROCESSED_TID_TTL_SECS) {
+        this.processedTransientIds.delete(tidHex);
+        pruned++;
+      }
+    }
+    return pruned;
+  }
+
+  /**
+   * Periodic router maintenance (the Python reference's jobs-loop cleanup):
+   * prunes aged entries from the processed-transient-id dedup map. A runner
+   * calls this on its maintenance interval; the insert path also prunes
+   * lazily, so calling this is an optimization, not a requirement.
+   * @returns {{ processed: number }} count of pruned processed-id entries.
+   */
+  tickMaintenance() {
+    return { processed: this._pruneProcessedTransientIds() };
+  }
+
+  /**
    * Downloads messages addressed to `identity` from the configured propagation
    * node (LXMRouter.request_messages_from_propagation_node).
    *
@@ -873,7 +957,7 @@ export class LXMRouter extends EventTarget {
       // Python reference acks every fetched message, duplicates
       // included, and records locally_processed before attempting delivery.
       const dispatched = await this._ingestPropagationData(lxmfData);
-      this.processedTransientIds.set(tidHex, Date.now() / 1000);
+      this._rememberProcessedTransientId(tidHex);
       receivedIds.push(tid);
       if (dispatched) {
         received++;
@@ -1328,7 +1412,7 @@ export class LXMRouter extends EventTarget {
       log("LXMF", `Paper message ${transientHex} already ingested; ignoring.`);
       return null;
     }
-    this.processedTransientIds.set(transientHex, Date.now() / 1000);
+    this._rememberProcessedTransientId(transientHex);
 
     const message = await Message.fromPaperData(paperData, this.deliveryDest);
     if (!message) {

@@ -40,6 +40,15 @@ export const OFFER_REQUEST_PATH = "/offer";
 /** Client↔node message download: list, fetch, and purge-ack. */
 export const MESSAGE_GET_PATH = "/get";
 
+/**
+ * Upper bound (ms) for waiting on an outbound propagation Resource transfer
+ * (submit, peer-mesh sync). The JS Resource has no sender-side watchdog, so
+ * without this a stalled receiver — a link kept ACTIVE by keepalive pongs
+ * while its application never pulls parts — would hold the transfer buffers
+ * and the link forever.
+ */
+export const RESOURCE_TRANSFER_TIMEOUT_MS = 60_000;
+
 // --- Propagation limits & costs in KB ---
 /** Per-transfer propagation limit (KB). */
 export const PROPAGATION_LIMIT = 256;
