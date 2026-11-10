@@ -2,7 +2,7 @@
  * RNS 1.6.0 announce stamps — receive-side conformance.
  *
  * The fixture announce in `fixtures/rns160-announce.json` was emitted by the
- * vendored Python 1.6.0 reference (`Reticulum/RNS`) with destination stamps
+ * Python reference implementation (`./Reticulum/RNS`, 1.6.0) with destination stamps
  * enabled (target value 3.0, required cost 2.5, link cost 12.5). These tests
  * assert that `Identity.validateAnnounce` parses the 18-byte extension
  * payload exactly like the Python reference: stamp validated, app_data
@@ -38,7 +38,7 @@ function pythonStampedAnnounce() {
   return { packet };
 }
 
-test("parses a Python 1.6.0 stamped announce", async () => {
+test("parses a Python-reference stamped announce", async () => {
   const { packet } = pythonStampedAnnounce();
   const result = await Identity.validateAnnounce(
     packet.destinationHash,

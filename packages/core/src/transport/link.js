@@ -22,12 +22,15 @@ import {
   exportPublicKey,
   generateEd25519KeyPair,
   generateX25519KeyPair,
+  importRawX25519PrivateKey,
 } from "../crypto/keys.js";
 import { Token } from "../crypto/token.js";
-import { bytesEqual, toHex } from "../utils/encoding.js";
+import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import { generateStampedKey, stampValid, stampValue } from "../utils/stamps.js";
 import { Channel, LinkChannelOutlet } from "./channel.js";
+import { TransportCore } from "./transport.js";
 
 /** @enum {number} */
 export const LinkStatus = {
@@ -221,6 +224,15 @@ export class Link extends EventTarget {
    * @type {number}
    */
   requestTimeMs = 0;
+
+  // RNS 1.6.0 link request stamps. `stampStatus` mirrors Python
+  // `Link.stamp_status`: null while unstamped/unknown, true once validated.
+  // `stampCost` records the achieved fractional stamp value (Python
+  // `Link.stamp_cost` — confusingly named upstream: it holds the *value*).
+  /** @type {boolean|null} */
+  stampStatus = null;
+  /** @type {number|null} */
+  stampCost = null;
 
   /** @type {ReturnType<typeof setInterval> | null} */
   _watchdogTimer = null;
@@ -642,10 +654,71 @@ export class Link extends EventTarget {
    * @returns {Promise<Link>}
    */
   static async initiate(destination, transport) {
-    const ephemeralX25519 = await generateX25519KeyPair();
+    const destinationHash = destination.destinationHash;
+    if (!destinationHash) {
+      throw new Error("Link.initiate requires a destination hash");
+    }
+    // Ephemeral Ed25519 (link proof signing) first — RNS 1.6.0: when the
+    // destination announced a link cost, the ephemeral X25519 key is *mined*
+    // against `dest_hash ‖ ephemeral_sig_pub` so the link request carries a
+    // stamp with zero extra wire bytes (Python `Link.__stamped_keys`).
     const ephemeralEd25519 = await generateEd25519KeyPair();
-    const x25519Pub = await exportPublicKey(ephemeralX25519.publicKey);
     const ed25519Pub = await exportPublicKey(ephemeralEd25519.publicKey);
+
+    let ephemeralX25519 = null;
+    let x25519Pub = null;
+    let stampCost = null;
+    if (TransportCore.STAMP_LINK_REQUESTS) {
+      stampCost =
+        destination.destinationHash &&
+        typeof transport.recallLinkCost === "function"
+          ? await transport.recallLinkCost(destination.destinationHash)
+          : null;
+      if (stampCost == null && TransportCore.ALWAYS_STAMP_LINK_REQUESTS) {
+        stampCost = TransportCore.LR_COST;
+      }
+    }
+    if (stampCost != null) {
+      const material = concatBytes(
+        /** @type {Uint8Array} */ (destination.destinationHash),
+        ed25519Pub,
+      );
+      const abort = new AbortController();
+      const watchdog = setTimeout(
+        () => abort.abort(),
+        TransportCore.LINK_STAMP_TIMEOUT * 1000,
+      );
+      let stamped = null;
+      try {
+        stamped = await generateStampedKey(material, stampCost, {
+          signal: abort.signal,
+        });
+      } finally {
+        clearTimeout(watchdog);
+      }
+      if (!stamped) {
+        log(
+          "Link",
+          `Link request stamp generation for ${toHex(destinationHash)} failed or timed out`,
+          LogLevel.WARNING,
+        );
+        throw new Error(
+          "Link request stamp generation failed or was aborted (Link.STAMP_FAILURE)",
+        );
+      }
+      log(
+        "Link",
+        `Link request stamped with value ${stamped.value} for ${toHex(destinationHash)}`,
+        LogLevel.DEBUG,
+      );
+      ephemeralX25519 = {
+        privateKey: await importRawX25519PrivateKey(stamped.privateKey),
+      };
+      x25519Pub = stamped.publicKey;
+    } else {
+      ephemeralX25519 = await generateX25519KeyPair();
+      x25519Pub = await exportPublicKey(ephemeralX25519.publicKey);
+    }
 
     const signalling = Link.signallingBytes(
       Link.DEFAULT_MTU,
@@ -732,6 +805,24 @@ export class Link extends EventTarget {
     // Copy (.slice) so the key bytes own an ArrayBuffer (crypto.subtle.importKey
     // rejects a SharedArrayBuffer-capable view).
     const initiatorEd25519Pub = data.slice(32, 64);
+
+    // RNS 1.6.0 — link request stamp validation (Python Link.__init__):
+    // the stamp material is `dest_hash ‖ initiator_sig_pub` and the stamp
+    // itself is the initiator's ephemeral X25519 public key. The value is
+    // always recorded; enforcement (LR_STAMPS_ENFORCED) rejects requests
+    // below the destination's announced link cost.
+    if (!destination.destinationHash) {
+      throw new Error("Link.accept requires a destination hash");
+    }
+    const stampMaterial = concatBytes(
+      destination.destinationHash,
+      initiatorEd25519Pub,
+    );
+    const achievedStampValue = await stampValue(
+      stampMaterial,
+      initiatorX25519Pub,
+    );
+
     let mtu = Link.DEFAULT_MTU;
     let mode = Link.MODE_AES256_CBC;
     if (data.length === Link.EC_PUBLIC_KEY_SIZE + Link.SIGNALLING_SIZE) {
@@ -746,6 +837,22 @@ export class Link extends EventTarget {
     const ephemeral = await generateX25519KeyPair();
     const responderX25519Pub = await exportPublicKey(ephemeral.publicKey);
 
+    if (TransportCore.LR_STAMPS_ENFORCED) {
+      const requiredCost = destination.getLinkCost();
+      if (
+        !(await stampValid(initiatorX25519Pub, requiredCost, stampMaterial))
+      ) {
+        log(
+          "Link",
+          `Insufficient link request stamp value ${achievedStampValue} (required ${requiredCost}) for ${toHex(destination.destinationHash)} — enforcing, rejecting`,
+          LogLevel.WARNING,
+        );
+        throw new Error(
+          `Insufficient link request stamp value ${achievedStampValue}`,
+        );
+      }
+    }
+
     const link = new Link({
       destination,
       linkId,
@@ -759,6 +866,8 @@ export class Link extends EventTarget {
       mode,
     });
     await link._deriveKeys(initiatorX25519Pub);
+    link.stampCost = achievedStampValue;
+    link.stampStatus = true;
     link.requestTimeMs = Date.now();
     // §Link.expected_hops: the responder records the hop count the LINKREQUEST
     // arrived with.

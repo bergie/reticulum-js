@@ -59,6 +59,12 @@ export const ResourceStatus = {
 /** Receiver-side RESOURCE_REQ hashmap-exhausted flag values (§10.5). */
 const HASHMAP_IS_NOT_EXHAUSTED = 0x00;
 const HASHMAP_IS_EXHAUSTED = 0xff;
+/**
+ * RESOURCE_REQ flag: the advertisement carried no hashmap at all — request
+ * the initial hashmap window (RNS 1.6.0 `Resource.HASHMAP_IS_EMPTY`; a
+ * sender may strip the advertisement hashmap when it exceeds the link MDU).
+ */
+const HASHMAP_IS_EMPTY = 0xfe;
 
 /**
  * Minimal bzip2 compressor/decompressor duck-type for Resource compression.
@@ -210,6 +216,8 @@ export class Resource extends EventTarget {
    * @param {Uint8Array} [options.requestId] - Associated REQUEST id (§11).
    * @param {boolean} [options.isRequest=false] - This Resource is a REQUEST body.
    * @param {boolean} [options.isResponse=false] - This Resource is a RESPONSE body.
+   * @param {boolean} [options.appFlag=false] - RNS 1.6.0 application signalling
+   *   carried in the advertisement flags byte (bit 6).
    * @param {Bzip2} [options.bz2] - Injected bz2 module; never imported by the library.
    */
   constructor(options = {}) {
@@ -250,6 +258,9 @@ export class Resource extends EventTarget {
     this.requestId = options.requestId;
     this.isRequest = options.isRequest ?? false;
     this.isResponse = options.isResponse ?? false;
+    // RNS 1.6.0: application signalling carried in advertisement flags bit 6
+    // (Python `Resource(app_flag=…)`, relayed across segments).
+    this.appFlag = options.appFlag ?? false;
     /** @type {Bzip2|undefined} */
     this.bz2 = options.bz2;
 
@@ -276,6 +287,9 @@ export class Resource extends EventTarget {
     this.uncompressedSize = 0;
     /** Outstanding part requests in the current window (receiver). */
     this.outstanding = 0;
+    /** RNS 1.6.0: an EXHAUSTED/EMPTY request awaits an HMU before further
+     * requests go out (Python `Resource.waiting_for_hmu`). */
+    this.waitingForHmu = false;
     /** Whether sender preparation is done. */
     this._prepared = false;
 
@@ -585,6 +599,7 @@ export class Resource extends EventTarget {
     if (this.isRequest) f |= ResourceFlag.IS_REQUEST;
     if (this.isResponse) f |= ResourceFlag.IS_RESPONSE;
     if (this.hasMetadata) f |= ResourceFlag.HAS_METADATA;
+    if (this.appFlag) f |= ResourceFlag.APP_FLAG;
 
     const adv = new ResourceAdvertisement({
       t: this.totalSize,
@@ -600,12 +615,26 @@ export class Resource extends EventTarget {
       m: this._advHashmapFragment(),
     });
 
+    // RNS 1.6.0: when the packed advertisement exceeds the link's negotiated
+    // MDU, the initial hashmap is dropped and the receiver requests it via a
+    // HASHMAP_IS_EMPTY req (Python `ResourceAdvertisement.pack`).
+    let packed = adv.pack();
+    if (packed.length > this.link.mdu) {
+      log(
+        "Resource",
+        `Resource advertisement (${packed.length}B) exceeds link MDU, deferring initial HMU`,
+        LogLevel.DEBUG,
+      );
+      adv.m = new Uint8Array(0);
+      packed = adv.pack();
+    }
+
     const packet = new Packet({
       packetType: PacketType.DATA,
       destinationType: DestType.LINK,
       destinationHash: this.link.linkId,
       contextByte: ContextType.RESOURCE_ADV,
-      payload: adv.pack(),
+      payload: packed,
     });
 
     this.link._registerOutgoingResource(this);
@@ -634,7 +663,8 @@ export class Resource extends EventTarget {
    * @returns {Promise<void>}
    */
   async handleRequest(body) {
-    const { requested, exhausted, lastMapHash } = this._parseRequest(body);
+    const { requested, exhausted, hashmapIsEmpty, lastMapHash } =
+      this._parseRequest(body);
     // Watchdog bookkeeping: a part request is sender-side transfer activity.
     this._gotPartRequests = true;
     this.lastActivity = Date.now();
@@ -666,7 +696,11 @@ export class Resource extends EventTarget {
         }),
       );
     }
-    if (exhausted) {
+    if (hashmapIsEmpty) {
+      // RNS 1.6.0: the advertisement hashmap was MDU-stripped — answer with
+      // the first hashmap window (Python searches from segment 0).
+      await this._sendHashmapUpdate(null);
+    } else if (exhausted) {
       await this._sendHashmapUpdate(/** @type {Uint8Array} */ (lastMapHash));
     }
   }
@@ -759,23 +793,37 @@ export class Resource extends EventTarget {
   /**
    * Sender: sends a RESOURCE_HMU carrying the hashmap window after
    * `lastMapHash` (§10.7). Body = `resource_hash(32) ‖ msgpack([segment_index,
-   * hashmap_bytes])`.
-   * @param {Uint8Array} lastMapHash
+   * hashmap_bytes])`. `null` answers a HASHMAP_IS_EMPTY request with segment 0
+   * (RNS 1.6.0).
+   * @param {Uint8Array|null} lastMapHash
    * @returns {Promise<void>}
    * @private
    */
   async _sendHashmapUpdate(lastMapHash) {
-    const fromIdx = this.hashmap.findIndex((mh) => bytesEqual(mh, lastMapHash));
-    if (fromIdx < 0 || (fromIdx + 1) % this.hashmapMaxLen !== 0) {
-      // §10.7: a non-boundary index is a sequencing error → cancel.
-      log("Resource", "HMU sequencing error; cancelling", LogLevel.WARNING);
+    // RNS 1.6.0: a HASHMAP_IS_EMPTY request has no last map hash — answer
+    // with hashmap segment 0 (Python `search_start = 0 if hashmap_is_empty`).
+    let segIndex = 0;
+    let start = 0;
+    if (lastMapHash) {
+      const fromIdx = this.hashmap.findIndex((mh) =>
+        bytesEqual(mh, lastMapHash),
+      );
+      if (fromIdx < 0 || (fromIdx + 1) % this.hashmapMaxLen !== 0) {
+        // §10.7: a non-boundary index is a sequencing error → cancel.
+        log("Resource", "HMU sequencing error; cancelling", LogLevel.WARNING);
+        await this.cancel();
+        return;
+      }
+      segIndex = Math.floor((fromIdx + 1) / this.hashmapMaxLen);
+      start = (fromIdx + 1) % this.hashmap.length;
+    }
+    const end = Math.min(start + this.hashmapMaxLen, this.hashmap.length);
+    const segment = concatBytes(...this.hashmap.slice(start, end));
+    if (!segment.length) {
+      log("Resource", "Resource HMU error; cancelling", LogLevel.WARNING);
       await this.cancel();
       return;
     }
-    const segIndex = Math.floor((fromIdx + 1) / this.hashmapMaxLen);
-    const start = (fromIdx + 1) % this.hashmap.length;
-    const end = Math.min(start + this.hashmapMaxLen, this.hashmap.length);
-    const segment = concatBytes(...this.hashmap.slice(start, end));
     const inner = MicroMsgPack.encode([segIndex, segment]);
     const payload = concatBytes(/** @type {Uint8Array} */ (this.hash), inner);
     const packet = new Packet({
@@ -805,10 +853,11 @@ export class Resource extends EventTarget {
   /**
    * Parses a RESOURCE_REQ body (§10.5).
    * @param {Uint8Array} body
-   * @returns {{requested: Uint8Array[], exhausted: boolean, lastMapHash: Uint8Array|null, resourceHash: Uint8Array}}
+   * @returns {{requested: Uint8Array[], exhausted: boolean, hashmapIsEmpty: boolean, lastMapHash: Uint8Array|null, resourceHash: Uint8Array}}
    * @private
    */
   _parseRequest(body) {
+    const hashmapIsEmpty = body[0] === HASHMAP_IS_EMPTY;
     const exhausted = body[0] === HASHMAP_IS_EXHAUSTED;
     let offset = 1;
     /** @type {Uint8Array|null} */
@@ -823,7 +872,7 @@ export class Resource extends EventTarget {
     for (let i = offset; i + 4 <= body.length; i += 4) {
       requested.push(body.slice(i, i + 4));
     }
-    return { requested, exhausted, lastMapHash, resourceHash };
+    return { requested, exhausted, hashmapIsEmpty, lastMapHash, resourceHash };
   }
 
   // -----------------------------------------------------------------------
@@ -909,6 +958,7 @@ export class Resource extends EventTarget {
     resource.isRequest = adv.isRequest;
     resource.isResponse = adv.isResponse;
     resource.hasMetadata = adv.hasMetadata;
+    resource.appFlag = adv.appFlag;
 
     resource.parts = new Array(resource.totalParts).fill(null);
     resource.hashmap = Resource._splitHashmap(adv.m);
@@ -952,6 +1002,21 @@ export class Resource extends EventTarget {
   async requestNext() {
     if (this.status !== ResourceStatus.TRANSFERRING) return;
     if (this.receivedCount >= this.totalParts) return;
+    // §10.7: while waiting for an HMU, no further requests go out
+    // (Python `Resource.request_next` returns when `waiting_for_hmu`).
+    if (this.waitingForHmu) return;
+
+    // RNS 1.6.0: a hashmap-less advertisement (sender stripped `m` when the
+    // packed advertisement exceeded the link MDU) can't request real parts —
+    // ask for the initial hashmap window first (Python `HASHMAP_IS_EMPTY`).
+    if (this.hashmap.length === 0) {
+      this.waitingForHmu = true;
+      this.outstanding = 0;
+      this.reqSentAt = Date.now();
+      this.reqWindowRxd = 0;
+      await this._sendRequest([], HASHMAP_IS_EMPTY, null);
+      return;
+    }
 
     /** @type {Uint8Array[]} */
     const requested = [];
@@ -979,7 +1044,11 @@ export class Resource extends EventTarget {
     this.outstanding = requested.length;
     this.reqSentAt = Date.now();
     this.reqWindowRxd = 0;
-    await this._sendRequest(requested, exhausted, exhausted ? lastKnown : null);
+    await this._sendRequest(
+      requested,
+      exhausted ? HASHMAP_IS_EXHAUSTED : HASHMAP_IS_NOT_EXHAUSTED,
+      exhausted ? lastKnown : null,
+    );
   }
 
   /**
@@ -1023,21 +1092,21 @@ export class Resource extends EventTarget {
   }
 
   /**
-   * Sends a RESOURCE_REQ (§10.5).
+   * Sends a RESOURCE_REQ (§10.5). `flag` selects HASHMAP_IS_NOT_EXHAUSTED,
+   * HASHMAP_IS_EXHAUSTED (body carries `last_map_hash`) or HASHMAP_IS_EMPTY
+   * (RNS 1.6.0, no map hashes — request the initial hashmap window).
    * @param {Uint8Array[]} mapHashes
-   * @param {boolean} exhausted
+   * @param {number} flag
    * @param {Uint8Array|null} lastMapHash
    * @returns {Promise<void>}
    * @private
    */
-  async _sendRequest(mapHashes, exhausted, lastMapHash) {
+  async _sendRequest(mapHashes, flag, lastMapHash) {
     /** @type {Uint8Array[]} */
-    const parts = [
-      new Uint8Array([
-        exhausted ? HASHMAP_IS_EXHAUSTED : HASHMAP_IS_NOT_EXHAUSTED,
-      ]),
-    ];
-    if (exhausted && lastMapHash) parts.push(lastMapHash);
+    const parts = [new Uint8Array([flag])];
+    if (flag === HASHMAP_IS_EXHAUSTED && lastMapHash) {
+      parts.push(lastMapHash);
+    }
     parts.push(/** @type {Uint8Array} */ (this.hash));
     for (const mh of mapHashes) parts.push(mh);
     const payload = concatBytes(...parts);
@@ -1113,6 +1182,7 @@ export class Resource extends EventTarget {
     if (!(segment instanceof Uint8Array)) return;
     for (const mh of Resource._splitHashmap(segment)) this.hashmap.push(mh);
     this.lastActivity = Date.now();
+    this.waitingForHmu = false;
     log(
       "Resource",
       `Applied HMU (${this.hashmap.length} map_hashes known) for ${toHex(resourceHash.subarray(0, 8))}…`,

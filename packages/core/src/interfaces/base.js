@@ -546,6 +546,14 @@ export class Interface extends EventTarget {
   /** Announces dropped (not held) because the held table was at its cap. */
   heldAnnounceDrops = 0;
 
+  /**
+   * Required path request stamp cost enforced for traffic arriving on this
+   * interface (Python `Interface.pr_cost`). `null` falls back to the
+   * transport default `PR_COST` (15.8). RNS 1.6.0 stamping.
+   * @type {number|null}
+   */
+  prCost = null;
+
   // -----------------------------------------------------------------
   // Per-interface protocol violation tracking (RNS 1.5.0). Counters for
   // malformed / invalid inbound traffic, surfaced via getStats(). Each

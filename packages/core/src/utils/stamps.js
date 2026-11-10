@@ -1,7 +1,8 @@
 /**
  * @module @reticulum/core/src/utils/stamps.js
  * @description RNS 1.6.0 network-stamp primitives, mirroring `RNS/Stamps.py`
- *   (verified against the vendored Python 1.6.0 reference).
+ *   (verified against the Python reference implementation in
+ *   `./Reticulum/RNS`, version 1.6.0).
  *
  *   RNS 1.6.0 brings proof-of-work stamps into Reticulum core: destination
  *   announces, path requests and link requests can all carry stamps to raise
@@ -92,6 +93,13 @@ export const DEFAULT_DESTINATION_VALUE = 25.0;
  * @type {number}
  */
 export const DEFAULT_PR_COST = 15.8;
+
+/**
+ * Stamped path request extension header length in bytes (marker + flags;
+ * Python `Transport.PR_EXT_HEADERLENGTH`).
+ * @type {number}
+ */
+export const PR_EXT_HEADER_LENGTH = 2;
 
 /**
  * Default target stamp value for emitted path requests

@@ -26,6 +26,7 @@ import {
   EXT_HEADER_LENGTH,
   EXT_PAYLOAD_LENGTH,
   EXT_PAYLOAD_MARKER,
+  generateStampedKey,
   LR_COST_LENGTH,
   STAMP_COST_CAP,
   STAMP_LENGTH,
@@ -269,14 +270,48 @@ export class Identity extends EventTarget {
 
   /**
    * Create a new random identity.
+   *
+   * RNS 1.6.0: pass `{ value }` to create a *stamped* identity — the X25519
+   * key is mined against the freshly generated Ed25519 signing key so
+   * `SHA256(sig_pub ‖ x25519_pub)` meets the requested fractional stamp
+   * value (Python `Identity.create_keys(value=…)`). Carries zero extra wire
+   * bytes; anyone holding the public key can verify the work.
+   * @param {Object} [options]
+   * @param {number} [options.value] - Target fractional stamp value; omit
+   *   for an unstamped identity.
    * @returns {Promise<Identity>}
    */
-  static async generate() {
-    const x25519 = await generateX25519KeyPair();
+  static async generate(options = {}) {
+    const { value } = options;
     const ed25519 = await generateEd25519KeyPair();
-
-    const x25519PubBytes = await exportPublicKey(x25519.publicKey);
     const ed25519PubBytes = await exportPublicKey(ed25519.publicKey);
+
+    /** @type {Uint8Array} */
+    let x25519PubBytes;
+    /** @type {CryptoKey} */
+    let x25519Priv;
+    /** @type {CryptoKey} */
+    let x25519PubKey;
+    if (value != null) {
+      // RNS 1.6.0 stamped identity (Python `Identity.create_keys(value=…)`):
+      // the X25519 key is mined against the fresh Ed25519 signing key so
+      // `SHA256(sig_pub ‖ x25519_pub)` meets the requested fractional stamp
+      // value — zero extra wire bytes.
+      const stamped = await generateStampedKey(ed25519PubBytes, value);
+      if (!stamped) {
+        throw new Error(
+          "Stamped identity key generation failed or was cancelled",
+        );
+      }
+      x25519PubBytes = stamped.publicKey;
+      x25519Priv = await importRawX25519PrivateKey(stamped.privateKey);
+      x25519PubKey = await importX25519PublicKey(stamped.publicKey);
+    } else {
+      const x25519 = await generateX25519KeyPair();
+      x25519PubBytes = await exportPublicKey(x25519.publicKey);
+      x25519Priv = x25519.privateKey;
+      x25519PubKey = x25519.publicKey;
+    }
 
     const publicKey = new Uint8Array(64);
     publicKey.set(x25519PubBytes, 0);
@@ -285,12 +320,28 @@ export class Identity extends EventTarget {
     const identityHash = await Identity.truncatedHash(publicKey);
 
     return new Identity(
-      x25519.privateKey,
+      x25519Priv,
       ed25519.privateKey,
-      x25519.publicKey,
+      x25519PubKey,
       ed25519.publicKey,
       publicKey,
       identityHash,
+    );
+  }
+
+  /**
+   * This identity's RNS 1.6.0 stamp value as a float (Python
+   * `Identity.stamp_value`): the proof-of-work carried by the X25519 key
+   * against the Ed25519 signing key. `null` when no public key is held.
+   * @returns {Promise<number|null>}
+   */
+  async getStampValue() {
+    if (!this.publicKey) return null;
+    // Material = the signing (Ed25519) public key; the stamp is the X25519
+    // public key itself.
+    return await stampValue(
+      this.publicKey.subarray(32, 64),
+      this.publicKey.subarray(0, 32),
     );
   }
 

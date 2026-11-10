@@ -70,6 +70,35 @@ export class Reticulum {
    * @param {Object} [config.discovery] - Extra options forwarded to the
    *   {@link InterfaceDiscovery} constructor when `enableDiscovery` is true
    *   (`requiredValue`, `discoverySources`, `networkIdentity`, `backboneSupport`).
+   * @param {Object} [config.stamps] - RNS 1.6.0 network-stamp configuration,
+   *   mirroring the Python reference's `[stamps]` config section. The knobs
+   *   are process-wide (they map onto the Python `Transport` class
+   *   attributes). Upstream rollout defaults: everything verified, nothing
+   *   emitted, nothing enforced in 1.6.0; emission on in 1.6.1; enforcement
+   *   on in 1.6.2.
+   * @param {boolean} [config.stamps.enableStamping] - Turn on emission of
+   *   destination announce stamps, path request stamps and link request
+   *   stamps in one go (Python `enable_stamping = yes`).
+   * @param {boolean} [config.stamps.enforceStamps] - Drop announces, path
+   *   requests and link requests that fail their stamp requirements (Python
+   *   `enforce_stamps = yes`).
+   * @param {boolean} [config.stamps.stampDestinations] - Emit destination
+   *   announce stamps (Python `stamp_destinations`).
+   * @param {boolean} [config.stamps.stampPathRequests] - Emit path request
+   *   stamps (Python `stamp_prs`).
+   * @param {boolean} [config.stamps.alwaysStampLinkRequests] - Stamp link
+   *   requests even when the destination announced no cost (Python
+   *   `always_stamp_lrs`).
+   * @param {number} [config.stamps.destinationCost] - Required announce
+   *   stamp cost (Python `destination_cost`, default 23.5).
+   * @param {number} [config.stamps.destinationValue] - Target announce
+   *   stamp value (Python `destination_value`, default 25.0).
+   * @param {number} [config.stamps.prCost] - Required path request stamp
+   *   cost (Python `pr_cost`, default 15.8).
+   * @param {number} [config.stamps.prValue] - Target path request stamp
+   *   value (Python `pr_value`, default 15.8).
+   * @param {number} [config.stamps.lrCost] - Required link request cost
+   *   when a destination announced none (Python `lr_cost`, default 12.5).
    * @param {number | string} [config.logLevel] - Initial log threshold. Accepts
    *   a {@link LogLevel} value or a level name (`"DEBUG"`, `"NOTICE"`, …).
    *   Takes precedence over the `RETICULUM_LOG_LEVEL` environment variable.
@@ -98,6 +127,34 @@ export class Reticulum {
     // time (node-level `ic_*` defaults).
     /** @type {import("../interfaces/base.js").IngressControlConfig} */
     this.ingressControl = config.ingressControl ?? {};
+
+    // RNS 1.6.0 network stamps ([stamps] config section parity). Knobs are
+    // Python `Transport` class-attribute analogues — process-wide by design,
+    // matching the reference's configuration file semantics.
+    const stamps = config.stamps ?? {};
+    if (stamps.enableStamping) {
+      TransportCore.STAMP_DESTINATIONS = true;
+      TransportCore.STAMP_PATH_REQUESTS = true;
+      TransportCore.STAMP_LINK_REQUESTS = true;
+    }
+    if (stamps.enforceStamps) {
+      TransportCore.STAMPS_ENFORCED = true;
+      TransportCore.LR_STAMPS_ENFORCED = true;
+    }
+    if (stamps.stampDestinations) TransportCore.STAMP_DESTINATIONS = true;
+    if (stamps.stampPathRequests) TransportCore.STAMP_PATH_REQUESTS = true;
+    if (stamps.alwaysStampLinkRequests) {
+      TransportCore.ALWAYS_STAMP_LINK_REQUESTS = true;
+    }
+    if (stamps.destinationCost !== undefined) {
+      TransportCore.DESTINATION_COST = stamps.destinationCost;
+    }
+    if (stamps.destinationValue !== undefined) {
+      TransportCore.DESTINATION_VALUE = stamps.destinationValue;
+    }
+    if (stamps.prCost !== undefined) TransportCore.PR_COST = stamps.prCost;
+    if (stamps.prValue !== undefined) TransportCore.PR_VALUE = stamps.prValue;
+    if (stamps.lrCost !== undefined) TransportCore.LR_COST = stamps.lrCost;
 
     // The internal router that handles Interface failover, KISS framing, and packet delivery
     this.transport = new TransportCore();

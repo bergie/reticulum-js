@@ -38,9 +38,11 @@ class CapturingLayer {
  * @returns {Uint8Array} leaf-form path? payload: target(16) || tag(16).
  */
 function leafPayload(targetHash, tag) {
-  const p = new Uint8Array(32);
+  // RNS 1.6.0 form: dest_hash | transport_id | tag (48 bytes).
+  const p = new Uint8Array(48);
   p.set(targetHash, 0);
-  p.set(tag, 16);
+  p.set(new Uint8Array(16).fill(0xab), 16); // requesting transport id
+  p.set(tag, 32);
   return p;
 }
 
@@ -73,11 +75,20 @@ test("requestPath emits a DATA packet to the path-request dest with target || ta
       await transport._pathRequestDestHash(),
     ),
   );
-  assert.strictEqual(pkt.payload.length, 32, "leaf form is target(16)+tag(16)");
+  assert.strictEqual(
+    pkt.payload.length,
+    48,
+    "RNS 1.6.0 form is target(16)+transport_id(16)+tag(16)",
+  );
   assert.ok(bytesEqual(pkt.payload.slice(0, 16), target));
-  // The tag half must be non-zero random bytes.
+  // The transport-id slot must be non-zero.
   assert.notDeepStrictEqual(
     Array.from(pkt.payload.slice(16, 32)),
+    new Array(16).fill(0),
+  );
+  // The tag half must be non-zero random bytes.
+  assert.notDeepStrictEqual(
+    Array.from(pkt.payload.slice(32, 48)),
     new Array(16).fill(0),
   );
 });
@@ -562,4 +573,153 @@ test("a matching announce clears the in-flight path request for that destination
     transport.pathRequests.has(targetHex),
     "egress MI-gate timestamp survives announce receipt",
   );
+});
+
+// --- RNS 1.6.0 path request stamps ------------------------------------------
+
+import { readFileSync } from "node:fs";
+import { concatBytes } from "../../src/utils/encoding.js";
+import { stampValid } from "../../src/utils/stamps.js";
+
+const stampedPrFixture = JSON.parse(
+  readFileSync(
+    new URL("../fixtures/rns160-path-request.json", import.meta.url),
+    "utf8",
+  ),
+);
+
+const hexToBytes = (/** @type {string} */ hex) =>
+  new Uint8Array(hex.match(/.{1,2}/g).map((b) => Number.parseInt(b, 16)));
+
+/**
+ * Builds a 64-byte stamped path request payload from the Python fixture,
+ * retargeted at `dest` with a fresh tag (and optionally corrupted stamp).
+ */
+function stampedPrPayload(dest, { corrupt = false } = {}) {
+  const p = new Uint8Array(64);
+  p.set(/** @type {Uint8Array} */ (dest.destinationHash), 0);
+  p.set(hexToBytes(stampedPrFixture.transportId), 16);
+  p.set(crypto.getRandomValues(new Uint8Array(16)), 32); // fresh tag per call
+  p.set(hexToBytes(stampedPrFixture.ext), 48);
+  if (corrupt) p[50] ^= 0x01; // flip a bit in the stamp bytes (48+2)
+  return p;
+}
+
+async function prTargetSetup() {
+  const identity = await Identity.generate();
+  const layer = new CapturingLayer();
+  const dest = await Destination.IN(
+    "lxmf.delivery",
+    DestType.SINGLE,
+    identity,
+    /** @type {any} */ (layer),
+  );
+  const transport = new TransportCore();
+  transport.bindLocalDestination(dest);
+  const req = async (/** @type {Uint8Array} */ payload) =>
+    new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.PLAIN,
+      destinationHash: await transport._pathRequestDestHash(),
+      contextByte: ContextType.NONE,
+      payload,
+    });
+  return { dest, layer, transport, req };
+}
+
+test("a Python-stamped path request is answered like any other", async () => {
+  const { dest, layer, transport, req } = await prTargetSetup();
+  await transport._handlePathRequest(await req(stampedPrPayload(dest)), null);
+  assert.strictEqual(layer.packets.length, 1, "stamped PR answered");
+  assert.strictEqual(layer.packets[0].contextByte, ContextType.PATH_RESPONSE);
+});
+
+test("invalid PR stamps drop only under enforcement", async () => {
+  // Non-enforced (upstream 1.6.0 default): a corrupted stamp still gets the
+  // request answered — only logged.
+  {
+    const { dest, layer, transport, req } = await prTargetSetup();
+    await transport._handlePathRequest(
+      await req(stampedPrPayload(dest, { corrupt: true })),
+      null,
+    );
+    assert.strictEqual(layer.packets.length, 1, "non-enforced: answered");
+  }
+
+  // Enforced: dropped, no response.
+  {
+    const originalEnforced = TransportCore.STAMPS_ENFORCED;
+    TransportCore.STAMPS_ENFORCED = true;
+    try {
+      const { dest, layer, transport, req } = await prTargetSetup();
+      await transport._handlePathRequest(
+        await req(stampedPrPayload(dest, { corrupt: true })),
+        null,
+      );
+      assert.strictEqual(layer.packets.length, 0, "enforced: dropped");
+    } finally {
+      TransportCore.STAMPS_ENFORCED = originalEnforced;
+    }
+  }
+});
+
+test("oversized and off-size path requests are protocol violations", async () => {
+  const { dest, transport, req } = await prTargetSetup();
+  /** @type {any[]} */
+  const violations = [];
+  const iface = {
+    protocolViolation: (/** @type {string} */ msg) => {
+      violations.push(msg);
+      return null;
+    },
+  };
+  // 65 bytes: over the 64-byte stamped maximum
+  const big = new Uint8Array(65);
+  big.set(/** @type {Uint8Array} */ (dest.destinationHash), 0);
+  await transport._handlePathRequest(
+    await req(big),
+    /** @type {any} */ (iface),
+  );
+  // 40 bytes: neither 32, 48 nor 64
+  const mid = new Uint8Array(40);
+  mid.set(/** @type {Uint8Array} */ (dest.destinationHash), 0);
+  await transport._handlePathRequest(
+    await req(mid),
+    /** @type {any} */ (iface),
+  );
+  assert.strictEqual(violations.length, 2, "both sizes flagged");
+  assert.match(violations[0], /Excessive path request size/);
+  assert.match(violations[1], /Invalid path request size/);
+});
+
+test("stamped emission appends a valid 16-byte extension at PR_VALUE", async () => {
+  const transport = new TransportCore();
+  /** @type {Packet[]} */ const captured = [];
+  transport.broadcast = (/** @type {Packet} */ pkt) => captured.push(pkt);
+  const originalStamp = TransportCore.STAMP_PATH_REQUESTS;
+  const originalValue = TransportCore.PR_VALUE;
+  try {
+    TransportCore.STAMP_PATH_REQUESTS = true;
+    TransportCore.PR_VALUE = 4.0; // keep mining instant
+    const target = crypto.getRandomValues(new Uint8Array(16));
+    await transport.requestPath(target);
+    assert.strictEqual(captured.length, 1);
+    const pkt = captured[0];
+    assert.strictEqual(pkt.payload.length, 64, "48 + 16-byte stamp ext");
+    const ext = pkt.payload.slice(48);
+    assert.strictEqual(ext[0], 0xc1);
+    assert.strictEqual(ext[1], 0x00);
+    const material = concatBytes(
+      pkt.payload.slice(0, 16),
+      pkt.payload.slice(32, 48),
+    );
+    assert.strictEqual(
+      await stampValid(ext.slice(2), 4.0, material),
+      true,
+      "stamp meets PR_VALUE",
+    );
+  } finally {
+    TransportCore.STAMP_PATH_REQUESTS = originalStamp;
+    TransportCore.PR_VALUE = originalValue;
+  }
 });

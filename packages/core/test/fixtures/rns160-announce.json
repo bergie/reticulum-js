@@ -1,5 +1,5 @@
 {
-  "_about": "RNS 1.6.0 stamped announce, emitted by the vendored Python reference (destination stamps enabled, target value 3.0, required cost 2.5, link cost 12.5, app_data 'cross-check-app-data'). Recalled stamp value in Python: see recalledStampValue.",
+  "_about": "RNS 1.6.0 stamped announce, emitted by the Python reference implementation (destination stamps enabled, target value 3.0, required cost 2.5, link cost 12.5, app_data 'cross-check-app-data'). Recalled stamp value in Python: see recalledStampValue.",
   "identityPrivateKey": "508b1b95bf0d4a397adb91ab7b98f72b6b48c452dccf27ede3d4d48a4ce9f76b0161c155aa0b78641d512f62b9e1deefce74df25e870bf7d17dac23bcd184d86",
   "publicKey": "48aef9bcbe538f893024328c6a2948c017eaf846de1bc7b0b50d9986defe074fc4c1ee4763f3d24ada492f9bde2337f215544f219e4f3c053846dcfbbdd5b637",
   "destHash": "157c5626852739864696833f02d9b400",

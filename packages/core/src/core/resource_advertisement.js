@@ -15,6 +15,7 @@ import { MicroMsgPack } from "../utils/msgpack.js";
  * bit 3 : u — is_request  (Resource carries a Link REQUEST body)
  * bit 4 : p — is_response (Resource carries a Link RESPONSE body)
  * bit 5 : x — has_metadata
+ * bit 6 : a — app_flag    (RNS 1.6.0: application signalling)
  * ```
  *
  * @enum {number}
@@ -26,6 +27,7 @@ export const ResourceFlag = {
   IS_REQUEST: 1 << 3,
   IS_RESPONSE: 1 << 4,
   HAS_METADATA: 1 << 5,
+  APP_FLAG: 1 << 6,
 };
 
 /**
@@ -94,6 +96,11 @@ export class ResourceAdvertisement {
   /** @returns {boolean} */
   get hasMetadata() {
     return !!((this.f >> 5) & 0x01);
+  }
+  /** RNS 1.6.0 app_flag (Python `ResourceAdvertisement.app_flag_set`). */
+  /** @returns {boolean} */
+  get appFlag() {
+    return !!((this.f >> 6) & 0x01);
   }
 
   /**

@@ -273,10 +273,10 @@ export class Destination extends EventTarget {
     // RNS 1.6.0 — destination announce stamping. `_stampTargetValue` is the
     // operator-configured emission target (Destination.setStampValue); the
     // effective target floors at the transport's DESTINATION_VALUE. Stamps
-    // are one-shot: generated once at the target, persisted upstream to
-    // storage and reused verbatim on every announce (Python keeps them under
-    // `storage/stamps/*.dstamp` — ours are regenerated after restart until
-    // persistence lands in the storage adapter).
+    // are one-shot: generated once at the target, then reused verbatim on
+    // every announce. The Python reference persists them under
+    // `storage/stamps/*.dstamp`; ours are regenerated after restart until
+    // persistence lands in the storage adapter.
     /** @type {Uint8Array|null} */
     this._stamp = null;
     this._stampValue = null;

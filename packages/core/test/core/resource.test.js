@@ -19,7 +19,10 @@ import {
   PacketType,
 } from "../../src/core/packet.js";
 import { Resource, ResourceStatus } from "../../src/core/resource.js";
-import { ResourceAdvertisement } from "../../src/core/resource_advertisement.js";
+import {
+  ResourceAdvertisement,
+  ResourceFlag,
+} from "../../src/core/resource_advertisement.js";
 import { Link, LinkStatus } from "../../src/transport/link.js";
 import { toHex } from "../../src/utils/encoding.js";
 
@@ -483,5 +486,165 @@ describe("Resource progress + API", () => {
     );
     assert.strictEqual(adv.packetType, PacketType.DATA);
     assert.strictEqual(adv.destinationType, DestType.LINK);
+  });
+});
+
+describe("RNS 1.6.0 resource advertisement parity", () => {
+  function advPacket(link, adv) {
+    return new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: link.linkId,
+      contextByte: ContextType.RESOURCE_ADV,
+      payload: adv.pack(),
+    });
+  }
+
+  test("app_flag round-trips through the advertisement flags byte", async () => {
+    const link = { linkId: new Uint8Array(16).fill(1), mdu: 431 };
+    const adv = new ResourceAdvertisement({
+      t: 100,
+      d: 100,
+      n: 1,
+      h: new Uint8Array(32).fill(1),
+      r: new Uint8Array(4).fill(2),
+      o: new Uint8Array(32).fill(3),
+      i: 1,
+      l: 1,
+      f: ResourceFlag.APP_FLAG | ResourceFlag.HAS_METADATA,
+      m: new Uint8Array(0),
+    });
+    assert.strictEqual(adv.appFlag, true);
+    assert.strictEqual(adv.hasMetadata, true);
+    const decoded = ResourceAdvertisement.unpack(advPacket(link, adv).payload);
+    assert.strictEqual(decoded.appFlag, true, "bit 6 survives the wire");
+  });
+
+  test("sender sets bit 6 when the resource carries app_flag", async () => {
+    const { initiator, responder } = await makePair();
+    const payload = new Uint8Array(400).fill(9);
+    const resource = new Resource({ data: payload, link: initiator });
+    resource.appFlag = true;
+    /** @type {Uint8Array[]} */
+    const advPayloads = [];
+    const originalSend = initiator.send.bind(initiator);
+    initiator.send = async (/** @type {Packet} */ pkt) => {
+      if (pkt.contextByte === ContextType.RESOURCE_ADV) {
+        advPayloads.push(pkt.payload);
+      }
+      return originalSend(pkt);
+    };
+    await resource.advertise();
+    assert.ok(advPayloads.length >= 1, "advertisement went out");
+    const adv = ResourceAdvertisement.unpack(advPayloads[0]);
+    assert.strictEqual(adv.appFlag, true, "sender advertises bit 6");
+
+    // Receiver decodes it (the incoming resource surfaces on the responder).
+    /** @type {Resource|null} */
+    let incoming = null;
+    responder.addEventListener("resource", (event) => {
+      incoming = /** @type {CustomEvent} */ (event).detail.resource;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(incoming, "responder accepted the advertisement");
+    assert.strictEqual(
+      /** @type {Resource} */ (incoming).appFlag,
+      true,
+      "receiver decodes app_flag",
+    );
+  });
+
+  test("advertisements exceeding the link MDU defer the initial hashmap", async () => {
+    const { initiator, responder } = await makePair();
+    // Shrink the negotiated MTU so the packed advertisement overflows: the
+    // 16-byte request id inflates the base fields past the mantissa-table's
+    // 134-byte overhead estimate, leaving no room for any hashmap fragment.
+    initiator.mtu = 216;
+    responder.mtu = 216;
+
+    const payload = new Uint8Array(4096).fill(3);
+    const resource = new Resource({ data: payload, link: initiator });
+    resource.appFlag = true;
+    resource.requestId = crypto.getRandomValues(new Uint8Array(64)); // push the packed advertisement past the MDU
+
+    /** @type {Uint8Array[]} */
+    const advPayloads = [];
+    /** @type {Packet[]} */
+    const reqs = [];
+    const origInitiatorSend = initiator.send.bind(initiator);
+    initiator.send = async (/** @type {Packet} */ pkt) => {
+      if (pkt.contextByte === ContextType.RESOURCE_ADV) {
+        advPayloads.push(pkt.payload);
+      }
+      return origInitiatorSend(pkt);
+    };
+    const origResponderSend = responder.send.bind(responder);
+    responder.send = async (/** @type {Packet} */ pkt) => {
+      if (pkt.contextByte === ContextType.RESOURCE_REQ) {
+        reqs.push(pkt);
+      }
+      return origResponderSend(pkt);
+    };
+
+    /** @type {Resource|null} */
+    let incoming = null;
+    responder.addEventListener("resource", (event) => {
+      incoming = /** @type {CustomEvent} */ (event).detail.resource;
+    });
+
+    await resource.advertise();
+    assert.ok(advPayloads.length >= 1, "advertisement went out");
+    const firstAdv = ResourceAdvertisement.unpack(advPayloads[0]);
+    assert.strictEqual(firstAdv.appFlag, true, "bit 6 advertised");
+    assert.strictEqual(
+      firstAdv.m.length,
+      0,
+      "initial hashmap was MDU-stripped",
+    );
+
+    await Promise.all([
+      resource.whenComplete(),
+      new Promise((resolve, reject) => {
+        const poll = setInterval(() => {
+          if (
+            incoming &&
+            /** @type {Resource} */ (incoming).status ===
+              ResourceStatus.COMPLETE
+          ) {
+            clearInterval(poll);
+            resolve(null);
+          } else if (
+            incoming &&
+            [
+              ResourceStatus.FAILED,
+              ResourceStatus.CORRUPT,
+              ResourceStatus.REJECTED,
+            ].includes(/** @type {Resource} */ (incoming).status)
+          ) {
+            clearInterval(poll);
+            reject(new Error(`incoming failed: ${incoming.status}`));
+          }
+        }, 5);
+        setTimeout(() => {
+          clearInterval(poll);
+          reject(new Error("transfer timed out"));
+        }, 8000);
+      }),
+    ]);
+
+    assert.ok(advPayloads.length >= 1);
+    const adv = ResourceAdvertisement.unpack(advPayloads[0]);
+    assert.strictEqual(adv.m.length, 0, "initial hashmap was MDU-stripped");
+    assert.ok(reqs.length >= 1, "receiver requested the hashmap");
+    assert.strictEqual(
+      reqs[0].payload[0],
+      0xfe,
+      "first req carries HASHMAP_IS_EMPTY",
+    );
+    assert.deepStrictEqual(
+      Array.from(incoming.data),
+      Array.from(payload),
+      "transfer completed via the deferred hashmap",
+    );
   });
 });

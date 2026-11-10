@@ -23,7 +23,7 @@ import {
   TransportType,
 } from "../core/packet.js";
 import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
-import { bytesEqual, toHex } from "../utils/encoding.js";
+import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import {
   DEFAULT_DESTINATION_COST,
@@ -31,6 +31,12 @@ import {
   DEFAULT_LR_COST,
   DEFAULT_PR_COST,
   DEFAULT_PR_VALUE,
+  EXT_PAYLOAD_MARKER,
+  generateStamp,
+  PR_EXT_HEADER_LENGTH,
+  STAMP_LENGTH,
+  stampValid,
+  stampValue,
 } from "../utils/stamps.js";
 import { aspectNameHash } from "./discovery.js";
 import { IdentityCache } from "./identity-cache.js";
@@ -1007,12 +1013,66 @@ export class TransportCore extends EventTarget {
   }
 
   /**
+   * The transport instance identity hash used for the `transport_id` slot of
+   * emitted path requests. Python's `Transport.identity` is a persisted node
+   * identity; ours is an ephemeral per-instance value — on a leaf node the
+   * slot is only consulted by transport nodes for path invalidation, so
+   * stability across restarts is not load-bearing. Persisted transport
+   * identities can be injected here once identity lifecycle lands in core.
+   * @type {Uint8Array|null}
+   */
+  _transportIdentityHash = null;
+
+  get transportIdentityHash() {
+    if (!this._transportIdentityHash) {
+      this._transportIdentityHash = Identity.getRandomHash();
+    }
+    return this._transportIdentityHash;
+  }
+
+  /**
+   * Per-material cache of emitted path request stamps (Python
+   * `Transport.pr_stamp_cache`), keyed by hex(`dest_hash ‖ tag`).
+   * @type {Map<string, Uint8Array>}
+   */
+  prStampCache = new Map();
+
+  /**
+   * Returns the cached path request stamp for a material, or generates one at
+   * `PR_VALUE` (Python `Transport.stamp_path_request`). Stamps are one-shot
+   * per path request tag, so the cache only helps retries of the same tag.
+   * @param {Uint8Array} destinationHash
+   * @param {Uint8Array} tag
+   * @returns {Promise<Uint8Array|null>} 14-byte stamp, or null on failure.
+   */
+  async stampPathRequest(destinationHash, tag) {
+    const material = concatBytes(destinationHash, tag);
+    const key = toHex(material);
+    let stamp = this.prStampCache.get(key) ?? null;
+    if (!stamp) {
+      const generated = await generateStamp(material, TransportCore.PR_VALUE);
+      if (!generated) return null;
+      [stamp] = generated;
+      this.prStampCache.set(key, stamp);
+      while (this.prStampCache.size > 256) {
+        const oldest = this.prStampCache.keys().next().value;
+        if (oldest === undefined) break;
+        this.prStampCache.delete(oldest);
+      }
+    }
+    return stamp;
+  }
+
+  /**
    * Sends a `path?` request for a destination we have no route to (§7.1).
    *
-   * Leaf form: `target_dest_hash(16) || random_tag(16)` (32 bytes). The tag
-   * makes the request unique enough for relay dedup (§7.2.2); a fresh random
-   * tag is drawn per request so re-requests for the same destination aren't
-   * suppressed as duplicates.
+   * RNS 1.6.0 form: `target_dest_hash(16) || transport_id(16) || tag(16)`
+   * (48 bytes) — path requests always carry the requesting transport's id
+   * from this version on. When `STAMP_PATH_REQUESTS` is on, a 16-byte stamp
+   * extension (`[0xC1][0x00] ‖ stamp(14)`) mined at `PR_VALUE` is appended
+   * (64 bytes). The tag makes the request unique enough for relay dedup
+   * (§7.2.2); a fresh random tag is drawn per request so re-requests for the
+   * same destination aren't suppressed as duplicates.
    *
    * Not rate-limited per se; automated callers should use
    * {@link requestPathAuto}, which enforces the `PATH_REQUEST_MIN_INTERVAL_SECS` minimum
@@ -1025,9 +1085,23 @@ export class TransportCore extends EventTarget {
       throw new Error("requestPath requires a 16-byte destination hash");
     }
     const tag = Identity.getRandomHash().slice(0, 16);
-    const payload = new Uint8Array(32);
-    payload.set(destinationHash, 0);
-    payload.set(tag, 16);
+    let payload = concatBytes(destinationHash, this.transportIdentityHash, tag);
+    if (TransportCore.STAMP_PATH_REQUESTS) {
+      const stamp = await this.stampPathRequest(destinationHash, tag);
+      if (!stamp) {
+        log(
+          "Transport",
+          `Could not generate path request stamp for ${toHex(destinationHash)}, request emission cancelled`,
+          LogLevel.WARNING,
+        );
+        return;
+      }
+      const ext = new Uint8Array(PR_EXT_HEADER_LENGTH + STAMP_LENGTH);
+      ext[0] = EXT_PAYLOAD_MARKER;
+      ext[1] = 0x00;
+      ext.set(stamp, 2);
+      payload = concatBytes(payload, ext);
+    }
 
     const packet = new Packet({
       packetType: PacketType.DATA,
@@ -1112,39 +1186,54 @@ export class TransportCore extends EventTarget {
    */
   async _handlePathRequest(packet, receivingInterface) {
     const data = packet.payload;
-    if (data.length < 16) return; // malformed
+    const DL = Identity.TRUNCATED_HASH_LENGTH;
 
-    const targetHash = data.slice(0, 16);
-
-    // §7.2.1: transport_id occupies [16:32] only when len > 32; otherwise the
-    // second slot is the tag. The tag is whatever trails the fixed prefix,
-    // capped at 16 bytes.
+    // RNS 1.6.0 wire formats (Python `Transport.parse_path_request` + the
+    // inbound size gate):
+    //   stamped  64 B: dest_hash(16) | transport_id(16) | tag(16) | ext(16)
+    //   normal   48 B: dest_hash(16) | transport_id(16) | tag(16)
+    //   legacy   32 B: dest_hash(16) | tag(16)        (pre-1.6.0, transition)
+    // Anything else is a protocol violation; fewer than 16 bytes is dropped.
+    /** @type {Uint8Array} */
+    let targetHash;
+    /** @type {Uint8Array} */
+    let tagBytes;
     /** @type {Uint8Array|null} */
-    let tagBytes = null;
-    /** Whether the raw tag exceeded the 16-byte cap (protocol violation). */
-    let oversizedTag = false;
-    if (data.length > 32) {
-      // requesting_transport_instance = data[16:32]  (ignored on a leaf)
-      // The Python reference takes the whole trailing run as the tag, then
-      // truncates to 16; an oversized raw tag counts as a protocol violation
-      // on the receiving interface.
-      if (data.length - 32 > 16) oversizedTag = true;
-      tagBytes = data.slice(32, 48);
-    } else if (data.length > 16) {
-      if (data.length - 16 > 16) oversizedTag = true;
-      tagBytes = data.slice(16, 32);
-    }
+    let extPayload = null;
 
-    if (oversizedTag) {
-      receivingInterface?.protocolViolation?.(
-        "Excessive path request tag size",
+    if (data.length < DL) return; // malformed
+
+    if (data.length > 64) {
+      return receivingInterface?.protocolViolation?.(
+        `Excessive path request size of ${data.length} bytes`,
       );
     }
 
-    if (!tagBytes || tagBytes.length === 0) {
-      // §7.2.1 note 1: tagless requests are dropped.
-      log("Transport", "Dropping tagless path request", LogLevel.DEBUG);
-      return receivingInterface?.protocolViolation?.("Tagless path request");
+    if (data.length === 64) {
+      // Stamped 1.6.0+ format (dst_hash|tid|tag|ext)
+      targetHash = data.slice(0, DL);
+      tagBytes = data.slice(DL * 2, DL * 3);
+      extPayload = data.slice(DL * 3);
+    } else if (data.length === 48) {
+      // 1.6.0 transport-ID format (dst_hash|tid|tag); the requesting
+      // transport instance id (data[DL:DL*2]) is only consulted by
+      // transport nodes for path invalidation — leaves ignore it.
+      targetHash = data.slice(0, DL);
+      tagBytes = data.slice(DL * 2, DL * 3);
+    } else if (data.length === 32) {
+      // Legacy pre-1.6.0 format without transport ID (dst_hash|tag)
+      targetHash = data.slice(0, DL);
+      tagBytes = data.slice(DL);
+    } else {
+      // §7.2.1 note 1: tagless requests (exactly 16 bytes) are dropped;
+      // any other non-canonical size is a protocol violation.
+      if (data.length === DL) {
+        log("Transport", "Dropping tagless path request", LogLevel.DEBUG);
+        return receivingInterface?.protocolViolation?.("Tagless path request");
+      }
+      return receivingInterface?.protocolViolation?.(
+        `Invalid path request size ${data.length}`,
+      );
     }
 
     // §Ingress control: every PR with a parseable tag counts toward the
@@ -1163,6 +1252,53 @@ export class TransportCore extends EventTarget {
       const oldest = this.discoveryPrTags.values().next().value;
       if (oldest === undefined) break;
       this.discoveryPrTags.delete(oldest);
+    }
+
+    // RNS 1.6.0 — path request stamps (Python validate_pr_stamp). The stamp
+    // material is `dest_hash ‖ tag`, hashed directly; the required value is
+    // the receiving interface's `pr_cost` or the transport default
+    // (`PR_COST` 15.8). Non-enforcing (upstream 1.6.0): invalid or missing
+    // stamps are logged but the request is still answered; enforcement
+    // drops when `STAMPS_ENFORCED` flips on.
+    if (TransportCore.STAMPS_ENABLED) {
+      let stampOk = false;
+      if (extPayload) {
+        if (extPayload[0] === EXT_PAYLOAD_MARKER) {
+          const requiredValue =
+            /** @type {any} */ (receivingInterface)?.prCost ??
+            TransportCore.PR_COST;
+          const stamp = extPayload.slice(PR_EXT_HEADER_LENGTH);
+          if (stamp.length !== STAMP_LENGTH) {
+            stampOk = false;
+          } else {
+            const material = concatBytes(targetHash, tagBytes);
+            stampOk = await stampValid(stamp, requiredValue, material);
+            if (!stampOk) {
+              const achieved = await stampValue(material, stamp);
+              log(
+                "Transport",
+                extPayload[1] === 0xff
+                  ? `Lenient-relayed path request for ${toHex(targetHash)} with insufficient stamp value ${achieved}`
+                  : `Invalid or insufficient (v:${achieved}) path request stamp for ${toHex(targetHash)}`,
+                LogLevel.DEBUG,
+              );
+            }
+          }
+        } else {
+          log(
+            "Transport",
+            `Unrecognized stamp payload in path request for ${toHex(targetHash)}`,
+            LogLevel.DEBUG,
+          );
+        }
+      } else {
+        log(
+          "Transport",
+          `Unstamped path request for ${toHex(targetHash)}`,
+          LogLevel.EXTREME,
+        );
+      }
+      if (!stampOk && TransportCore.STAMPS_ENFORCED) return;
     }
 
     // §Ingress burst control (the reference demotes these to a lowest-priority

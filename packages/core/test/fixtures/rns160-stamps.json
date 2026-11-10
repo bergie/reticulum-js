@@ -1,5 +1,5 @@
 {
-  "_about": "RNS 1.6.0 network stamp vectors, generated with the vendored Python reference (Reticulum/RNS/Stamps.py). Materials are SHA-256 of the given label so any implementation can rederive them.",
+  "_about": "RNS 1.6.0 network stamp vectors, generated with the Python reference implementation (Reticulum/RNS/Stamps.py). Materials are SHA-256 of the given label so any implementation can rederive them.",
   "arbitrary": [
     {
       "materialLabel": "mat0",

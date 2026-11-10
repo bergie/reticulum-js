@@ -1,9 +1,10 @@
 /**
  * RNS 1.6.0 network stamp primitives (`src/utils/stamps.js`) — conformance
- * against the Python reference (`Reticulum/RNS/Stamps.py`).
+ * against the Python reference implementation
+ * (`./Reticulum/RNS/Stamps.py`).
  *
  * All vectors in `fixtures/rns160-stamps.json` were generated with the
- * vendored Python 1.6.0 reference: fixed-point cost helpers, target values,
+ * Python reference implementation (1.6.0): fixed-point cost helpers, target values,
  * mined 14-byte stamps (values + validity sweeps) and mantissa-table
  * digests. The materials are SHA-256 of their labels, so any implementation
  * can rederive them without long literals.
