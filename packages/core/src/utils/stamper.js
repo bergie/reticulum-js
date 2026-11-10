@@ -142,6 +142,11 @@ async function webCryptoStampWorkblock(
   material,
   expandRounds = WORKBLOCK_EXPAND_ROUNDS,
 ) {
+  // Python-faithful 0-round semantics: `LXStamper.stamp_workblock` returns
+  // the material itself when no expansion is requested (`not expand_rounds`).
+  // RNS 1.6.0 network stamps always validate against the raw material, so
+  // this path must never yield an empty workblock.
+  if (!expandRounds) return material.slice();
   /** @type {Uint8Array[]} */
   const chunks = [];
   for (let n = 0; n < expandRounds; n++) {

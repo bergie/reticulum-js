@@ -1,0 +1,281 @@
+{
+  "_about": "RNS 1.6.0 network stamp vectors, generated with the vendored Python reference (Reticulum/RNS/Stamps.py). Materials are SHA-256 of the given label so any implementation can rederive them.",
+  "arbitrary": [
+    {
+      "materialLabel": "mat0",
+      "stamp": "000102030405060708090a0b0c0d0e",
+      "value": 6.171875
+    },
+    {
+      "materialLabel": "mat1",
+      "stamp": "f00dfeed123456789abcdef0123456",
+      "value": 0.76953125
+    },
+    {
+      "materialLabel": "mat2",
+      "stamp": "ffffffffffffffffffffffffffffff",
+      "value": 0.7734375
+    }
+  ],
+  "costFpBits": 8,
+  "costInt": {
+    "1152": 4,
+    "4045": 15,
+    "6016": 23
+  },
+  "costToFp": {
+    "0": 0,
+    "1": 256,
+    "100": 25600,
+    "100.5": 25600,
+    "12.5": 3200,
+    "15.8": 4045,
+    "23.499": 6016,
+    "23.5": 6016,
+    "23.501": 6016,
+    "25.0": 6400,
+    "256.5": 25600,
+    "3.0": 768,
+    "4.5": 1152,
+    "6.25": 1600,
+    "99.99": 25597
+  },
+  "fpToBytes": {
+    "0": "0000",
+    "1152": "0480",
+    "1600": "0640",
+    "25597": "63fd",
+    "256": "0100",
+    "25600": "6400",
+    "3200": "0c80",
+    "4045": "0fcd",
+    "6016": "1780",
+    "6400": "1900",
+    "768": "0300"
+  },
+  "mantissaBits": 33,
+  "materials": {
+    "mat0": "90b9b8e89132990eb21d0242f42316f868e0b88f1b9d1ce14c3d257401de83ed",
+    "mat1": "c5993374fac5d291560c2e5600f740e930ac8088566774ef9dfa511ebb6aa446",
+    "mat2": "1f7a3e0d9b0c22aca750c496cff47df7c92b7b8c03acb605d07f28ccec608f7a"
+  },
+  "mined": [
+    {
+      "label": "mat0-cost3.0",
+      "materialLabel": "mat0",
+      "requiredCost": 3.0,
+      "stamp": "db8c32aeef0aa9c506e2f15006b3",
+      "validSweep": {
+        "12.0": false,
+        "16.0": false,
+        "2.0": true,
+        "20.0": false,
+        "3.0": true,
+        "3.5": false,
+        "4.0": false,
+        "4.5": false,
+        "5.0": false,
+        "6.0": false,
+        "6.25": false,
+        "7.0": false,
+        "8.0": false,
+        "9.5": false
+      },
+      "value": 3.2421875
+    },
+    {
+      "label": "mat0-cost4.5",
+      "materialLabel": "mat0",
+      "requiredCost": 4.5,
+      "stamp": "d794ccdc0dfe40e2f55e5ebfd732",
+      "validSweep": {
+        "12.0": false,
+        "16.0": false,
+        "2.0": true,
+        "20.0": false,
+        "3.0": true,
+        "3.5": true,
+        "4.0": true,
+        "4.5": true,
+        "5.0": false,
+        "6.0": false,
+        "6.25": false,
+        "7.0": false,
+        "8.0": false,
+        "9.5": false
+      },
+      "value": 4.515625
+    },
+    {
+      "label": "mat0-cost6.25",
+      "materialLabel": "mat0",
+      "requiredCost": 6.25,
+      "stamp": "77c63afa37a092a703534b89382f",
+      "validSweep": {
+        "12.0": false,
+        "16.0": false,
+        "2.0": true,
+        "20.0": false,
+        "3.0": true,
+        "3.5": true,
+        "4.0": true,
+        "4.5": true,
+        "5.0": true,
+        "6.0": true,
+        "6.25": true,
+        "7.0": true,
+        "8.0": false,
+        "9.5": false
+      },
+      "value": 7.02734375
+    },
+    {
+      "label": "mat0-cost8.0",
+      "materialLabel": "mat0",
+      "requiredCost": 8.0,
+      "stamp": "846648bb0ce5b3dba1b00fb7e6d0",
+      "validSweep": {
+        "12.0": false,
+        "16.0": false,
+        "2.0": true,
+        "20.0": false,
+        "3.0": true,
+        "3.5": true,
+        "4.0": true,
+        "4.5": true,
+        "5.0": true,
+        "6.0": true,
+        "6.25": true,
+        "7.0": true,
+        "8.0": true,
+        "9.5": false
+      },
+      "value": 8.390625
+    },
+    {
+      "label": "mat1-cost3.0",
+      "materialLabel": "mat1",
+      "requiredCost": 3.0,
+      "stamp": "1cbce4dbc91311f81c7d86593568",
+      "validSweep": {
+        "12.0": false,
+        "16.0": false,
+        "2.0": true,
+        "20.0": false,
+        "3.0": true,
+        "3.5": false,
+        "4.0": false,
+        "4.5": false,
+        "5.0": false,
+        "6.0": false,
+        "6.25": false,
+        "7.0": false,
+        "8.0": false,
+        "9.5": false
+      },
+      "value": 3.39453125
+    },
+    {
+      "label": "mat1-cost4.5",
+      "materialLabel": "mat1",
+      "requiredCost": 4.5,
+      "stamp": "028a09664b4598127a70309cb6a2",
+      "validSweep": {
+        "12.0": false,
+        "16.0": false,
+        "2.0": true,
+        "20.0": false,
+        "3.0": true,
+        "3.5": true,
+        "4.0": true,
+        "4.5": true,
+        "5.0": true,
+        "6.0": true,
+        "6.25": true,
+        "7.0": true,
+        "8.0": false,
+        "9.5": false
+      },
+      "value": 7.35546875
+    },
+    {
+      "label": "mat1-cost6.25",
+      "materialLabel": "mat1",
+      "requiredCost": 6.25,
+      "stamp": "bda268cf3b7710b3b1cd6466dbea",
+      "validSweep": {
+        "12.0": false,
+        "16.0": false,
+        "2.0": true,
+        "20.0": false,
+        "3.0": true,
+        "3.5": true,
+        "4.0": true,
+        "4.5": true,
+        "5.0": true,
+        "6.0": true,
+        "6.25": true,
+        "7.0": true,
+        "8.0": false,
+        "9.5": false
+      },
+      "value": 7.30859375
+    },
+    {
+      "label": "mat1-cost8.0",
+      "materialLabel": "mat1",
+      "requiredCost": 8.0,
+      "stamp": "ea9665cc25c9a2cd77f1b584e9f1",
+      "validSweep": {
+        "12.0": false,
+        "16.0": false,
+        "2.0": true,
+        "20.0": false,
+        "3.0": true,
+        "3.5": true,
+        "4.0": true,
+        "4.5": true,
+        "5.0": true,
+        "6.0": true,
+        "6.25": true,
+        "7.0": true,
+        "8.0": true,
+        "9.5": true
+      },
+      "value": 11.08984375
+    }
+  ],
+  "prmDigest": "21436fc98e76a12cad7c52ebeb6ab76c2ae93b4cd768949df7fdd4e2f98c378d",
+  "quantizeCost": {
+    "100.5": 100.0,
+    "15.8": 15.80078125,
+    "23.499": 23.5,
+    "4.499": 4.5,
+    "4.5": 4.5,
+    "4.501": 4.5
+  },
+  "stampSize": 14,
+  "tabDigest": "55ba3ce1df224895b0dfdc102eb4359fc2f5a7efefee68df0cc90c8a8ac24f48",
+  "targetFromCost": {
+    "1": "0x8000000000000000000000000000000000000000000000000000000000000000",
+    "100": "0x1000000000000000000000000000000000000000",
+    "12.5": "0xb504f333c0000000000000000000000000000000000000000000000000000",
+    "15.8": "0x125e857118000000000000000000000000000000000000000000000000000",
+    "23.5": "0x16a09e66780000000000000000000000000000000000000000000000000",
+    "25.0": "0x8000000000000000000000000000000000000000000000000000000000",
+    "3.0": "0x2000000000000000000000000000000000000000000000000000000000000000",
+    "4.5": "0xb504f333c000000000000000000000000000000000000000000000000000000",
+    "6.25": "0x35d13f32b000000000000000000000000000000000000000000000000000000",
+    "64": "0x1000000000000000000000000000000000000000000000000"
+  },
+  "targetFromFp": {
+    "0": "0x10000000000000000000000000000000000000000000000000000000000000000",
+    "1152": "0xb504f333c000000000000000000000000000000000000000000000000000000",
+    "16384": "0x1000000000000000000000000000000000000000000000000",
+    "256": "0x8000000000000000000000000000000000000000000000000000000000000000",
+    "25600": "0x1000000000000000000000000000000000000000",
+    "4045": "0x125e857118000000000000000000000000000000000000000000000000000",
+    "6016": "0x16a09e66780000000000000000000000000000000000000000000000000",
+    "6400": "0x8000000000000000000000000000000000000000000000000000000000"
+  }
+}

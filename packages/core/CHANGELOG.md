@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- RNS 1.6.0 network-stamp primitives (`src/utils/stamps.js`), mirroring `RNS/Stamps.py`: fractional fixed-point cost helpers (8.8 encoding with the authoritative 256-entry mantissa table, digest-checked against the Python reference), fractional `stampValue`/`stampValid`, 14-byte detached `generateStamp` (announces, path requests) and `generateStampedKey` (X25519 keystamps for link requests and identities). All hashing routes through the pluggable engine seam, so the `@reticulum/node` fast engine accelerates these automatically. Verified against the vendored Python 1.6.0 reference with fixture vectors (`test/fixtures/rns160-stamps.json`).
+- RNS 1.6.0 announce stamp parsing (receive side): `Identity.validateAnnounce` now parses the 18-byte stamp extension payload (marker `0xC1`, stamp, fixed-point link cost) appended to `app_data` by 1.6.x peers — validating the stamp, exposing `stamp`/`stampValue`/`linkCost`/`stampValidated` on the result, stripping the extension from the application-visible `app_data`, and honouring `checkStamps`/`requiredStampValue`/`enforceStamps` options. The transport passes interface-level requirements and persists stamp metadata in the known-destinations cache; `Transport.recallStampValue`/`recallLinkCost` expose it. Verified both ways against Python 1.6.0 (Python-emitted announce validated in JS; JS-emitted announce validated by Python).
+- RNS 1.6.0 announce stamp emission (send side): `Destination.ensureStamp`/`_extPayloadForAnnounce` generate the 14-byte destination stamp (one-shot, mined once and reused across announces) and append the extension payload to `app_data` before signing, plus `Destination.setLinkCost`/`setStampValue`/`getLinkCost`/`stampMaterial` mirroring the Python `Destination` API. Emission is gated behind `Transport.STAMP_DESTINATIONS` (default off, matching upstream 1.6.0).
+- Transport stamp-phase knobs mirroring the Python `Transport` class: `STAMPS_ENABLED`/`STAMPS_ENFORCED`/`LR_STAMPS_ENFORCED`/`STAMP_DESTINATIONS`/`STAMP_PATH_REQUESTS`/`STAMP_LINK_REQUESTS`/`ALWAYS_STAMP_LINK_REQUESTS`, default costs/values (`DESTINATION_COST` 23.5, `DESTINATION_VALUE` 25.0, `PR_COST`/`PR_VALUE` 15.8, `LR_COST` 12.5) and `LINK_COST_CAP` 40 — enforcement stays off, matching the upstream 1.6.0 rollout phase.
+### Fixed
+- `stampWorkblock` with zero expansion rounds now returns the material itself in both the WebCrypto default engine and the Node fast engine (Python-faithful `not expand_rounds` semantics), instead of an empty block — RNS 1.6.0 network stamps always hash the raw material.
 
 ## [0.9.13] - 2026-10-18
 ### Fixed

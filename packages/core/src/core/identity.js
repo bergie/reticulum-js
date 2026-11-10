@@ -20,6 +20,18 @@ import {
 import { Token } from "../crypto/token.js";
 import { bytesEqual } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
+import {
+  costFromBytes,
+  DEFAULT_DESTINATION_COST,
+  EXT_HEADER_LENGTH,
+  EXT_PAYLOAD_LENGTH,
+  EXT_PAYLOAD_MARKER,
+  LR_COST_LENGTH,
+  STAMP_COST_CAP,
+  STAMP_LENGTH,
+  stampValid,
+  stampValue,
+} from "../utils/stamps.js";
 
 /**
  * Result of a successful announce validation (SPEC.md §4.5).
@@ -31,6 +43,14 @@ import { LogLevel, log } from "../utils/log.js";
  * @property {Uint8Array|null} ratchet - 32-byte ratchet X25519 pub if context_flag was set, else null.
  * @property {Uint8Array} signature - 64-byte Ed25519 signature.
  * @property {Uint8Array|null} appData - app_data bytes if present in the announce, else null.
+ * @property {Uint8Array|null} stamp - 14-byte announce stamp from the RNS 1.6.0
+ *   extension payload, when the announce carries a valid one.
+ * @property {number|null} stampValue - Achieved fractional stamp value
+ *   (RNS 1.6.0), when the announce carries a valid stamp.
+ * @property {number|null} linkCost - The announce's signalled link request
+ *   stamp cost (RNS 1.6.0), when the extension payload parsed successfully.
+ * @property {boolean} stampValidated - Whether the stamp met the required
+ *   value. True for unstamped announces only when stamp checking is off.
  */
 
 /**
@@ -635,12 +655,35 @@ export class Identity extends EventTarget {
    * The caller is responsible for the §4.5 step 4 public-key collision check
    * and step 6 caching, since those touch the transport's identity cache.
    *
+   * RNS 1.6.0 announce stamps: when the app_data ends with an 18-byte
+   * extension payload (marker 0xC1 + flags + 14-byte stamp + fixed-point
+   * link cost), the stamp is validated against `requiredStampValue` and, on
+   * success, stripped from the returned app_data — mirroring Python's
+   * `validate_announce`. The stamp, its fractional value and the signalled
+   * link cost are returned alongside the parsed fields. Signature
+   * verification always covers the *original* app_data (extension payload
+   * included), exactly like the reference.
+   *
    * @param {Uint8Array} destinationHash - 16-byte dest_hash from the outer packet header.
    * @param {boolean} contextFlag - the packet header's context_flag bit (ratchet present).
    * @param {Uint8Array} data - the announce body (packet payload).
+   * @param {Object} [options]
+   * @param {boolean} [options.checkStamps=true] - Parse and validate RNS 1.6.0
+   *   announce stamps (`Transport.STAMPS_ENABLED` upstream, default on).
+   * @param {number} [options.requiredStampValue] - Required stamp value; the
+   *   Python reference takes this from the receiving interface's
+   *   `destination_cost`, defaulting to `Transport.DESTINATION_COST` (23.5).
+   * @param {boolean} [options.enforceStamps=false] - Reject announces without
+   *   a valid stamp (`Transport.STAMPS_ENFORCED`, default off until upstream
+   *   1.6.2 flips it).
    * @returns {Promise<AnnounceValidation|null>} null on any validation failure.
    */
-  static async validateAnnounce(destinationHash, contextFlag, data) {
+  static async validateAnnounce(
+    destinationHash,
+    contextFlag,
+    data,
+    options = {},
+  ) {
     // §4.5 step 1 — body parse, branching on context_flag. Offsets per the
     // spec table; a ratchet-bearing announce places the signature at [116:180]
     // instead of [84:148].
@@ -663,7 +706,7 @@ export class Identity extends EventTarget {
       ratchet = data.subarray(84, 116);
     }
     const signature = data.subarray(sigOffset, sigEnd);
-    const appData = data.length > sigEnd ? data.slice(sigEnd) : null;
+    let appData = data.length > sigEnd ? data.slice(sigEnd) : null;
 
     const identity = await Identity.fromPublicKey(publicKey);
 
@@ -725,7 +768,94 @@ export class Identity extends EventTarget {
       return null;
     }
 
+    // RNS 1.6.0 — announce stamp extension payload (Python validate_announce).
+    // An announce whose app_data ends with EXT_PAYLOAD_LENGTH bytes starting
+    // with the 0xC1 marker carries a destination stamp and the link request
+    // cost it requires. The stamp material is `dest_hash ‖ public_key ‖
+    // name_hash`, hashed directly (no workblock expansion). On success the
+    // extension is stripped from the application-visible app_data.
+    const {
+      checkStamps = true,
+      requiredStampValue = DEFAULT_DESTINATION_COST,
+      enforceStamps = false,
+    } = options;
+    /** @type {Uint8Array|null} */
+    let stamp = null;
+    let achievedValue = null;
+    let linkCost = null;
+    let stampValidated = false;
+    let destStamped = false;
+    if (checkStamps && appData && appData.length >= EXT_PAYLOAD_LENGTH) {
+      const ext = appData.subarray(appData.length - EXT_PAYLOAD_LENGTH);
+      // The anchor (last byte) carries the 7-bit integer part of the link
+      // cost; the MSB marks an unknown future extension format. The mantissa
+      // byte sits immediately before it. Python packs `bytes([mantissa,
+      // integer])` after the stamp, so the fixed-point value decodes as
+      // `(anchor << 8) | mantissa`.
+      const anchor = ext[EXT_PAYLOAD_LENGTH - 1];
+      const extended = (anchor & 0x80) !== 0;
+      const lrCost = costFromBytes(
+        new Uint8Array([anchor & 0x7f, ext[EXT_PAYLOAD_LENGTH - 2]]),
+      );
+      const knownFormat = !extended && lrCost <= STAMP_COST_CAP;
+      if (ext[0] === EXT_PAYLOAD_MARKER && knownFormat) {
+        destStamped = true;
+        try {
+          stamp = ext.slice(
+            EXT_HEADER_LENGTH,
+            EXT_HEADER_LENGTH + STAMP_LENGTH,
+          );
+          const material = new Uint8Array(
+            destinationHash.length + publicKey.length + nameHash.length,
+          );
+          material.set(destinationHash, 0);
+          material.set(publicKey, destinationHash.length);
+          material.set(nameHash, destinationHash.length + publicKey.length);
+          const valid = await stampValid(stamp, requiredStampValue, material);
+          achievedValue = await stampValue(material, stamp);
+          if (valid) {
+            const stripped = appData.slice(
+              0,
+              appData.length - EXT_PAYLOAD_LENGTH,
+            );
+            appData = stripped.length > 0 ? stripped : null;
+            stampValidated = true;
+            linkCost = lrCost;
+          }
+        } catch (e) {
+          log(
+            "Identity",
+            `Announce stamp parsing failed: ${e}`,
+            LogLevel.ERROR,
+          );
+        }
+      }
+      if (enforceStamps) {
+        if (!destStamped || !stampValidated) {
+          log(
+            "Identity",
+            destStamped
+              ? `Announce stamp below required value ${requiredStampValue} — enforcing, rejecting`
+              : "Announce carries no stamp — enforcing, rejecting",
+            LogLevel.WARNING,
+          );
+          return null;
+        }
+      }
+    }
+
     identity.appData = appData ?? new Uint8Array();
-    return { identity, nameHash, randomHash, ratchet, signature, appData };
+    return {
+      identity,
+      nameHash,
+      randomHash,
+      ratchet,
+      signature,
+      appData,
+      stamp,
+      stampValue: achievedValue,
+      linkCost,
+      stampValidated,
+    };
   }
 }

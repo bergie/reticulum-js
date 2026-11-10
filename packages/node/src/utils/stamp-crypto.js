@@ -49,6 +49,10 @@ export function stampWorkblockSync(
   material,
   expandRounds = WORKBLOCK_EXPAND_ROUNDS,
 ) {
+  // Python-faithful 0-round semantics, matching the WebCrypto default engine:
+  // no expansion returns the material itself (RNS 1.6.0 network stamps
+  // validate against the raw material — never an empty workblock).
+  if (!expandRounds) return material.slice();
   const workblock = new Uint8Array(expandRounds * 256);
   for (let n = 0; n < expandRounds; n++) {
     const counter = msgpackUint(n);

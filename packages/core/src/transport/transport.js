@@ -25,6 +25,13 @@ import {
 import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
+import {
+  DEFAULT_DESTINATION_COST,
+  DEFAULT_DESTINATION_VALUE,
+  DEFAULT_LR_COST,
+  DEFAULT_PR_COST,
+  DEFAULT_PR_VALUE,
+} from "../utils/stamps.js";
 import { aspectNameHash } from "./discovery.js";
 import { IdentityCache } from "./identity-cache.js";
 import { PathState, RoutingTable } from "./router.js";
@@ -361,15 +368,29 @@ export class TransportCore extends EventTarget {
    * @param {Uint8Array} destinationHash
    * @param {Uint8Array} publicKey
    * @param {Uint8Array|null} [appData]
+   * @param {Uint8Array|null} [stamp] RNS 1.6.0 announce stamp, when valid.
+   * @param {number|null} [stampValue] The stamp's fractional value.
+   * @param {number|null} [linkCost] The announced link request stamp cost.
    * @returns {Promise<void>}
    */
-  async rememberIdentity(packetHash, destinationHash, publicKey, appData) {
+  async rememberIdentity(
+    packetHash,
+    destinationHash,
+    publicKey,
+    appData,
+    stamp = null,
+    stampValue = null,
+    linkCost = null,
+  ) {
     await Destination.rememberInto(
       this.caches.knownDestinations,
       packetHash,
       destinationHash,
       publicKey,
       appData,
+      stamp,
+      stampValue,
+      linkCost,
     );
   }
 
@@ -668,6 +689,13 @@ export class TransportCore extends EventTarget {
       packet.destinationHash,
       packet.contextFlag,
       packet.payload,
+      {
+        checkStamps: TransportCore.STAMPS_ENABLED,
+        requiredStampValue: /** @type {any} */ (receivingInterface)
+          ?.destinationCost,
+        enforceStamps:
+          TransportCore.STAMPS_ENABLED && TransportCore.STAMPS_ENFORCED,
+      },
     );
     if (!result) {
       // An invalid announce signature counts as a protocol violation on the
@@ -706,7 +734,16 @@ export class TransportCore extends EventTarget {
       }
     }
 
-    const { identity, nameHash, randomHash, ratchet, appData } = result;
+    const {
+      identity,
+      nameHash,
+      randomHash,
+      ratchet,
+      appData,
+      stamp,
+      stampValue,
+      linkCost,
+    } = result;
 
     // §4.5 step 4 — public-key collision rejection. First-announcer-wins: a
     // different public_key for an already-known destination_hash is treated as
@@ -723,13 +760,18 @@ export class TransportCore extends EventTarget {
       return;
     }
 
-    // §4.5 step 6 — cache the announce contents.
+    // §4.5 step 6 — cache the announce contents. The RNS 1.6.0 stamp
+    // metadata rides along so link planners can recall the announced
+    // link cost and path-request senders can recall stamp values.
     const packetHash = await packet.getHash();
     await this.rememberIdentity(
       packetHash,
       packet.destinationHash,
       identity.publicKey,
       appData,
+      stamp,
+      stampValue,
+      linkCost,
     );
     if (ratchet) {
       this.rememberRatchet(packet.destinationHash, ratchet);
@@ -774,6 +816,9 @@ export class TransportCore extends EventTarget {
           randomHash,
           ratchet,
           appData,
+          stamp,
+          stampValue,
+          linkCost,
           packet,
         },
       }),
@@ -860,6 +905,106 @@ export class TransportCore extends EventTarget {
    * waiting-request exemption window for held announces.
    */
   static PATH_REQUEST_GATE_TIMEOUT_SECS = 120;
+
+  // ---- RNS 1.6.0 network stamps (phased rollout upstream) ----
+
+  /**
+   * Whether stamps on announces and path requests are checked and validated
+   * (`Transport.STAMPS_ENABLED`, upstream 1.6.0 default: on). Checking never
+   * rejects traffic — it parses/verifies and records stamp metadata.
+   */
+  static STAMPS_ENABLED = true;
+  /**
+   * Whether announce and path-request stamp requirements are enforced
+   * (`Transport.STAMPS_ENFORCED`). Upstream keeps this off in 1.6.0/1.6.1;
+   * 1.6.2 flips it on. Unstamped traffic is dropped when true.
+   */
+  static STAMPS_ENFORCED = false;
+  /**
+   * Whether link-request stamp requirements are enforced
+   * (`Transport.LR_STAMPS_ENFORCED`). Off until upstream enforcement flips.
+   */
+  static LR_STAMPS_ENFORCED = false;
+  /**
+   * Whether announces emitted by this instance carry destination stamps
+   * (`Transport.STAMP_DESTINATIONS`, upstream 1.6.0 default: off; 1.6.1
+   * flips it on).
+   */
+  static STAMP_DESTINATIONS = false;
+  /**
+   * Whether path requests emitted by this instance carry stamps
+   * (`Transport.STAMP_PRS`, upstream 1.6.0 default: off).
+   */
+  static STAMP_PATH_REQUESTS = false;
+  /**
+   * Whether link requests emitted by this instance are stamped
+   * (`Transport.STAMP_LRS`, upstream default: on). A stamp is only produced
+   * when the destination announced a link cost (or
+   * {@link TransportCore.ALWAYS_STAMP_LINK_REQUESTS} is set).
+   */
+  static STAMP_LINK_REQUESTS = true;
+  /**
+   * Stamp link requests even when the destination announced no cost
+   * (`Transport.ALWAYS_STAMP_LRS`, upstream default: off).
+   */
+  static ALWAYS_STAMP_LINK_REQUESTS = false;
+  /**
+   * Required link request stamp cost when a destination announced none
+   * (`Transport.LR_COST`).
+   */
+  static LR_COST = DEFAULT_LR_COST;
+  /**
+   * Global hard cap on signalled link request costs, separate from the
+   * detached-stamp cost cap (`Transport.LINK_COST_CAP` = 40).
+   */
+  static LINK_COST_CAP = 40;
+  /**
+   * Default required announce stamp cost when no interface- or
+   * destination-specific value applies (`Transport.DESTINATION_COST`).
+   */
+  static DESTINATION_COST = DEFAULT_DESTINATION_COST;
+  /**
+   * Target stamp value for emitted announces (`Transport.DESTINATION_VALUE`).
+   */
+  static DESTINATION_VALUE = DEFAULT_DESTINATION_VALUE;
+  /**
+   * Required path request stamp cost (`Transport.PR_COST`).
+   */
+  static PR_COST = DEFAULT_PR_COST;
+  /**
+   * Target stamp value for emitted path requests (`Transport.PR_VALUE`).
+   */
+  static PR_VALUE = DEFAULT_PR_VALUE;
+  /** Seconds before an in-flight link request stamp job gives up
+   * (`Transport.LINK_STAMP_TIMEOUT`). */
+  static LINK_STAMP_TIMEOUT = 15;
+  /** Seconds before an in-flight path request stamp job gives up
+   * (`Transport.PR_STAMP_TIMEOUT`). */
+  static PR_STAMP_TIMEOUT = 15;
+
+  /**
+   * Recalls the last-heard announce stamp value for a destination
+   * (Python `Identity.recall_stamp_value`), or `null` when unknown or the
+   * announce carried no stamp.
+   * @param {Uint8Array} destinationHash
+   * @returns {Promise<number|null>}
+   */
+  async recallStampValue(destinationHash) {
+    const entry = this.caches.knownDestinations.get(toHex(destinationHash));
+    return entry?.stampValue ?? null;
+  }
+
+  /**
+   * Recalls the link request stamp cost a destination announced
+   * (Python `Identity.recall_link_cost`), or `null` when it announced none.
+   * Callers planning outbound link requests mine a stamp meeting this cost.
+   * @param {Uint8Array} destinationHash
+   * @returns {Promise<number|null>}
+   */
+  async recallLinkCost(destinationHash) {
+    const entry = this.caches.knownDestinations.get(toHex(destinationHash));
+    return entry?.linkCost ?? null;
+  }
 
   /**
    * Sends a `path?` request for a destination we have no route to (§7.1).

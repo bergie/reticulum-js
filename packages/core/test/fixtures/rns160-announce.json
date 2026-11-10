@@ -1,0 +1,13 @@
+{
+  "_about": "RNS 1.6.0 stamped announce, emitted by the vendored Python reference (destination stamps enabled, target value 3.0, required cost 2.5, link cost 12.5, app_data 'cross-check-app-data'). Recalled stamp value in Python: see recalledStampValue.",
+  "identityPrivateKey": "508b1b95bf0d4a397adb91ab7b98f72b6b48c452dccf27ede3d4d48a4ce9f76b0161c155aa0b78641d512f62b9e1deefce74df25e870bf7d17dac23bcd184d86",
+  "publicKey": "48aef9bcbe538f893024328c6a2948c017eaf846de1bc7b0b50d9986defe074fc4c1ee4763f3d24ada492f9bde2337f215544f219e4f3c053846dcfbbdd5b637",
+  "destHash": "157c5626852739864696833f02d9b400",
+  "nameHash": "0cb686a362792eb15a68",
+  "linkCost": 12.5,
+  "recalledStampValue": 4.55859375,
+  "recalledLinkCost": 12.5,
+  "appDataPlain": "cross-check-app-data",
+  "wire": "0100157c5626852739864696833f02d9b4000048aef9bcbe538f893024328c6a2948c017eaf846de1bc7b0b50d9986defe074fc4c1ee4763f3d24ada492f9bde2337f215544f219e4f3c053846dcfbbdd5b6370cb686a362792eb15a683d4e3f6dfb006af274ba89f8f3b0d1c325485e1e91905ec87546a92c95ac648c3b1040ca1dd278f3e2abf59947edf88c42f575241e46a4cfa8d2c299d30bf161b396cddc9dc4750bd40e63726f73732d636865636b2d6170702d64617461c1008a9733dd473571a1bb7e07e1e91a800c",
+  "stampMaterial": "157c5626852739864696833f02d9b40048aef9bcbe538f893024328c6a2948c017eaf846de1bc7b0b50d9986defe074fc4c1ee4763f3d24ada492f9bde2337f215544f219e4f3c053846dcfbbdd5b6370cb686a362792eb15a68"
+}

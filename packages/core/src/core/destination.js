@@ -9,9 +9,23 @@ import {
   generateX25519KeyPair,
 } from "../crypto/keys.js";
 import { Link } from "../transport/link.js";
-import { bytesEqual, toHex } from "../utils/encoding.js";
+import { TransportCore } from "../transport/transport.js";
+import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import {
+  costToBytes,
+  DEFAULT_DESTINATION_COST,
+  DEFAULT_DESTINATION_VALUE,
+  DEFAULT_LR_COST,
+  EXT_HEADER_LENGTH,
+  EXT_PAYLOAD_LENGTH,
+  EXT_PAYLOAD_MARKER,
+  generateStamp,
+  quantizeCost,
+  STAMP_COST_CAP,
+  STAMP_LENGTH,
+} from "../utils/stamps.js";
 import { Identity } from "./identity.js";
 import {
   ContextType,
@@ -144,6 +158,12 @@ function appDataEquals(a, b) {
  * @property {Uint8Array} packetHash Hash of the last validated announce packet.
  * @property {Uint8Array} publicKey The 64-byte public key (X25519 ‖ Ed25519).
  * @property {Uint8Array|null} appData App-specific announce metadata, if any.
+ * @property {Uint8Array|null} [stamp] RNS 1.6.0 announce stamp, when the
+ *   announce carried a valid 14-byte stamp in its extension payload.
+ * @property {number|null} [stampValue] The stamp's achieved fractional value.
+ * @property {number|null} [linkCost] The signalled link request stamp cost
+ *   (`lr_cost`); callers planning outbound links recall this via
+ *   `Transport.recallLinkCost`.
  */
 
 /**
@@ -249,6 +269,21 @@ export class Destination extends EventTarget {
     this.ratchets = null;
     this.latestRatchetTime = 0;
     this.ratchetInterval = Destination.RATCHET_INTERVAL_MS;
+
+    // RNS 1.6.0 — destination announce stamping. `_stampTargetValue` is the
+    // operator-configured emission target (Destination.setStampValue); the
+    // effective target floors at the transport's DESTINATION_VALUE. Stamps
+    // are one-shot: generated once at the target, persisted upstream to
+    // storage and reused verbatim on every announce (Python keeps them under
+    // `storage/stamps/*.dstamp` — ours are regenerated after restart until
+    // persistence lands in the storage adapter).
+    /** @type {Uint8Array|null} */
+    this._stamp = null;
+    this._stampValue = null;
+    /** @type {number|null} */
+    this._stampTargetValue = null;
+    /** @type {number|null} */
+    this._linkCost = null;
 
     // §9.7 periodic re-announce scheduler state. `setInterval`-driven; the
     // loop survives individual announce failures so a transient crypto /
@@ -446,6 +481,159 @@ export class Destination extends EventTarget {
   }
 
   /**
+   * The stamp material this destination's announce stamp proves work against
+   * (Python `Destination.stamp_material`):
+   * `dest_hash ‖ public_key ‖ name_hash`.
+   * @returns {Promise<Uint8Array>} 90 bytes.
+   */
+  async stampMaterial() {
+    const destinationHash = this.destinationHash;
+    const nameHash = this.nameHash;
+    if (!destinationHash || !nameHash) {
+      throw new Error("Destination hashes not computed.");
+    }
+    if (!this.identity) {
+      throw new Error("Destination requires an identity to stamp.");
+    }
+    const publicKey = await this.identity.getPublicKey();
+    const material = new Uint8Array(
+      destinationHash.length + publicKey.length + nameHash.length,
+    );
+    material.set(destinationHash, 0);
+    material.set(publicKey, destinationHash.length);
+    material.set(nameHash, destinationHash.length + publicKey.length);
+    return material;
+  }
+
+  /**
+   * Extension-payload flag byte (Python `Destination.get_ext_flags`).
+   * Reserved for future extension formats; always 0x00 in 1.6.0.
+   * @returns {number}
+   */
+  getExtFlags() {
+    return 0x00;
+  }
+
+  /**
+   * The effective announce stamp emission target (Python
+   * `Destination.stamp_value`): the operator-configured target floored at
+   * `Transport.DESTINATION_VALUE` and capped at `STAMP_COST_CAP`.
+   * @returns {number}
+   */
+  get stampTargetValue() {
+    return Math.min(
+      STAMP_COST_CAP,
+      Math.max(
+        this._stampTargetValue ?? DEFAULT_DESTINATION_COST,
+        TransportCore.DESTINATION_VALUE,
+      ),
+    );
+  }
+
+  /**
+   * Sets the target stamp value for this destination's announces (Python
+   * `Destination.set_value`). Clamped to `[Transport.DESTINATION_COST,
+   * STAMP_COST_CAP]`.
+   * @param {number} value
+   */
+  setStampValue(value) {
+    this._stampTargetValue = Math.min(
+      STAMP_COST_CAP,
+      Math.max(Number(value), TransportCore.DESTINATION_COST),
+    );
+  }
+
+  /**
+   * Sets the required link request stamp cost signalled in announces (Python
+   * `Destination.set_link_cost`). Zero disables link request stamping for
+   * this destination. Clamped to `[0, Transport.LINK_COST_CAP]`.
+   * @param {number} cost
+   */
+  setLinkCost(cost) {
+    this._linkCost = Math.max(
+      0,
+      Math.min(Number(cost), TransportCore.LINK_COST_CAP),
+    );
+  }
+
+  /**
+   * The announced link request stamp cost (Python `Destination.get_link_cost`):
+   * the destination-specific cost, or the transport default `LR_COST` when
+   * none was set. Clamped to `[0, STAMP_COST_CAP]`.
+   * @returns {number}
+   */
+  getLinkCost() {
+    const cost = this._linkCost ?? TransportCore.LR_COST;
+    return Math.max(0, Math.min(cost, STAMP_COST_CAP));
+  }
+
+  /**
+   * Ensures this destination holds an announce stamp meeting the effective
+   * target (Python `Destination._await_stamp`). One-shot: the stamp is
+   * generated once and reused verbatim on every announce. Generation is
+   * skipped entirely while `Transport.STAMP_DESTINATIONS` is off.
+   * @returns {Promise<boolean>} Whether a usable stamp is held.
+   */
+  async ensureStamp() {
+    const destinationHash = this.destinationHash;
+    if (!TransportCore.STAMP_DESTINATIONS) return false;
+    if (!destinationHash) return false;
+    if (
+      this._stamp == null ||
+      this._stampValue == null ||
+      this._stampValue < quantizeCost(this.stampTargetValue)
+    ) {
+      const generated = await generateStamp(
+        await this.stampMaterial(),
+        this.stampTargetValue,
+      );
+      if (!generated) return false;
+      const [stamp, value] = generated;
+      this._stamp = stamp;
+      this._stampValue = value;
+      log(
+        "Destination",
+        `Generated announce stamp with value ${value} for ${toHex(destinationHash)}`,
+        LogLevel.DEBUG,
+      );
+    }
+    return this._stamp != null;
+  }
+
+  /**
+   * Builds the RNS 1.6.0 announce extension payload when stamping is on:
+   * `[0xC1 marker][flags][14-byte stamp][cost mantissa][cost anchor]`.
+   * @returns {Promise<Uint8Array|null>} 18 bytes, or null when
+   *   `STAMP_DESTINATIONS` is off (or stamp generation failed).
+   * @private
+   */
+  async _extPayloadForAnnounce() {
+    if (!TransportCore.STAMP_DESTINATIONS) return null;
+    const destinationHash = this.destinationHash;
+    if (!destinationHash) return null;
+    if (!(await this.ensureStamp())) {
+      log(
+        "Destination",
+        `Could not generate destination stamp for ${toHex(destinationHash)}, announce emission cancelled`,
+        LogLevel.WARNING,
+      );
+      return null;
+    }
+    const stamp = this._stamp;
+    if (!stamp) return null;
+    const costBytes = costToBytes(this.getLinkCost());
+    const ext = new Uint8Array(EXT_PAYLOAD_LENGTH);
+    ext[0] = EXT_PAYLOAD_MARKER;
+    ext[1] = this.getExtFlags();
+    ext.set(stamp, EXT_HEADER_LENGTH);
+    // Wire order mirrors Python: [mantissa, integer(anchor)] — the anchor
+    // byte sits last and doubles as the future-format flag carrier.
+    ext[EXT_PAYLOAD_LENGTH - 2] = costBytes[1];
+    ext[EXT_PAYLOAD_LENGTH - 1] = costBytes[0];
+    return ext;
+  }
+
+  /**
    * Builds and broadcasts an announce packet with the given context byte.
    * Shared by {@link announce} (NONE) and {@link announcePathResponse}
    * (PATH_RESPONSE).
@@ -520,8 +708,16 @@ export class Destination extends EventTarget {
       // 2. Fetch the 64-byte Public Key (32 bytes X25519 + 32 bytes Ed25519)
       const pubKey = await this.identity.getPublicKey();
 
-      // 3. Prepare App Data (The human-readable name or metadata)
-      const appData = this.appData ?? this.identity.appData;
+      // 3. Prepare App Data (The human-readable name or metadata). RNS 1.6.0:
+      //    when destination stamping is on, the 18-byte stamp extension
+      //    payload is appended to app_data *before* signing, exactly like
+      //    Python's `Destination._announce`.
+      /** @type {Uint8Array|null} */
+      let appData = this.appData ?? this.identity.appData;
+      const extPayload = await this._extPayloadForAnnounce();
+      if (extPayload) {
+        appData = concatBytes(appData ?? new Uint8Array(0), extPayload);
+      }
 
       // §7.4 ratchet: when forward-secrecy ratchets are enabled on this
       // destination, rotate if due and embed the current ratchet public (32 B)
@@ -1294,6 +1490,9 @@ export class Destination extends EventTarget {
    * @param {Uint8Array} destinationHash
    * @param {Uint8Array} publicKey
    * @param {Uint8Array|null} appData
+   * @param {Uint8Array|null} [stamp] RNS 1.6.0 announce stamp, when valid.
+   * @param {number|null} [stampValue] The stamp's fractional value.
+   * @param {number|null} [linkCost] The announced link request stamp cost.
    */
   static async rememberInto(
     knownDestinations,
@@ -1301,6 +1500,9 @@ export class Destination extends EventTarget {
     destinationHash,
     publicKey,
     appData = null,
+    stamp = null,
+    stampValue = null,
+    linkCost = null,
   ) {
     const key = toHex(destinationHash);
     const existing = knownDestinations.get(key);
@@ -1328,6 +1530,9 @@ export class Destination extends EventTarget {
         packetHash,
         publicKey,
         appData,
+        stamp,
+        stampValue,
+        linkCost,
       });
     } else {
       log("Destination", `Saving new destination ${key}`, LogLevel.DEBUG);
@@ -1336,6 +1541,9 @@ export class Destination extends EventTarget {
         packetHash,
         publicKey,
         appData,
+        stamp,
+        stampValue,
+        linkCost,
       });
     }
   }
