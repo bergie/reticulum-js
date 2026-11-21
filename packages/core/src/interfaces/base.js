@@ -184,18 +184,21 @@ function reconnectSchemaProperties() {
  */
 
 /**
- * High-resolution wall-clock seconds — the JavaScript equivalent of the
- * Python reference's `time.time()` used for its `*_freq_deque` sampling.
- * Plain `Date.now()` only has 1 ms resolution, which makes a genuine
- * sub-millisecond burst (all samples in the same millisecond) read as a
- * zero-span window and go undetected; `performance.timeOrigin +
- * performance.now()` provides sub-millisecond precision in the same
- * epoch-seconds domain.
+ * Wall-clock seconds — the JavaScript equivalent of the Python reference's
+ * `time.time()` used for its `*_freq_deque` sampling and ingress-control
+ * gates.
+ *
+ * This deliberately does NOT use `performance.timeOrigin +
+ * performance.now()` despite its sub-millisecond resolution: that composite
+ * value proved non-monotonic in practice (on Android/Termux it jumps
+ * backwards by whole seconds under async load, e.g. during proof-of-work
+ * mining churn), which corrupts every span/window computed from it —
+ * Python's `time.time()` is plain wall clock, and so is this.
  *
  * @returns {number} Epoch seconds.
  */
 function nowSec() {
-  return (performance.timeOrigin + performance.now()) / 1000;
+  return Date.now() / 1000;
 }
 
 /**

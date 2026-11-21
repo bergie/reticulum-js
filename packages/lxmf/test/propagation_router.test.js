@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Smoketests for {@link LXMRouter.enablePropagation} wiring (§5.3): the
  * `lxmf.propagation` destination is created, the `/get` handler is registered,

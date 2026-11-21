@@ -1,0 +1,29 @@
+{
+  "_about": "RNS 1.6.1 discovery dual-stamp vectors, generated with the Python reference implementation. Both stamps are mined over the same packed info dict: 'nonExpanded' with expand_rounds=0 (the fast path RNS 1.6.1 validators check first) and 'expanded' with InterfaceAnnouncer.WORKBLOCK_EXPAND_ROUNDS=20 (the fallback). The real Python InterfaceAnnounceHandler accepted both, reporting the recorded values.",
+  "required_value": 16,
+  "workblock_expand_rounds": 20,
+  "announced_identity_pub_hex": "d1afc7471838a2ea76c41fe66f37350e15d1be81bfe39c1f921920de83285607f76e93924d35c5fa6693fa4eada8ca057f7e54ddefcb4722e2d36f06940c36e9",
+  "announced_identity_hash_hex": "59abe78cb63765fc3c8566f813f076ad",
+  "packed_hex": "8900b2544350536572766572496e7465726661636501c3ccfec410bf3fc6d179a3bc4bad91f9ac038ecc9eccffaf5374616d70204d6f6465204e6f646503cb4049c0f27bb2fec504cbbfc05bc01a36e2eb05cb404180000000000002d9207374616d70732e6578616d706c652e7265746963756c756d2e6e6574776f726b06cda5b8",
+  "nonExpanded": {
+    "app_data_hex": "008900b2544350536572766572496e7465726661636501c3ccfec410bf3fc6d179a3bc4bad91f9ac038ecc9eccffaf5374616d70204d6f6465204e6f646503cb4049c0f27bb2fec504cbbfc05bc01a36e2eb05cb404180000000000002d9207374616d70732e6578616d706c652e7265746963756c756d2e6e6574776f726b06cda5b85b178a6dbd18847d623d7899c88f94cf1c86b8479874a7215c0a8645647b4b3b",
+    "stamp_hex": "5b178a6dbd18847d623d7899c88f94cf1c86b8479874a7215c0a8645647b4b3b",
+    "value": 16.2578125
+  },
+  "expanded": {
+    "app_data_hex": "008900b2544350536572766572496e7465726661636501c3ccfec410bf3fc6d179a3bc4bad91f9ac038ecc9eccffaf5374616d70204d6f6465204e6f646503cb4049c0f27bb2fec504cbbfc05bc01a36e2eb05cb404180000000000002d9207374616d70732e6578616d706c652e7265746963756c756d2e6e6574776f726b06cda5b845d185da319847200577ce82296e3edcbb36053cd33ebb4128bf0a4b0c41d524",
+    "stamp_hex": "45d185da319847200577ce82296e3edcbb36053cd33ebb4128bf0a4b0c41d524",
+    "value": 16.125
+  },
+  "raw_info": {
+    "0": "TCPServerInterface",
+    "1": true,
+    "254": "bf3fc6d179a3bc4bad91f9ac038ecc9e",
+    "255": "Stamp Mode Node",
+    "3": 51.5074,
+    "4": -0.1278,
+    "5": 35.0,
+    "2": "stamps.example.reticulum.network",
+    "6": 42424
+  }
+}

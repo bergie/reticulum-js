@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 /**
  * Resource transfer watchdog (Python `Resource.__watchdog_job` parity).
  *

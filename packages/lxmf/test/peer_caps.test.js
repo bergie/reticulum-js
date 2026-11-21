@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Peer-table promiscuity caps (Python lxmd parity).
  *

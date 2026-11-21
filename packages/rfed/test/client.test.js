@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * rfed client (work doc #25, Phase 1) — subscribe / publish / receive / pull
  * over a real loopback mesh.

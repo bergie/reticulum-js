@@ -12,6 +12,12 @@ import json
 import os
 import sys
 
+# Pin the vendored reference implementation (./Reticulum) — a pip-installed
+# RNS on PYTHONPATH would silently produce fixtures from a different version.
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "Reticulum"))
+)
+
 import RNS
 # Force the single-process stamp generator (job_simple). Under Termux,
 # platformutils.is_android() is True, which routes LXStamper to job_android's
@@ -24,6 +30,10 @@ RNS.vendor.platformutils.is_windows = lambda: False
 # that reads instance state, so it throws without a live Reticulum. Stub it to
 # None (no source allow-list) so the handler proceeds to stamp validation.
 RNS.Reticulum.interface_discovery_sources = lambda *a, **k: None
+# Likewise hops_to: an unknown destination reports PATHFINDER_M hops, which the
+# 1.6.x handler rejects as an invalid hop count. Discovery announces arrive
+# over interfaces with known hop counts in real operation; report 0 here.
+RNS.Transport.hops_to = lambda *a, **k: 0
 from RNS.vendor import umsgpack as msgpack
 from RNS.Discovery import (
     InterfaceAnnouncer,
@@ -58,9 +68,18 @@ def build_app_data(interface_type, transport_id, name, reachable_on, port,
     }
     packed = msgpack.packb(info)
     infohash = RNS.Identity.full_hash(packed)
-    from LXMF import LXStamper
-    stamp, value = LXStamper.generate_stamp(infohash, stamp_cost=stamp_value,
-                                            expand_rounds=InterfaceAnnouncer.WORKBLOCK_EXPAND_ROUNDS)
+    stamp, value = RNS.Stamps.generate_stamp(
+        infohash,
+        stamp_cost=stamp_value,
+        expand_rounds=InterfaceAnnouncer.WORKBLOCK_EXPAND_ROUNDS,
+        size=RNS.Stamps.STAMP_SIZE,
+    )
+    # Restore a Linux-like platform for handler validation: the darwin stub
+    # above only exists to keep stamp generation single-process, but it also
+    # drives backbone_support in config_entry generation (darwin/Windows
+    # receivers connect via TCPClientInterface, Linux via BackboneInterface).
+    # The fixture records the canonical Linux-receiver form.
+    RNS.vendor.platformutils.is_darwin = lambda: False
     payload = packed + stamp
     flags = 0x00
     out = bytes([flags]) + payload

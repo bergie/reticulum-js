@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * RFedClient single-shot link teardown (link-lifecycle leak regression).
  *

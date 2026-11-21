@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 /**
  * Forward-secrecy ratchets (SPEC.md §7.4).
  *

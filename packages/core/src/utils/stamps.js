@@ -412,6 +412,11 @@ export async function stampValid(stamp, targetCost, workblock) {
  * @typedef {Object} GenerateOptions
  * @property {number} [expandRounds] - HKDF workblock expansion rounds.
  *   RNS stamps use 0 (the default): the material is hashed directly.
+ * @property {number} [size] - Stamp length in bytes. Defaults to
+ *   {@link STAMP_LENGTH} (14), the detached RNS stamp size (Python passes
+ *   `size=Identity.STAMPLENGTH` explicitly for destination and path request
+ *   stamps). Interface discovery stamps are 32 bytes (`STAMP_SIZE`), the
+ *   Python `generate_stamp` default, and pass `size` explicitly.
  * @property {AbortSignal} [signal] - Cancels generation; the call resolves
  *   to `null` once the signal is aborted.
  */
@@ -450,11 +455,10 @@ function assertValidCost(stampCost) {
  */
 export async function generateStamp(material, stampCost, options = {}) {
   assertValidCost(stampCost);
-  const { expandRounds = 0, signal } = options;
+  const { expandRounds = 0, size = STAMP_LENGTH, signal } = options;
   const { stampWorkblock } = await import("./stamper.js");
   const workblock = await stampWorkblock(material, expandRounds);
   const target = targetFromCost(stampCost);
-  const size = STAMP_LENGTH;
   const stamp = new Uint8Array(size);
   while (true) {
     if (signal?.aborted) return null;

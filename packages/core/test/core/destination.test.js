@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 import assert from "node:assert";
 import test from "node:test";
 import {
@@ -410,7 +411,7 @@ test("periodic re-announces dispatch an 'announced' event per fire", async () =>
     );
 
     dest.startAnnouncing({ intervalMs: 5 });
-    await wait(20);
+    await waitFor(() => events.length >= 2);
     assert.ok(
       events.length >= 2,
       `expected periodic event fires, got ${events.length}`,
@@ -590,6 +591,22 @@ async function makeAnnounceableDest() {
 const wait = (/** @type {number} */ ms) =>
   new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Polls until `cond()` is true or the timeout elapses. Stamped announces
+ * (RNS 1.6.1 emission defaults) mine their proof of work inline before the
+ * packet goes on air, so fixed microsecond waits no longer suffice.
+ * @param {() => boolean} cond
+ * @param {number} [timeoutMs=5000]
+ * @returns {Promise<void>}
+ */
+const waitFor = async (cond, timeoutMs = 5000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!cond()) {
+    if (Date.now() > deadline) return;
+    await wait(5);
+  }
+};
+
 test("startAnnouncing fires an immediate announce then repeats periodically", async () => {
   // Allow tiny intervals for the test (the §9.7 60 s floor would otherwise
   // make periodic fires unobservable).
@@ -603,9 +620,9 @@ test("startAnnouncing fires an immediate announce then repeats periodically", as
     ({ dest, captured } = await makeAnnounceableDest());
     dest.startAnnouncing({ intervalMs: 5 });
     assert.ok(dest.isAnnouncing());
-    await wait(10);
+    await waitFor(() => captured.length >= 1);
     assert.ok(captured.length >= 1, "at least the immediate announce landed");
-    await wait(50);
+    await waitFor(() => captured.length >= 2);
     assert.ok(
       captured.length >= 2,
       `expected periodic fires, got ${captured.length}`,
@@ -700,7 +717,7 @@ test("a failed periodic announce does not stop the loop", async () => {
       throw new Error("transient broadcast failure");
     };
     dest.startAnnouncing({ intervalMs: 5 });
-    await wait(20);
+    await wait(30);
     assert.ok(dest.isAnnouncing(), "loop survives repeated failed announces");
     assert.strictEqual(captured.length, 0, "no announce landed while failing");
 
@@ -708,7 +725,7 @@ test("a failed periodic announce does not stop the loop", async () => {
     /** @type {any} */ (dest.interfaceLayer).broadcast = (
       /** @type {any} */ pkt,
     ) => captured.push(pkt);
-    await wait(20);
+    await waitFor(() => captured.length >= 1);
     assert.ok(captured.length >= 1, "announces resumed after recovery");
   } finally {
     dest?.stopAnnouncing();

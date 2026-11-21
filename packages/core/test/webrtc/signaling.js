@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 import assert from "node:assert";
 import { test } from "node:test";
 import { DestType, Packet, PacketType } from "../../src/core/packet.js";

@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 import assert from "node:assert";
 import test from "node:test";
 import { Destination } from "@reticulum/core/src/core/destination.js";

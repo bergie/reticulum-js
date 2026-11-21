@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Inbound message deduplication (Python `LXMRouter.lxmf_delivery`'s
  * `has_message` check): every delivery of the same wire message — over a

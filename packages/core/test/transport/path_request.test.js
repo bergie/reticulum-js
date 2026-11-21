@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 /**
  * Tests for `path?` request / response (SPEC.md §7.1 / §7.2 — leaf minimum).
  *
@@ -56,7 +57,7 @@ test("the path-request destination hash is the well-known constant", async () =>
   );
 });
 
-test("requestPath emits a DATA packet to the path-request dest with target || tag(16)", async () => {
+test("requestPath emits a stamped DATA packet to the path-request dest (RNS 1.6.1 default)", async () => {
   const transport = new TransportCore();
   /** @type {Packet[]} */ const captured = [];
   transport.broadcast = (/** @type {Packet} */ pkt) => captured.push(pkt);
@@ -77,8 +78,8 @@ test("requestPath emits a DATA packet to the path-request dest with target || ta
   );
   assert.strictEqual(
     pkt.payload.length,
-    48,
-    "RNS 1.6.0 form is target(16)+transport_id(16)+tag(16)",
+    64,
+    "stamped form is target(16)+transport_id(16)+tag(16)+ext(2+14)",
   );
   assert.ok(bytesEqual(pkt.payload.slice(0, 16), target));
   // The transport-id slot must be non-zero.
@@ -91,6 +92,32 @@ test("requestPath emits a DATA packet to the path-request dest with target || ta
     Array.from(pkt.payload.slice(32, 48)),
     new Array(16).fill(0),
   );
+  // The stamp extension: marker + flags + 14-byte stamp.
+  assert.strictEqual(pkt.payload[48], 0xc1);
+  assert.strictEqual(pkt.payload[49], 0x00);
+});
+
+test("requestPath emits the unstamped 48-byte form with stamping off", async () => {
+  const original = TransportCore.STAMP_PATH_REQUESTS;
+  TransportCore.STAMP_PATH_REQUESTS = false;
+  try {
+    const transport = new TransportCore();
+    /** @type {Packet[]} */ const captured = [];
+    transport.broadcast = (/** @type {Packet} */ pkt) => captured.push(pkt);
+
+    const target = crypto.getRandomValues(new Uint8Array(16));
+    await transport.requestPath(target);
+
+    assert.strictEqual(captured.length, 1);
+    const pkt = captured[0];
+    assert.strictEqual(
+      pkt.payload.length,
+      48,
+      "unstamped form is target(16)+transport_id(16)+tag(16)",
+    );
+  } finally {
+    TransportCore.STAMP_PATH_REQUESTS = original;
+  }
 });
 
 test("requestPath rejects a non-16-byte destination hash", async () => {

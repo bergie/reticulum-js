@@ -273,7 +273,9 @@ test("stamped emission appends a valid extension payload", async () => {
   }
 });
 
-test("stamping off by default emits unstamped announces", async () => {
+test("stamping can be disabled — unstamped announce emission", async () => {
+  // RNS 1.6.1 enables destination stamping by default (upstream
+  // `STAMP_DESTINATIONS = True`); this test exercises the opt-out.
   const identity = await Identity.generate();
   /** @type {any[]} */
   const captured = [];
@@ -286,20 +288,33 @@ test("stamping off by default emits unstamped announces", async () => {
     fakeLayer,
   );
   dest.setLinkCost(12.5);
-  assert.strictEqual(TransportCore.STAMP_DESTINATIONS, false);
-  await dest.announce();
-  assert.strictEqual(captured.length, 1);
-  const packet = captured[0];
-  const result = await Identity.validateAnnounce(
-    packet.destinationHash,
-    packet.contextFlag,
-    packet.payload,
-  );
-  assert.ok(result, "unstamped announce validates");
-  assert.strictEqual(result.stampValidated, false);
-  assert.strictEqual(result.stamp, null);
-  assert.strictEqual(result.linkCost, null);
-  assert.strictEqual(result.appData, null);
+  const originalStamp = TransportCore.STAMP_DESTINATIONS;
+  try {
+    TransportCore.STAMP_DESTINATIONS = false;
+    await dest.announce();
+    assert.strictEqual(captured.length, 1);
+    const packet = captured[0];
+    const result = await Identity.validateAnnounce(
+      packet.destinationHash,
+      packet.contextFlag,
+      packet.payload,
+    );
+    assert.ok(result, "unstamped announce validates");
+    assert.strictEqual(result.stampValidated, false);
+    assert.strictEqual(result.stamp, null);
+    assert.strictEqual(result.linkCost, null);
+    assert.strictEqual(result.appData, null);
+  } finally {
+    TransportCore.STAMP_DESTINATIONS = originalStamp;
+  }
+});
+
+test("destination stamping is on by default (RNS 1.6.1)", () => {
+  assert.strictEqual(TransportCore.STAMP_DESTINATIONS, true);
+  assert.strictEqual(TransportCore.STAMP_PATH_REQUESTS, true);
+  // Enforcement stays off until upstream flips it.
+  assert.strictEqual(TransportCore.STAMPS_ENFORCED, false);
+  assert.strictEqual(TransportCore.LR_STAMPS_ENFORCED, false);
 });
 
 test("committed JS-emitted fixture stays Python-identical", async () => {

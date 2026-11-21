@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * End-to-end LXMF propagation round-trip over a real loopback mesh.
  *

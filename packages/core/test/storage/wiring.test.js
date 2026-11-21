@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 /**
  * Persistence wiring (work doc #16, Step 2): `Reticulum` constructs a
  * `Persistor` from its `storageAdapter` and hydrates at startup, and

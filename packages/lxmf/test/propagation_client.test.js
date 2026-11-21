@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Client-side propagation (§5.3): submit packing and the `/get` sync exchange.
  *

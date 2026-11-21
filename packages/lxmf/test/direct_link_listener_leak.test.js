@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Regression: repeated `send()` over a reused cached DIRECT link must not
  * re-attach the inbound `data`/`resource` listeners each time.

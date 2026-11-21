@@ -25,13 +25,13 @@ import { Identity } from "../core/identity.js";
 import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import { stampWorkblock } from "../utils/stamper.js";
 import {
   generateStamp,
   STAMP_SIZE,
   stampValid,
   stampValue,
-  stampWorkblock,
-} from "../utils/stamper.js";
+} from "../utils/stamps.js";
 
 // ---------------------------------------------------------------------
 // Constants
@@ -55,6 +55,10 @@ export const DEFAULT_STAMP_VALUE = 16;
 /**
  * HKDF expansion rounds for the discovery stamp workblock. Deliberately cheap
  * (vs LXMF messages' 3000): discovery is high-frequency and store-and-forward.
+ *
+ * This is the generation-side round count (Python `InterfaceAnnouncer` still
+ * mines with it); RNS 1.6.1 validators additionally accept stamps mined
+ * without expansion, so {@link parseDiscoveryAnnounce} checks both.
  */
 export const WORKBLOCK_EXPAND_ROUNDS = 20;
 
@@ -471,6 +475,11 @@ export function buildConfigEntry(fields, backboneSupport = true) {
  * `info` dict, validates the field types/shapes, and builds the normalized
  * {@link DiscoveredInterface} record including a generated `config_entry`.
  *
+ * Stamp validation transitionally accepts stamps mined against either the
+ * non-expanded or the expanded workblock (RNS 1.6.1, Python
+ * `InterfaceAnnounceHandler`): the non-expanded workblock is checked first,
+ * the expanded one is the fallback.
+ *
  * @param {Uint8Array|null|undefined} appData Raw `app_data` bytes from the
  *   transport `"announce"` event detail.
  * @param {Identity} announcedIdentity Identity reconstructed from the announce.
@@ -533,9 +542,21 @@ export async function parseDiscoveryAnnounce(
   const packed = data.subarray(0, data.length - STAMP_SIZE);
 
   const infohash = await Identity.fullHash(packed);
-  const workblock = await stampWorkblock(infohash, WORKBLOCK_EXPAND_ROUNDS);
-  const value = await stampValue(workblock, stamp);
-  const valid = await stampValid(stamp, requiredValue, workblock);
+
+  // RNS 1.6.1 transitional acceptance (Python `InterfaceAnnounceHandler`):
+  // stamps mined against the non-expanded workblock are checked first, the
+  // expanded workblock is the fallback. The reported value comes from
+  // whichever workblock validated. Validation uses the RNS fractional
+  // (8.8 fixed-point TAB) cost grid from {@link module:utils/stamps.js} —
+  // not the LXMF whole-bit grid — matching `Stamps.stamp_valid`/`stamp_value`.
+  const workblockNE = await stampWorkblock(infohash, 0);
+  let value = await stampValue(workblockNE, stamp);
+  let valid = await stampValid(stamp, requiredValue, workblockNE);
+  if (!valid) {
+    const workblock = await stampWorkblock(infohash, WORKBLOCK_EXPAND_ROUNDS);
+    value = await stampValue(workblock, stamp);
+    valid = await stampValid(stamp, requiredValue, workblock);
+  }
   if (!valid) {
     log(
       "Discovery",
@@ -793,7 +814,10 @@ export async function generateDiscoveryStamp(
   expandRounds = WORKBLOCK_EXPAND_ROUNDS,
 ) {
   const infohash = await discoveryInfoHash(infoMap);
-  return generateStamp(infohash, stampCost, expandRounds);
+  return generateStamp(infohash, stampCost, {
+    expandRounds,
+    size: STAMP_SIZE,
+  });
 }
 
 /**

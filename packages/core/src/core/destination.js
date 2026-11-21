@@ -15,9 +15,6 @@ import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
 import {
   costToBytes,
-  DEFAULT_DESTINATION_COST,
-  DEFAULT_DESTINATION_VALUE,
-  DEFAULT_LR_COST,
   EXT_HEADER_LENGTH,
   EXT_PAYLOAD_LENGTH,
   EXT_PAYLOAD_MARKER,
@@ -516,7 +513,7 @@ export class Destination extends EventTarget {
 
   /**
    * The effective announce stamp emission target (Python
-   * `Destination.stamp_value`): the operator-configured target floored at
+   * `Destination.target_value`): the operator-configured target floored at
    * `Transport.DESTINATION_VALUE` and capped at `STAMP_COST_CAP`.
    * @returns {number}
    */
@@ -524,7 +521,7 @@ export class Destination extends EventTarget {
     return Math.min(
       STAMP_COST_CAP,
       Math.max(
-        this._stampTargetValue ?? DEFAULT_DESTINATION_COST,
+        this._stampTargetValue ?? TransportCore.DESTINATION_VALUE,
         TransportCore.DESTINATION_VALUE,
       ),
     );
@@ -532,14 +529,14 @@ export class Destination extends EventTarget {
 
   /**
    * Sets the target stamp value for this destination's announces (Python
-   * `Destination.set_value`). Clamped to `[Transport.DESTINATION_COST,
+   * `Destination.set_value`). Clamped to `[Transport.DESTINATION_VALUE,
    * STAMP_COST_CAP]`.
    * @param {number} value
    */
   setStampValue(value) {
     this._stampTargetValue = Math.min(
       STAMP_COST_CAP,
-      Math.max(Number(value), TransportCore.DESTINATION_COST),
+      Math.max(Number(value), TransportCore.DESTINATION_VALUE),
     );
   }
 

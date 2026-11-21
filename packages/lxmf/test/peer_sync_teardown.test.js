@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Regression: a failed `LXMPeer.sync()` must tear down its link.
  *

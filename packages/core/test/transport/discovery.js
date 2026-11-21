@@ -38,14 +38,12 @@ import {
 import { TransportCore } from "../../src/transport/transport.js";
 import { fromHex, toHex } from "../../src/utils/encoding.js";
 import { MicroMsgPack } from "../../src/utils/msgpack.js";
-import {
-  STAMP_SIZE,
-  stampValid,
-  stampWorkblock,
-} from "../../src/utils/stamper.js";
+import { STAMP_SIZE, stampWorkblock } from "../../src/utils/stamper.js";
+import { stampValid } from "../../src/utils/stamps.js";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const FIXTURE_PATH = `${here}../fixtures/discovery_tcp.json`;
+const STAMPS_FIXTURE_PATH = `${here}../fixtures/discovery-stamps-rns161.json`;
 
 /** Reads the Python-generated TCP discovery fixture. */
 function loadFixture() {
@@ -214,14 +212,23 @@ test("a discovery stamp validates at the required cost and is rejected when tamp
   // (making the rejection assertion deterministic, not a 1-in-256 flake).
   const tampered = new Uint8Array(appData);
   // Layout is flags(1) || packed || stamp(32); mirror the parser's own
-  // workblock computation exactly.
+  // workblock computation exactly, including RNS 1.6.1's transitional
+  // acceptance of both the non-expanded and the expanded workblock — the
+  // loop must land on a variant failing *both* checks, or the parser
+  // would (validly) accept it.
   const tamperedPacked = tampered.subarray(1, tampered.length - STAMP_SIZE);
   const tamperedStamp = tampered.subarray(tampered.length - STAMP_SIZE);
-  const workblock = await stampWorkblock(
-    await Identity.fullHash(tamperedPacked),
-    WORKBLOCK_EXPAND_ROUNDS,
-  );
-  for (let i = 0; await stampValid(tamperedStamp, 8, workblock); i++) {
+  const infohash = await Identity.fullHash(tamperedPacked);
+  const workblocks = [
+    await stampWorkblock(infohash, 0),
+    await stampWorkblock(infohash, WORKBLOCK_EXPAND_ROUNDS),
+  ];
+  for (let i = 0; ; i++) {
+    let stillValid = false;
+    for (const workblock of workblocks) {
+      if (await stampValid(tamperedStamp, 8, workblock)) stillValid = true;
+    }
+    if (!stillValid) break;
     // A per-iteration mask avoids toggling a byte back to its original value.
     tamperedStamp[tamperedStamp.length - 1 - (i % STAMP_SIZE)] ^= 0xff ^ i;
   }
@@ -398,6 +405,73 @@ test("parses a Python-generated discovery announce byte-for-byte (interop)", asy
   assert.strictEqual(
     toHex(/** @type {Uint8Array} */ (info?.stamp)),
     expected.stamp.__bytes_hex__,
+  );
+});
+
+// ---------------------------------------------------------------------
+// RNS 1.6.1 transitional dual acceptance (non-expanded first)
+// ---------------------------------------------------------------------
+
+test("accepts both RNS 1.6.1 non-expanded and expanded Python stamps (interop)", async () => {
+  const fx = JSON.parse(fs.readFileSync(STAMPS_FIXTURE_PATH, "utf8"));
+  const announced = await Identity.fromPublicKey(
+    fromHex(fx.announced_identity_pub_hex),
+  );
+  assert.strictEqual(
+    toHex(announced.identityHash),
+    fx.announced_identity_hash_hex,
+  );
+  // Both fixture variants pack the same info dict; only the stamp (and the
+  // workblock it was mined against) differs.
+  assert.strictEqual(
+    fromHex(fx.nonExpanded.app_data_hex).length,
+    fromHex(fx.expanded.app_data_hex).length,
+  );
+
+  // The non-expanded stamp (checked first by the validator, Python
+  // InterfaceAnnounceHandler) must validate, reporting Python's value.
+  const ne = await parseDiscoveryAnnounce(
+    fromHex(fx.nonExpanded.app_data_hex),
+    announced,
+    { requiredValue: fx.required_value },
+  );
+  assert.ok(ne, "non-expanded stamp must validate");
+  assert.strictEqual(ne?.name, "Stamp Mode Node");
+  assert.strictEqual(ne?.value, fx.nonExpanded.value);
+
+  // The expanded-workblock fallback must still validate old-style stamps.
+  const ex = await parseDiscoveryAnnounce(
+    fromHex(fx.expanded.app_data_hex),
+    announced,
+    { requiredValue: fx.required_value },
+  );
+  assert.ok(ex, "expanded stamp must validate");
+  assert.strictEqual(ex?.value, fx.expanded.value);
+});
+
+test("a discovery stamp mined without workblock expansion validates", async () => {
+  const transportId = crypto.getRandomValues(new Uint8Array(16));
+  const info = makeInfo({
+    transportId,
+    name: "Non-Expanded Node",
+    reachableOn: "example.com",
+    port: 42424,
+  });
+  // The JS producer can mint non-expanded stamps the same way the RNS 1.6.1
+  // fast path does — the parser must accept them.
+  const appData = await buildDiscoveryAppData(info, {
+    stampCost: 8,
+    expandRounds: 0,
+  });
+  const announced = await Identity.generate();
+  const parsed = await parseDiscoveryAnnounce(appData, announced, {
+    requiredValue: 8,
+  });
+  assert.ok(parsed, "non-expanded stamp must validate");
+  assert.strictEqual(parsed?.name, "Non-Expanded Node");
+  assert.ok(
+    /** @type {number} */ (parsed?.value) >= 8,
+    `parsed value ${parsed?.value} should meet cost 8`,
   );
 });
 

@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Overlap guards on the RFedNode driver ticks (pile-up regression).
  *

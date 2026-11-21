@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 /**
  * Ingress-control observability (work doc #31): counters and stats fields
  * surfacing the flood-defense machinery — burst latch counts, burst-dropped

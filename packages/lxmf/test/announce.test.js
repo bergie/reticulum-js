@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * End-to-end tests for the `lxmf.delivery` announce path in {@link LXMRouter}
  * (SPEC §4.3 + §4.5).
@@ -103,8 +104,15 @@ test("LXMRouter.startAnnouncing schedules periodic delivery announces; stopAnnou
     await router.init();
 
     await router.startAnnouncing("TestNode", { stampCost: 4, intervalMs: 5 });
-    // The immediate fire is async; let it land.
-    await new Promise((r) => setTimeout(r, 10));
+    // The immediate fire is async (and now mines its announce stamp inline);
+    // poll until it lands.
+    const waitFor = async (/** @type {() => boolean} */ cond) => {
+      const deadline = Date.now() + 5000;
+      while (!cond() && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    };
+    await waitFor(() => captured.length >= 1);
     assert.ok(captured.length >= 1, "immediate announce on start");
 
     // The first announce carries the §4.3 app_data we set.
@@ -119,7 +127,7 @@ test("LXMRouter.startAnnouncing schedules periodic delivery announces; stopAnnou
     assert.strictEqual(parsed.displayName, "TestNode");
     assert.strictEqual(parsed.stampCost, 4);
 
-    await new Promise((r) => setTimeout(r, 50));
+    await waitFor(() => captured.length >= 2);
     assert.ok(captured.length >= 2, "periodic announces fired");
   } finally {
     router?.stopAnnouncing();

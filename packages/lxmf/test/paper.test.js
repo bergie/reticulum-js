@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * LXMF "paper" messaging — interop with the Python reference.
  *

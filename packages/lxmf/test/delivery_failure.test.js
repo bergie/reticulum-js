@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Tests for opportunistic delivery-failure observability in the LXMF router
  * (the counterpart of Python LXMF's per-message delivery state):

@@ -933,15 +933,16 @@ export class TransportCore extends EventTarget {
   static LR_STAMPS_ENFORCED = false;
   /**
    * Whether announces emitted by this instance carry destination stamps
-   * (`Transport.STAMP_DESTINATIONS`, upstream 1.6.0 default: off; 1.6.1
-   * flips it on).
+   * (`Transport.STAMP_DESTINATIONS`, upstream default: on since 1.6.1).
+   * First announce per destination mines a one-shot 25.0-value stamp
+   * (`DESTINATION_VALUE`), which is reused for every subsequent announce.
    */
-  static STAMP_DESTINATIONS = false;
+  static STAMP_DESTINATIONS = true;
   /**
    * Whether path requests emitted by this instance carry stamps
-   * (`Transport.STAMP_PRS`, upstream 1.6.0 default: off).
+   * (`Transport.STAMP_PRS`, upstream default: on since 1.6.1).
    */
-  static STAMP_PATH_REQUESTS = false;
+  static STAMP_PATH_REQUESTS = true;
   /**
    * Whether link requests emitted by this instance are stamped
    * (`Transport.STAMP_LRS`, upstream default: on). A stamp is only produced

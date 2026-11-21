@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * End-to-end LXMF large-message delivery via the §10 Resource pipeline.
  *

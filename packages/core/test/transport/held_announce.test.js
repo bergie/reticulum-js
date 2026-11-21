@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 /**
  * Held announces (work doc #31 step 3, mirroring Python `Interface.hold_announce`
  * / `process_held_announces` + the Transport.inbound hold decision): while an
@@ -210,7 +211,9 @@ test("processHeldAnnounces refuses to release while the announce frequency is ho
   });
   iface.icHeldRelease = nowSec() - 1;
   const now = nowSec();
-  iface.iaFreqDeque = [now - 0.2, now - 0.1, now]; // ~15 Hz > 10 threshold
+  // ~50 Hz over the 60ms window — far above the 10 Hz threshold with plenty
+  // of headroom, so event-loop jitter can't drop the reading below hot.
+  iface.iaFreqDeque = [now - 0.06, now - 0.03, now];
   assert.strictEqual(iface.processHeldAnnounces(), null);
 });
 

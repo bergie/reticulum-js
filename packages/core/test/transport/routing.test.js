@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 /**
  * End-to-end path routing through TransportCore (milestone A: a leaf that can
  * reach destinations multiple hops away behind other transport nodes).

@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Processed-transient-id TTL (dedup-map growth regression).
  *

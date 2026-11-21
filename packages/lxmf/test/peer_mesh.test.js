@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Peer-mesh sync (§5.8.4): unit tests for the MessageStore per-peer tracking
  * and the PropagationNode `/offer` handler, plus an end-to-end peering

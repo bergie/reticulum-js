@@ -1,3 +1,4 @@
+import "../helpers/cheap-stamps.js";
 /**
  * Inbound ANNOUNCE handling for TransportCore (SPEC.md §4.5).
  *

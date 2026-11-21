@@ -1,3 +1,4 @@
+import "@reticulum/core/test/helpers/cheap-stamps.js";
 /**
  * Regression: the link backchannel `data` listener attached by
  * `LXMRouter._attachLinkMessageListeners` must not leak a rejection when
