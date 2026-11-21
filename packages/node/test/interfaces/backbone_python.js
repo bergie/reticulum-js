@@ -556,6 +556,12 @@ with open(os.path.join(cfgdir, "config"), "w") as f:
 rns = RNS.Reticulum(configdir=cfgdir, loglevel=RNS.LOG_ERROR)
 config = {"name": "backbone-client-fixture", "target_host": "127.0.0.1", "target_port": "${server.bindPort}"}
 client = BackboneClientInterface(RNS.Transport, config)
+# RNS 1.6.1 moved the backbone connect out of __init__ into the framework's
+# final_init() hook, so a directly-constructed interface no longer dials in
+# its constructor. Older references (<= 1.5.x) self-connect in __init__ and
+# final_init() must not be re-invoked on them.
+if not client.online:
+    client.final_init()
 assert client.online, "Python backbone client failed to connect"
 
 got_reply = []
@@ -622,15 +628,22 @@ client.detach()
       const spawned = await connectionPromise;
 
       // Reply to the Python client from the spawned interface; the real
-      // Python client's receive path must decode it.
+      // Python client's receive path must decode it. RNS 1.6.1 emits a
+      // tunnel-synthesis packet right after connecting, so filter for the
+      // actual ping instead of taking the first packet on the wire.
       const received = await new Promise((resolve, reject) => {
         const timer = setTimeout(
           () => reject(new Error("timed out waiting for Python ping")),
           10000,
         );
         spawned.addEventListener("packet", (event) => {
-          clearTimeout(timer);
-          resolve(event.detail.packet);
+          if (
+            new TextDecoder().decode(event.detail.packet.payload) ===
+            "ping from python"
+          ) {
+            clearTimeout(timer);
+            resolve(event.detail.packet);
+          }
         });
       });
       assert.strictEqual(
