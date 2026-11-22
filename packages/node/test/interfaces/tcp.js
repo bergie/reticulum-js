@@ -639,3 +639,43 @@ test("TCP server propagates framing to spawned client interfaces", async () => {
   await client.disconnect();
   await server.disconnect();
 });
+
+test("TCP server drops spawned clients from its set when they disconnect", async () => {
+  const port = 12398;
+  const server = new TCPServerInterface({ port });
+
+  const connectionPromise = new Promise((resolve) => {
+    server.addEventListener("connection", (event) => resolve(event.detail));
+  });
+  await server.connect();
+
+  const client = new TCPClientInterface({
+    host: "127.0.0.1",
+    port,
+    autoReconnect: false,
+  });
+  await client.connect();
+  await connectionPromise;
+  assert.strictEqual(
+    server.spawnedInterfaces.size,
+    1,
+    "spawned client is tracked while connected",
+  );
+
+  // A remote-side drop must remove the terminal interface from the server's
+  // set — otherwise every connection leaks one dead interface (socket,
+  // streams, IFAC state) for the lifetime of the server.
+  await client.disconnect();
+  await new Promise((resolve, reject) => {
+    const deadline = Date.now() + 5000;
+    const check = () => {
+      if (server.spawnedInterfaces.size === 0) resolve(undefined);
+      else if (Date.now() > deadline)
+        reject(new Error("spawned interface was not pruned"));
+      else setTimeout(check, 25);
+    };
+    check();
+  });
+
+  await server.disconnect();
+});

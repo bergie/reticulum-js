@@ -184,6 +184,15 @@ export class Link extends EventTarget {
   /** Fixed multiplier on the response grace term (PROTOCOL-SPEC.md §11.5). */
   static RESPONSE_GRACE_FACTOR = 1.125;
 
+  /**
+   * Cap on remembered failed split-resource transfers (§10.3). Entries are
+   * only added when a segment fails and are never individually pruned —
+   * without a cap a peer that keeps failing cheap split transfers grows the
+   * set for the lifetime of the link. FIFO beyond the cap, matching the
+   * `discoveryPrTags` dedup ring.
+   */
+  static MAX_FAILED_SPLIT_RESOURCES = 4096;
+
   /** @type {number} */
   mode = Link.MODE_AES256_CBC;
 
@@ -788,7 +797,11 @@ export class Link extends EventTarget {
    *   path ({@link Link.attachedInterface}), so responder→initiator traffic
    *   flows back over it regardless of the node's default interface. Matches
    *   the reference's `link.attached_interface = packet.receiving_interface`.
-   * @returns {Promise<Link>}
+   * @returns {Promise<Link|null>} The half-established link, or `null` when
+   *   the request was malformed — mirroring the Python reference's
+   *   `Link.validate_request`, which rejects any payload size other than
+   *   exactly 64 bytes (keys) or 67 bytes (keys + MTU signalling) and
+   *   converts every exception during validation into a dropped request.
    */
   static async accept(
     destination,
@@ -796,8 +809,25 @@ export class Link extends EventTarget {
     requestPacket,
     receivingInterface = null,
   ) {
-    const linkId = await linkIdFromLrPacket(requestPacket);
+    // §6.1: the LINKREQUEST body is initiator_X25519(32) ‖
+    // initiator_Ed25519(32) ‖ optional signalling(3). Any other length is a
+    // malformed or hostile request and is dropped before key derivation —
+    // short bodies would otherwise surface as raw WebCrypto import errors
+    // from `_deriveKeys`, and unsized over-long bodies never occur on the
+    // wire (the packet would not fit a single datagram).
     const data = requestPacket.payload;
+    if (
+      !(data instanceof Uint8Array) ||
+      (data.length !== Link.EC_PUBLIC_KEY_SIZE &&
+        data.length !== Link.EC_PUBLIC_KEY_SIZE + Link.SIGNALLING_SIZE)
+    ) {
+      log(
+        "Link",
+        `Invalid link request payload size of ${data?.length ?? "?"} bytes, dropping request`,
+        LogLevel.DEBUG,
+      );
+      return null;
+    }
 
     const initiatorX25519Pub = data.subarray(0, 32);
     // §6.5: the initiator's ephemeral Ed25519 pub (data[32:64]) signs the link
@@ -834,9 +864,9 @@ export class Link extends EventTarget {
         0;
     }
 
-    const ephemeral = await generateX25519KeyPair();
-    const responderX25519Pub = await exportPublicKey(ephemeral.publicKey);
-
+    // Stamp enforcement deliberately sits outside the fail-closed try/catch
+    // below: an enforced-cost rejection is a first-class error the caller
+    // can distinguish from a malformed request (which is dropped as `null`).
     if (TransportCore.LR_STAMPS_ENFORCED) {
       const requiredCost = destination.getLinkCost();
       if (
@@ -853,35 +883,53 @@ export class Link extends EventTarget {
       }
     }
 
-    const link = new Link({
-      destination,
-      linkId,
-      transport,
-      initiator: false,
-      ephemeralX25519Priv: ephemeral.privateKey,
-      ephemeralX25519Pub: responderX25519Pub,
-      peerX25519Pub: initiatorX25519Pub,
-      peerEd25519Pub: initiatorEd25519Pub,
-      mtu,
-      mode,
-    });
-    await link._deriveKeys(initiatorX25519Pub);
-    link.stampCost = achievedStampValue;
-    link.stampStatus = true;
-    link.requestTimeMs = Date.now();
-    // §Link.expected_hops: the responder records the hop count the LINKREQUEST
-    // arrived with.
-    link.expectedHops = requestPacket.hops;
-    // §Link.attached_interface: the return path is the arrival interface for
-    // the link's lifetime — set before _sendLRProof so the proof itself
-    // already uses it.
-    link.attachedInterface = receivingInterface;
-    link.status = LinkStatus.HANDSHAKE;
-    transport.addLink(linkId, link);
-    link._armEstablishmentTimeout();
+    try {
+      const linkId = await linkIdFromLrPacket(requestPacket);
 
-    await link._sendLRProof();
-    return link;
+      const ephemeral = await generateX25519KeyPair();
+      const responderX25519Pub = await exportPublicKey(ephemeral.publicKey);
+
+      const link = new Link({
+        destination,
+        linkId,
+        transport,
+        initiator: false,
+        ephemeralX25519Priv: ephemeral.privateKey,
+        ephemeralX25519Pub: responderX25519Pub,
+        peerX25519Pub: initiatorX25519Pub,
+        peerEd25519Pub: initiatorEd25519Pub,
+        mtu,
+        mode,
+      });
+      await link._deriveKeys(initiatorX25519Pub);
+      link.stampCost = achievedStampValue;
+      link.stampStatus = true;
+      link.requestTimeMs = Date.now();
+      // §Link.expected_hops: the responder records the hop count the LINKREQUEST
+      // arrived with.
+      link.expectedHops = requestPacket.hops;
+      // §Link.attached_interface: the return path is the arrival interface for
+      // the link's lifetime — set before _sendLRProof so the proof itself
+      // already uses it.
+      link.attachedInterface = receivingInterface;
+      link.status = LinkStatus.HANDSHAKE;
+      transport.addLink(linkId, link);
+      link._armEstablishmentTimeout();
+
+      await link._sendLRProof();
+      return link;
+    } catch (e) {
+      // Python validate_request wraps the whole handshake in try/except and
+      // drops the request on any failure (a bad ephemeral key — e.g. an
+      // all-zero X25519 point fails deriveBits — must not surface as an
+      // exception in the `link_request` listener).
+      log(
+        "Link",
+        `Validating incoming link request failed: ${e}`,
+        LogLevel.DEBUG,
+      );
+      return null;
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -1259,9 +1307,40 @@ export class Link extends EventTarget {
    */
   async _handleLRRTT(packet) {
     // packet.payload is already decrypted by _processPacket.
-    const reportedRtt = MicroMsgPack.decode(
-      /** @type {Uint8Array} */ (packet.payload),
-    );
+    let reportedRtt;
+    try {
+      reportedRtt = MicroMsgPack.decode(
+        /** @type {Uint8Array} */ (packet.payload),
+      );
+    } catch (err) {
+      log(
+        "Link",
+        `Error occurred while processing RTT packet, tearing down link. The contained exception was: ${err}`,
+        LogLevel.ERROR,
+      );
+      await this.teardown();
+      return;
+    }
+    // A msgpack float can carry NaN/Infinity. `Math.max` propagates NaN into
+    // `keepaliveInterval`/`staleTime`, which silently disables the staleness
+    // watchdog (NaN comparisons are always false) — and a NaN request timeout
+    // arms `setTimeout` with an immediate fire. The Python reference is
+    // immune by accident (`max(measured, nan)` returns `measured`) and
+    // clamps via `__update_keepalive`; treat a non-finite or negative value
+    // like a decode failure.
+    if (
+      typeof reportedRtt !== "number" ||
+      !Number.isFinite(reportedRtt) ||
+      reportedRtt < 0
+    ) {
+      log(
+        "Link",
+        `Invalid reported RTT (${reportedRtt}), tearing down link`,
+        LogLevel.ERROR,
+      );
+      await this.teardown();
+      return;
+    }
     const measuredRtt = (Date.now() - this.requestTimeMs) / 1000;
     this.rtt = Math.max(measuredRtt, reportedRtt);
     this._updateKeepalive();
@@ -2386,6 +2465,14 @@ export class Link extends EventTarget {
       .catch((/** @type {Error} */ err) => {
         this.splitResources.delete(key);
         this.failedSplitResources.add(key);
+        // Bound the failure-memory (see MAX_FAILED_SPLIT_RESOURCES).
+        while (
+          this.failedSplitResources.size > Link.MAX_FAILED_SPLIT_RESOURCES
+        ) {
+          const oldest = this.failedSplitResources.values().next().value;
+          if (oldest === undefined) break;
+          this.failedSplitResources.delete(oldest);
+        }
         log("Link", `Split resource ${key} failed: ${err}`, LogLevel.ERROR);
         // Propagate the failure to a pending REQUEST awaiting this transfer
         // instead of letting it run into the response timeout.

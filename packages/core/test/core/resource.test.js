@@ -25,6 +25,7 @@ import {
 } from "../../src/core/resource_advertisement.js";
 import { Link, LinkStatus } from "../../src/transport/link.js";
 import { toHex } from "../../src/utils/encoding.js";
+import { MicroMsgPack } from "../../src/utils/msgpack.js";
 
 /**
  * Loopback transport. Delivery is deferred to a separate microtask so that
@@ -451,6 +452,88 @@ describe("Resource part-count bomb defense (§10.4)", () => {
     const accepted = await Resource.accept(link, advPacket(link, adv));
     assert.ok(accepted, "legitimate advertisement must be accepted");
     assert.strictEqual(accepted.totalParts, 3);
+  });
+
+  test("rejects an advertisement whose hashmap fragment exceeds the part count", async () => {
+    const link = mockLink();
+    const adv = new ResourceAdvertisement({
+      t: 1000,
+      d: 1000,
+      n: 3,
+      h: new Uint8Array(32).fill(0x01),
+      r: new Uint8Array(4).fill(0x02),
+      o: new Uint8Array(32).fill(0x03),
+      i: 1,
+      l: 1,
+      f: 0,
+      m: new Uint8Array(16), // 4 map_hashes for a 3-part transfer
+    });
+    const accepted = await Resource.accept(link, advPacket(link, adv));
+    assert.strictEqual(accepted, null, "oversized hashmap must be rejected");
+  });
+});
+
+describe("Resource hashmap-update bounds (§10.7)", () => {
+  function mockLink(mtu = 500) {
+    return {
+      mtu,
+      linkId: new Uint8Array(16).fill(0xaa),
+      async send() {},
+      _registerIncomingResource() {},
+      _unregisterIncomingResource() {},
+      _unregisterOutgoingResource() {},
+    };
+  }
+
+  /** hash(32) ‖ msgpack([segment, hashmap-bytes]) — the RESOURCE_HMU body. */
+  function hmuBody(resourceHash, segmentIndex, mapHashes) {
+    const segment = new Uint8Array(mapHashes * 4).fill(0x5a);
+    const inner = MicroMsgPack.encode([segmentIndex, segment]);
+    const body = new Uint8Array(32 + inner.length);
+    body.set(resourceHash, 0);
+    body.set(inner, 32);
+    return body;
+  }
+
+  test("applies an in-bounds HMU and cancels on one that exceeds totalParts", async () => {
+    const link = mockLink();
+    const adv = new ResourceAdvertisement({
+      t: 2000,
+      d: 2000,
+      n: 5,
+      h: new Uint8Array(32).fill(0x01),
+      r: new Uint8Array(4).fill(0x02),
+      o: new Uint8Array(32).fill(0x03),
+      i: 1,
+      l: 1,
+      f: 0,
+      m: new Uint8Array(8), // 2 initial map_hashes
+    });
+    const packet = new Packet({
+      packetType: PacketType.DATA,
+      destinationType: DestType.LINK,
+      destinationHash: link.linkId,
+      contextByte: ContextType.RESOURCE_ADV,
+      payload: adv.pack(),
+    });
+    const resource = await Resource.accept(link, packet);
+    assert.ok(resource, "advertisement accepted");
+
+    // In-bounds continuation: 2 known + 2 incoming ≤ 5 parts.
+    await resource.hashmapUpdate(hmuBody(resource.hash, 0, 2));
+    assert.strictEqual(resource.hashmap.length, 4);
+    assert.strictEqual(resource.status, ResourceStatus.TRANSFERRING);
+
+    // 4 known + 2 incoming > 5 parts: the transfer must be cancelled
+    // (buffers dropped) instead of growing the hashmap — the Python
+    // reference pre-allocates to total_parts so growth is impossible.
+    await resource.hashmapUpdate(hmuBody(resource.hash, 0, 2));
+    assert.strictEqual(
+      resource.status,
+      ResourceStatus.FAILED,
+      "out-of-bounds HMU must cancel the transfer",
+    );
+    assert.strictEqual(resource.hashmap.length, 4, "no further growth");
   });
 });
 

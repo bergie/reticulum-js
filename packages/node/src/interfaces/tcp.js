@@ -550,6 +550,15 @@ export class TCPServerInterface extends Interface {
         client.bitrate = this.bitrate;
         await client.connect();
         this.spawnedInterfaces.add(client);
+        // Drop the client from the set when its connection goes away: a
+        // server-side adoption never reconnects, so the interface is
+        // terminal — keeping it pins its socket, streams and IFAC state for
+        // the lifetime of the server (one dead interface per connection,
+        // unbounded over the server's lifetime). The backbone and WebSocket
+        // servers already prune on close.
+        client.addEventListener("closed", () => {
+          this.spawnedInterfaces.delete(client);
+        });
         this.dispatchEvent(new CustomEvent("connection", { detail: client }));
       });
       this.server.listen(this.port, () => {

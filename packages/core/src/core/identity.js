@@ -881,17 +881,24 @@ export class Identity extends EventTarget {
           );
         }
       }
-      if (enforceStamps) {
-        if (!destStamped || !stampValidated) {
-          log(
-            "Identity",
-            destStamped
-              ? `Announce stamp below required value ${requiredStampValue} — enforcing, rejecting`
-              : "Announce carries no stamp — enforcing, rejecting",
-            LogLevel.WARNING,
-          );
-          return null;
-        }
+    }
+
+    // RNS 1.6.0 enforcement (Python validate_announce): the gate applies to
+    // *every* announce when stamps are enforced — including one whose
+    // app_data is absent or shorter than the extension payload. Nesting it
+    // inside the app_data branch above (as an earlier revision did) would
+    // let an attacker bypass enforcement entirely by sending an unstamped
+    // announce with no app_data — exactly the spam the stamps exist to stop.
+    if (checkStamps && enforceStamps) {
+      if (!destStamped || !stampValidated) {
+        log(
+          "Identity",
+          destStamped
+            ? `Announce stamp below required value ${requiredStampValue} — enforcing, rejecting`
+            : "Announce carries no stamp — enforcing, rejecting",
+          LogLevel.WARNING,
+        );
+        return null;
       }
     }
 

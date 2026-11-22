@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Security
+- `parsePack`/`inflateWithBounds` now bound pack-entry decompression: the hand-rolled DEFLATE decoder aborts as soon as its output exceeds the entry's declared size (passed as the new `maxLen` argument), and the declared size itself is capped at an absolute `MAX_ENTRY_SIZE` (512 MiB). Previously a malicious rngit node could hand a client a small pack whose entries inflate to gigabytes — the size check only ran after full decompression — an OOM via a single fetched bundle.
+- `applyDelta` caps the eager `new Uint8Array(targetSize)` allocation at `MAX_DELTA_TARGET_SIZE` (256 MiB, matching the Resource reassembly cap): a crafted delta header varint can otherwise name up to ~4 GiB, which the old code allocated before any validation.
 
 ## [0.9.13] - 2026-10-18
 

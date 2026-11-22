@@ -1284,10 +1284,12 @@ export class Destination extends EventTarget {
   }
 
   /**
-   * Accepts an incoming LINKREQUEST and returns the established {@link Link}.
+   * Accepts an incoming LINKREQUEST and returns the established {@link Link},
+   * or `null` when the request was malformed (bad payload size, unusable
+   * ephemeral keys) — mirroring the Python reference's validate_request.
    * @param {import('./packet.js').Packet} packet
    * @param {import('../interfaces/base.js').Interface | null} [receivingInterface]
-   * @returns {Promise<import("../transport/link.js").Link>}
+   * @returns {Promise<import("../transport/link.js").Link|null>}
    */
   async acceptLink(packet, receivingInterface = null) {
     return await this.respondToLinkRequest(packet, receivingInterface);
@@ -1456,7 +1458,8 @@ export class Destination extends EventTarget {
    *   Interface the LINKREQUEST arrived on; captured as the link's return
    *   path (`Link.attachedInterface`). Callers should pass what they got from
    *   the `link_request` event (its `detail.receivingInterface` field).
-   * @returns {Promise<import('../transport/link.js').Link>}
+   * @returns {Promise<import('../transport/link.js').Link|null>} The
+   *   half-established link, or `null` when the request was malformed.
    */
   async respondToLinkRequest(requestPacket, receivingInterface = null) {
     if (!this.interfaceLayer || !this.interfaceLayer.transport) {
@@ -1470,6 +1473,7 @@ export class Destination extends EventTarget {
       requestPacket,
       receivingInterface,
     );
+    if (!link) return null;
     log(
       "Destination",
       `[LINK] Handshake response sent to link_id: ${toHex(link.linkId)}`,

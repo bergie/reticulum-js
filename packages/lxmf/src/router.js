@@ -423,6 +423,7 @@ export class LXMRouter extends EventTarget {
             event.detail.packet,
             event.detail.receivingInterface ?? null,
           );
+          if (!link) return; // malformed request, already dropped
           link.bz2 = this.rns.compressionProvider || undefined;
           // LXMRouter.propagation_resource_advertised: refuse an inbound
           // propagation Resource whose data exceeds the per-sync limit we
@@ -1236,6 +1237,7 @@ export class LXMRouter extends EventTarget {
             event.detail.packet,
             event.detail.receivingInterface ?? null,
           );
+          if (!link) return; // malformed request, already dropped
           // Inject the caller-supplied bz2 module so any compressed inbound
           // resource can be decompressed (§10.2). Harmless when absent.
           link.bz2 = this.rns.compressionProvider || undefined;

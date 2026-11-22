@@ -196,6 +196,83 @@ test("extended-flag announces are not treated as stamped", async () => {
   assert.strictEqual(result.stampValidated, false);
 });
 
+test("enforcement rejects an unstamped announce with no app_data (no bypass)", async () => {
+  // The enforcement gate must apply to *every* announce, not only ones whose
+  // app_data is long enough to carry an extension payload — otherwise an
+  // attacker sidesteps STAMPS_ENFORCED entirely by omitting app_data.
+  const { packet } = pythonStampedAnnounce();
+  const identity = await Identity.fromPrivateKey(
+    hexToBytes(fixture.identityPrivateKey),
+  );
+  assert.ok(identity, "fixture identity loads");
+  // Announce body with no app_data at all: pub(64) name(10) random(10) sig(64).
+  const head = packet.payload.subarray(0, 84);
+  const signedData = new Uint8Array(16 + 84);
+  signedData.set(packet.destinationHash, 0);
+  signedData.set(head, 16);
+  const signature = await identity.sign(signedData);
+  const body = new Uint8Array(148);
+  body.set(head, 0);
+  body.set(signature, 84);
+
+  // Without enforcement: accepted, flagged unstamped.
+  const lenient = await Identity.validateAnnounce(
+    packet.destinationHash,
+    packet.contextFlag,
+    body,
+    { requiredStampValue: REQUIRED_COST },
+  );
+  assert.ok(lenient, "unstamped announce still validates without enforcement");
+  assert.strictEqual(lenient.stampValidated, false);
+  assert.strictEqual(lenient.stamp, null);
+
+  // With enforcement: rejected, exactly like the Python reference
+  // (validate_announce checks STAMPS_ENFORCED outside the app_data branch).
+  const enforced = await Identity.validateAnnounce(
+    packet.destinationHash,
+    packet.contextFlag,
+    body,
+    { requiredStampValue: REQUIRED_COST, enforceStamps: true },
+  );
+  assert.strictEqual(
+    enforced,
+    null,
+    "unstamped announce must be rejected under enforcement",
+  );
+});
+
+test("enforcement rejects an unstamped announce with short app_data", async () => {
+  // Same bypass shape with a sub-extension-length app_data payload (< 18 B).
+  const { packet } = pythonStampedAnnounce();
+  const identity = await Identity.fromPrivateKey(
+    hexToBytes(fixture.identityPrivateKey),
+  );
+  assert.ok(identity, "fixture identity loads");
+  const appData = new TextEncoder().encode("short"); // 5 bytes < 18
+  const head = packet.payload.subarray(0, 84);
+  const signedData = new Uint8Array(16 + 84 + appData.length);
+  signedData.set(packet.destinationHash, 0);
+  signedData.set(head, 16);
+  signedData.set(appData, 100);
+  const signature = await identity.sign(signedData);
+  const body = new Uint8Array(148 + appData.length);
+  body.set(head, 0);
+  body.set(signature, 84);
+  body.set(appData, 148);
+
+  const enforced = await Identity.validateAnnounce(
+    packet.destinationHash,
+    packet.contextFlag,
+    body,
+    { requiredStampValue: REQUIRED_COST, enforceStamps: true },
+  );
+  assert.strictEqual(
+    enforced,
+    null,
+    "short-app_data unstamped announce must be rejected under enforcement",
+  );
+});
+
 // --- Emit side (RNS 1.6.0 destination stamps) -------------------------------
 
 import { Destination, Direction } from "../../src/core/destination.js";

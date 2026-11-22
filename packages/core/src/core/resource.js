@@ -927,7 +927,16 @@ export class Resource extends EventTarget {
       adv.n > maxParts ||
       adv.n > adv.t ||
       (expectedParts > 0 && adv.n > expectedParts + 1);
-    if (adv.t > maxSize || adv.d > maxSize || partCountInsane) {
+    // The sender's hashmap has exactly `n` entries, so a carried fragment
+    // longer than `n` map_hashes is malformed (and would let the receiver's
+    // hashmap exceed its parts array, shifting every later map_hash match).
+    const hashmapOversized = adv.m.length > adv.n * 4;
+    if (
+      adv.t > maxSize ||
+      adv.d > maxSize ||
+      partCountInsane ||
+      hashmapOversized
+    ) {
       log(
         "Resource",
         `Rejecting advertisement: size t=${adv.t} d=${adv.d} n=${adv.n} ` +
@@ -1180,7 +1189,22 @@ export class Resource extends EventTarget {
     if (!Array.isArray(decoded) || decoded.length < 2) return;
     const segment = decoded[1];
     if (!(segment instanceof Uint8Array)) return;
-    for (const mh of Resource._splitHashmap(segment)) this.hashmap.push(mh);
+    const incoming = Resource._splitHashmap(segment);
+    // The Python reference pre-allocates its hashmap to exactly
+    // `total_parts` and writes by index, so a hashmap continuation can never
+    // grow the structure. Push-appending without this cap lets a malicious
+    // peer grow the array without bound — and every HMU refreshes
+    // `lastActivity`, so the transfer watchdog never cancels the transfer.
+    if (this.hashmap.length + incoming.length > this.totalParts) {
+      log(
+        "Resource",
+        `Hashmap update exceeds advertised part count (${this.hashmap.length}+${incoming.length} > ${this.totalParts}); cancelling transfer`,
+        LogLevel.WARNING,
+      );
+      await this.cancel();
+      return;
+    }
+    for (const mh of incoming) this.hashmap.push(mh);
     this.lastActivity = Date.now();
     this.waitingForHmu = false;
     log(

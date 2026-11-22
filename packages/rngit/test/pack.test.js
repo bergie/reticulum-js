@@ -332,3 +332,68 @@ function removeTree(path) {
     /* transient */
   }
 }
+
+describe("untrusted pack bounds (server-controlled bytes)", () => {
+  test("inflateWithBounds aborts once the output exceeds maxLen (bomb defense)", () => {
+    // 1000 zero bytes compress to almost nothing; a declared entry size of
+    // 10 must abort the inflate mid-stream instead of producing 1000 bytes.
+    const bomb = zlib.deflateSync(Buffer.alloc(1000));
+    assert.throws(
+      () => inflateWithBounds(new Uint8Array(bomb), 10),
+      /exceeds the expected size/,
+    );
+    // At the exact declared size it succeeds.
+    const ok = inflateWithBounds(new Uint8Array(bomb), 1000);
+    assert.equal(ok.bytes.length, 1000);
+  });
+
+  test("parsePack caps inflated entries at their declared size", () => {
+    // Header: PACK, version 2, 1 object, then an entry header declaring a
+    // tiny size whose zlib stream actually inflates to far more.
+    const entryData = Buffer.alloc(5000, 0x41);
+    const stream = zlib.deflateSync(entryData);
+    const pack = Buffer.alloc(12);
+    pack.write("PACK", 0, "ascii");
+    pack.writeUInt32BE(2, 4);
+    pack.writeUInt32BE(1, 8);
+    // Entry header (type blob = 3, size 100) with the continuation bit set
+    // on the first byte — same encoding as buildPack's writer.
+    const entryHeader = Buffer.from([0x80 | (3 << 4) | (100 & 0x0f), 100 >> 4]);
+    const crafted = Buffer.concat([pack, entryHeader, stream]);
+    assert.throws(() => parsePack(crafted), /exceeds the expected size/);
+  });
+
+  test("parsePack rejects an absurd declared entry size outright", () => {
+    const stream = zlib.deflateSync(Buffer.alloc(10));
+    const pack = Buffer.alloc(12);
+    pack.write("PACK", 0, "ascii");
+    pack.writeUInt32BE(2, 4);
+    pack.writeUInt32BE(1, 8);
+    // Entry header declaring a blob of 600 MiB (above the 512 MiB absolute
+    // cap) via a size varint, encoded exactly like buildPack's writer.
+    const declared = 600 * 1024 * 1024;
+    const headerBytes = [];
+    let value = declared >>> 4;
+    headerBytes.push((3 << 4) | (declared & 0x0f) | (value > 0 ? 0x80 : 0));
+    while (value > 0) {
+      headerBytes.push(value & 0x7f);
+      value >>>= 7;
+      if (value > 0) headerBytes[headerBytes.length - 1] |= 0x80;
+    }
+    const crafted = Buffer.concat([
+      pack,
+      Buffer.from(headerBytes),
+      stream,
+      Buffer.alloc(32), // trailer/padding so the pack clears the min-length gate
+    ]);
+    assert.throws(() => parsePack(crafted), /absolute entry cap/);
+  });
+
+  test("applyDelta refuses an unbounded target size from a crafted varint", () => {
+    const base = new Uint8Array(16);
+    // Delta header: base size 16, target size 4 GiB (varint) — the old code
+    // allocated eagerly from the untrusted value.
+    const delta = new Uint8Array([16, 0xff, 0xff, 0xff, 0xff, 0x0f]);
+    assert.throws(() => applyDelta(base, delta), /absolute cap/);
+  });
+});

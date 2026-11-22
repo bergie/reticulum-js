@@ -351,7 +351,16 @@ export class UDPInterface extends Interface {
       return;
     }
     if (this._inboundController) {
-      this._inboundController.enqueue(packet);
+      // enqueue throws once the stream has been closed, errored or
+      // cancelled (e.g. a datagram racing disconnect's controller.close()
+      // across the `_openRaw` await); this handler has no caller-side catch,
+      // so an escaping throw would be an unhandled rejection that crashes
+      // the process.
+      try {
+        this._inboundController.enqueue(packet);
+      } catch (_e) {
+        // interface went away mid-parse; drop the datagram
+      }
     }
   }
 

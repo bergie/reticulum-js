@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Security
+- `TCPServerInterface` now drops spawned client interfaces from its set when their connection goes away (a terminal `closed` event on the adopted socket). Previously every accepted-then-disconnected connection leaked one dead interface object — with its socket reference, streams and IFAC state — into `spawnedInterfaces` for the lifetime of the server, unbounded over a server's uptime. The backbone and WebSocket servers already pruned on close; the plain TCP server now matches.
+- `UDPInterface._onMessage` wraps the inbound-stream enqueue in a try/catch: a datagram racing `disconnect()`'s controller close across the IFAC-unseal await previously escaped as an unhandled rejection (the socket `message` handler has no caller-side catch), crashing the process under Node's default `--unhandled-rejections=throw`.
 ### Fixed
 - The real-Python backbone interop test now works against the Python reference 1.6.1: upstream moved the backbone connect out of the client constructor into the framework's `final_init()` hook (so a directly-constructed interface no longer dials in `__init__`, and CI's unpinned `pip install rns` picking up 1.6.1 broke the test), and the 1.6.1 client emits a tunnel-synthesis packet right after connecting, which is no longer mistaken for the test's ping payload. The test now invokes `final_init()` only when the constructor did not connect (older references self-connect) and filters for the actual ping. Verified against both pip 1.5.7 and the vendored 1.6.1 — the JS backbone listener interoperates with 1.6.1 clients including the new early tunnel synthesis.
 

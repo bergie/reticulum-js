@@ -40,6 +40,21 @@ const TYPE_NAMES = {
 const MAXBITS = 15;
 
 /**
+ * Absolute ceiling on a single inflated pack entry (512 MiB). The tight cap
+ * is the entry's own declared size (checked by `parsePack`), but the declared
+ * size is itself untrusted, so this backstop bounds a corrupt/huge header.
+ */
+export const MAX_ENTRY_SIZE = 512 * 1024 * 1024;
+
+/**
+ * Absolute ceiling on a delta's target size (256 MiB, matching
+ * `Resource.DEFAULT_MAX_TOTAL_SIZE` — no legitimate rngit transfer reassembles
+ * to more). Bounds the eager `new Uint8Array(targetSize)` allocation against a
+ * malicious node's crafted delta header (the varint can name ~4 GiB).
+ */
+export const MAX_DELTA_TARGET_SIZE = 256 * 1024 * 1024;
+
+/**
  * A raw (inflated) packfile entry.
  * @typedef {object} RawPackObject
  * @property {number} offset - Entry start offset in the source pack.
@@ -53,9 +68,13 @@ const MAXBITS = 15;
  * count (RFC 1950 header + DEFLATE blocks + adler32 trailer).
  *
  * @param {Uint8Array} data - Buffer whose head holds one zlib stream.
+ * @param {number} [maxLen=Infinity] - Output bound: the decoded entry's
+ *   declared size. Decoding aborts as soon as the output exceeds it, so a
+ *   compressed bomb in a server-controlled pack cannot inflate to gigabytes
+ *   before the post-hoc `bytes.length !== header.size` check runs.
  * @returns {{ bytes: Uint8Array, consumed: number }}
  */
-export function inflateWithBounds(data) {
+export function inflateWithBounds(data, maxLen = Number.POSITIVE_INFINITY) {
   // --- zlib header (RFC 1950) ---
   if (data.length < 6) throw new Error("zlib stream too short");
   const cmf = data[0];
@@ -143,6 +162,10 @@ export function inflateWithBounds(data) {
       const len = data[bytePos] | (data[bytePos + 1] << 8);
       const nlen = data[bytePos + 2] | (data[bytePos + 3] << 8);
       if ((len ^ 0xffff) !== nlen) throw new Error("stored block LEN mismatch");
+      if (out.length + len > maxLen)
+        throw new Error(
+          `inflated output exceeds the expected size (${maxLen} bytes)`,
+        );
       for (let i = 0; i < len; i++) out.push(data[bytePos + 4 + i]);
       bitPos = (bytePos + 4 + len) * 8;
     } else {
@@ -208,8 +231,16 @@ export function inflateWithBounds(data) {
             distBase[dsym] + (distExtra[dsym] ? bits(distExtra[dsym]) : 0);
           const from = out.length - distance;
           if (from < 0) throw new Error("deflate distance before start");
+          if (out.length + length > maxLen)
+            throw new Error(
+              `inflated output exceeds the expected size (${maxLen} bytes)`,
+            );
           for (let i = 0; i < length; i++) out.push(out[from + i]);
         }
+        if (out.length > maxLen)
+          throw new Error(
+            `inflated output exceeds the expected size (${maxLen} bytes)`,
+          );
       }
     }
     if (bfinal) break;
@@ -282,8 +313,17 @@ export function parsePack(pack) {
   let offset = 12;
   for (let i = 0; i < count; i++) {
     const header = readEntryHeader(pack, offset);
+    // The declared entry size is untrusted: bound it absolutely (a corrupt
+    // varint can name exabytes) and use it as the inflate cap so a compressed
+    // bomb aborts mid-inflate instead of after full decompression.
+    if (header.size > MAX_ENTRY_SIZE) {
+      throw new Error(
+        `pack entry at ${offset}: declared size ${header.size} exceeds the absolute entry cap`,
+      );
+    }
     const { bytes, consumed } = inflateWithBounds(
       pack.subarray(header.payloadOffset),
+      header.size,
     );
     if (bytes.length !== header.size) {
       throw new Error(
@@ -332,6 +372,11 @@ export function applyDelta(base, delta) {
     );
   }
   const targetSize = varint();
+  if (targetSize > MAX_DELTA_TARGET_SIZE) {
+    throw new Error(
+      `delta target size ${targetSize} exceeds the absolute cap (${MAX_DELTA_TARGET_SIZE})`,
+    );
+  }
   const target = new Uint8Array(targetSize);
   let at = 0;
 

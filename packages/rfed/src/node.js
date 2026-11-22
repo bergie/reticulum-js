@@ -517,6 +517,7 @@ export class RFedNode {
             event.detail.packet,
             event.detail.receivingInterface ?? null,
           );
+          if (!link) return; // malformed request, already dropped
           link.bz2 = this.rns.compressionProvider || undefined;
           // Inbound publish size cap for untrusted publishers: bounds what
           // one publisher can pin in transfer buffers. The admission gates
@@ -1714,6 +1715,7 @@ export class RFedNode {
           e.detail.packet,
           e.detail.receivingInterface ?? null,
         );
+        if (!link) return; // malformed request, already dropped
         // The receiving side of every inbound node link needs bz2 to assemble
         // compressed inbound Resources (§10.2), and oversized response
         // Resources source their compressor from `link.bz2` too. Harmless
