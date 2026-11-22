@@ -131,10 +131,10 @@ test("backbone client defaults match the Python reference", () => {
   assert.strictEqual(client.connectTimeout, 5);
   assert.strictEqual(client.initiator, true);
   // BackboneClientInterface.BITRATE_GUESS is 100 Mbit/s in the reference;
-  // MTU autoconfiguration gives 16 KiB at that rate (the table is `>` 100M,
-  // so exactly 100M falls to the next tier).
+  // MTU autoconfiguration gives 32 KiB at that rate (the reference table is
+  // `>= 100_000_000`, so exactly 100M lands in the 32768 tier).
   assert.strictEqual(client.bitrate, 100_000_000);
-  assert.strictEqual(client.hwMtu, 16384);
+  assert.strictEqual(client.hwMtu, 32768);
   // The Python reference caps the pre-autoconfiguration HW_MTU at 1 MiB.
   assert.strictEqual(
     BackboneInterface.getConfigurationSchema().title,
@@ -388,7 +388,7 @@ test("optimiseMtu maps the Python reference bitrate table", async () => {
     [3_000_000, 4096],
     [1_500_000, 2048],
     [100_000, 1024],
-    [62_500, null],
+    [62_500, 1024],
     [5, null],
   ];
   for (const [bitrate, expected] of cases) {

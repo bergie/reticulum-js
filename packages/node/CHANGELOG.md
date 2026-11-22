@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- TCP and Local shared-instance interfaces opt into hardware-MTU autoconfiguration (`autoconfigureMtu` + `optimiseMtu()` from their nominal bitrate), matching the Python reference's `AUTOCONFIGURE_MTU = True` on the TCP and Local interfaces. The resulting `hwMtu` feeds link MTU discovery (see the `@reticulum/core` entries): a JS initiator now proposes the interface MTU — 16384 at the TCP default 10 Mbit/s, 524288 at the Local loopback 1 Gbit/s — instead of always proposing the protocol MTU (500).
 ### Security
 - `TCPServerInterface` now drops spawned client interfaces from its set when their connection goes away (a terminal `closed` event on the adopted socket). Previously every accepted-then-disconnected connection leaked one dead interface object — with its socket reference, streams and IFAC state — into `spawnedInterfaces` for the lifetime of the server, unbounded over a server's uptime. The backbone and WebSocket servers already pruned on close; the plain TCP server now matches.
 - `UDPInterface._onMessage` wraps the inbound-stream enqueue in a try/catch: a datagram racing `disconnect()`'s controller close across the IFAC-unseal await previously escaped as an unhandled rejection (the socket `message` handler has no caller-side catch), crashing the process under Node's default `--unhandled-rejections=throw`.

@@ -500,3 +500,10 @@ test("LocalClientInterface keepalive can be disabled with 0 interval", async () 
 
   await new Promise((resolve) => server.close(resolve));
 });
+
+test("Local interfaces autoconfigure their hardware MTU for link MTU discovery", () => {
+  // 1 Gbit/s nominal (loopback) → 524288 in the reference table.
+  const client = new LocalClientInterface({ host: "127.0.0.1", port: 1 });
+  assert.strictEqual(client.autoconfigureMtu, true);
+  assert.strictEqual(client.hwMtu, 524288);
+});

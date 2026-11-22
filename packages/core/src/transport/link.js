@@ -729,10 +729,29 @@ export class Link extends EventTarget {
       x25519Pub = await exportPublicKey(ephemeralX25519.publicKey);
     }
 
-    const signalling = Link.signallingBytes(
-      Link.DEFAULT_MTU,
-      Link.MODE_AES256_CBC,
-    );
+    // RNS LINK_MTU_DISCOVERY: when enabled and the path to the destination
+    // egresses through an interface with a known hardware MTU, signal that
+    // MTU in the LINKREQUEST. The responder adopts it and echoes it in the
+    // LRPROOF, so both ends upgrade the link above the protocol MTU (Python
+    // `Link.__establish` signalling the next-hop HW_MTU). Otherwise the
+    // protocol MTU (500) is signalled, as before.
+    let signalledMtu = Link.DEFAULT_MTU;
+    if (
+      TransportCore.LINK_MTU_DISCOVERY &&
+      typeof transport.nextHopHwMtu === "function"
+    ) {
+      const hwMtu = transport.nextHopHwMtu(destinationHash);
+      if (hwMtu) {
+        log(
+          "Link",
+          `Signalling link MTU of ${hwMtu} bytes for link to ${toHex(destinationHash)}`,
+          LogLevel.DEBUG,
+        );
+        signalledMtu = hwMtu;
+      }
+    }
+
+    const signalling = Link.signallingBytes(signalledMtu, Link.MODE_AES256_CBC);
 
     // LINKREQUEST body: initiator_X25519(32) || initiator_Ed25519(32) || signalling(3)
     const body = new Uint8Array(Link.EC_PUBLIC_KEY_SIZE + Link.SIGNALLING_SIZE);
@@ -761,7 +780,7 @@ export class Link extends EventTarget {
       ephemeralX25519Priv: ephemeralX25519.privateKey,
       ephemeralX25519Pub: x25519Pub,
       ephemeralEd25519Priv: ephemeralEd25519.privateKey,
-      mtu: Link.DEFAULT_MTU,
+      mtu: signalledMtu,
       mode: Link.MODE_AES256_CBC,
     });
     transport.addLink(linkId, link);

@@ -679,3 +679,10 @@ test("TCP server drops spawned clients from its set when they disconnect", async
 
   await server.disconnect();
 });
+
+test("TCP interfaces autoconfigure their hardware MTU for link MTU discovery", () => {
+  // 10 Mbit/s nominal (the TCP default) → 16384 in the reference table.
+  const client = new TCPClientInterface({ host: "127.0.0.1", port: 1 });
+  assert.strictEqual(client.autoconfigureMtu, true);
+  assert.strictEqual(client.hwMtu, 16384);
+});

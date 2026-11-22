@@ -494,6 +494,10 @@ export class LocalClientInterface extends Interface {
      * @type {number}
      */
     this.bitrate = 1000000000;
+    // Python LocalInterface: AUTOCONFIGURE_MTU = True — the hardware MTU
+    // feeds link MTU discovery (TransportCore.nextHopHwMtu).
+    this.autoconfigureMtu = true;
+    this.optimiseMtu();
     /** @type {any} */
     this.socket = options.socket || null;
     // Only the initiator (the outbound dialer) reconnects. An adopted socket is

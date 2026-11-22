@@ -476,6 +476,10 @@ export class RNodeInterface extends Interface {
      * @type {number}
      */
     this.bitrate = 0;
+    // Python RNodeInterface: FIXED_MTU = True with HW_MTU 508 — the LoRa
+    // medium's frame cap, exposed for link MTU discovery
+    // (TransportCore.nextHopHwMtu). Fixed, so autoconfiguration is off.
+    this.hwMtu = RNodeInterface.HW_MTU;
 
     // Bytes transferred.
     this.rxb = 0;

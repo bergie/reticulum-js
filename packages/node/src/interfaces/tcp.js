@@ -157,6 +157,10 @@ export class TCPClientInterface extends Interface {
      * @type {number}
      */
     this.bitrate = 10000000;
+    // Python TCPInterface: AUTOCONFIGURE_MTU = True — the hardware MTU feeds
+    // link MTU discovery (TransportCore.nextHopHwMtu).
+    this.autoconfigureMtu = true;
+    this.optimiseMtu();
     this.i2pTunneled = options.i2pTunneled === true;
     /** @type {"hdlc"|"kiss"} */
     this.framing = options.framing === "kiss" ? "kiss" : "hdlc";
@@ -546,8 +550,10 @@ export class TCPServerInterface extends Interface {
           name: `tcp-client-from-server-${socket.remoteAddress}:${socket.remotePort}`,
         });
         // Inherit the server's nominal bitrate, matching the Python
-        // reference's spawned interfaces.
+        // reference's spawned interfaces; re-optimise the hardware MTU from
+        // the inherited bitrate.
         client.bitrate = this.bitrate;
+        client.optimiseMtu();
         await client.connect();
         this.spawnedInterfaces.add(client);
         // Drop the client from the set when its connection goes away: a

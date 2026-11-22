@@ -1581,6 +1581,32 @@ export class TransportCore extends EventTarget {
   // -----------------------------------------------------------------------
 
   /**
+   * Whether links we initiate propose the next-hop interface's hardware MTU
+   * for discovery (`RNS.Reticulum.LINK_MTU_DISCOVERY`, upstream default: on).
+   * With discovery on, a link to a destination whose path egresses through an
+   * interface with a known `hwMtu` signals that MTU in the LINKREQUEST; the
+   * responder adopts it and echoes it in the LRPROOF. Off, links always
+   * signal the protocol MTU (500).
+   */
+  static LINK_MTU_DISCOVERY = true;
+
+  /**
+   * The hardware MTU of the interface the path to the destination egresses
+   * through (Python `Transport.next_hop_interface_hw_mtu`), or `null` when no
+   * usable path or no interface MTU is known. Only interfaces that
+   * autoconfigure their MTU (or carry a fixed one, e.g. RNode's 508) expose a
+   * value — matching Python's `AUTOCONFIGURE_MTU or FIXED_MTU` gate.
+   * @param {Uint8Array} destinationHash
+   * @returns {number|null}
+   */
+  nextHopHwMtu(destinationHash) {
+    const iface = this.routingTable.getRoute(destinationHash)?.interface;
+    return typeof iface?.hwMtu === "number" && iface.hwMtu > 0
+      ? iface.hwMtu
+      : null;
+  }
+
+  /**
    * The bitrate-adaptive proof timeout for a single hop toward the
    * destination, in seconds.
    * `MTU * (8 / next_hop_bitrate) + DEFAULT_PER_HOP_TIMEOUT_SECS`, falling back to

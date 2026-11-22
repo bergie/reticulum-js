@@ -466,16 +466,19 @@ export class Interface extends EventTarget {
   optimiseMtu() {
     if (!this.autoconfigureMtu) return;
     const bitrate = this.bitrate;
+    // Thresholds use >= at every tier, matching the Python reference's
+    // optimise_mtu table exactly (a boundary bitrate lands in the higher
+    // tier, e.g. exactly 10 Mbit/s → 16384).
     if (bitrate >= 1_000_000_000) this.hwMtu = 524288;
-    else if (bitrate > 750_000_000) this.hwMtu = 262144;
-    else if (bitrate > 400_000_000) this.hwMtu = 131072;
-    else if (bitrate > 200_000_000) this.hwMtu = 65536;
-    else if (bitrate > 100_000_000) this.hwMtu = 32768;
-    else if (bitrate > 10_000_000) this.hwMtu = 16384;
-    else if (bitrate > 5_000_000) this.hwMtu = 8192;
-    else if (bitrate > 2_000_000) this.hwMtu = 4096;
-    else if (bitrate > 1_000_000) this.hwMtu = 2048;
-    else if (bitrate > 62_500) this.hwMtu = 1024;
+    else if (bitrate >= 750_000_000) this.hwMtu = 262144;
+    else if (bitrate >= 400_000_000) this.hwMtu = 131072;
+    else if (bitrate >= 200_000_000) this.hwMtu = 65536;
+    else if (bitrate >= 100_000_000) this.hwMtu = 32768;
+    else if (bitrate >= 10_000_000) this.hwMtu = 16384;
+    else if (bitrate >= 5_000_000) this.hwMtu = 8192;
+    else if (bitrate >= 2_000_000) this.hwMtu = 4096;
+    else if (bitrate >= 1_000_000) this.hwMtu = 2048;
+    else if (bitrate >= 62_500) this.hwMtu = 1024;
     else this.hwMtu = null;
 
     log(this.name, `Hardware MTU set to ${this.hwMtu}`, LogLevel.PATHING);
