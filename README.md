@@ -17,6 +17,7 @@ This repository is an npm-workspaces monorepo: a browser-safe **core** package p
 | [`@reticulum/rngit`](packages/rngit/README.md) | Reticulum Git (rngit) transport for [isomorphic-git](https://isomorphic-git.org/) | `isomorphic-git` |
 | [`@reticulum/webrtc-node`](packages/webrtc-node/README.md) | `createPeerConnection` factory backed by werift, for the core's WebRTC transport on Node | `werift` |
 | [`@reticulum/websocket-server-node`](packages/websocket-server-node/README.md) | Inbound WebSocket **server** interface, backed by ws | `ws` |
+| [`@reticulum/wasm-stamper`](packages/wasm-stamper/README.md) | Opt-in fast proof-of-work stamp engine for browsers — WASM SHA-256 with hash-state cloning (hash-wasm), ~10–300× faster than the WebCrypto default stamper | `hash-wasm` |
 
 Start with [`@reticulum/core`](packages/core/README.md) — the companions just add interfaces the browser-safe core can't ship or that add subprotocol support.
 

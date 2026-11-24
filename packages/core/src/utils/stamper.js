@@ -24,7 +24,9 @@
  *   hashing is slow (it re-hashes the entire workblock on every stamp
  *   trial), a platform package may install a faster engine via
  *   {@link setStamper} — e.g. `@reticulum/node`'s `node:crypto` engine with
- *   hash-state copying and worker-thread generation. The wire format and
+ *   hash-state copying and worker-thread generation, or
+ *   `@reticulum/wasm-stamper`'s hash-wasm engine for browsers (WASM SHA-256
+ *   with `save()`/`load()` midstate cloning). The wire format and
  *   validation semantics are engine-invariant: any engine must produce
  *   byte-identical workblocks and agree on stamp validity.
  */

@@ -8,7 +8,8 @@
     "packages/rfed",
     "packages/node",
     "packages/webrtc-node",
-    "packages/websocket-server-node"
+    "packages/websocket-server-node",
+    "packages/wasm-stamper"
   ],
   "lang": "en",
   "customCss": "./assets/reticulum-js.css",
