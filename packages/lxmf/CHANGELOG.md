@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-24
+
 ## [0.9.13] - 2026-10-18
 ### Fixed
 - `LXMPeer.sync()` can no longer be re-entered mid-sync (Python `LXMPeer.sync` IDLE-gate parity): an overlapping driver pass — the sync interval firing while a stalled transfer is still pending — previously started a second link and a second full container against the same peer, piling up in-flight syncs. The gate covers the whole sync, and link establishment moved inside the guarded region so any failure resets the state machine instead of wedging the peer out of all future syncs.

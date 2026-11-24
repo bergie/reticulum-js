@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-24
 ### Added
 - Link MTU discovery parity (Python `LINK_MTU_DISCOVERY`, default on): `Link.initiate` now proposes the next-hop interface's hardware MTU in the LINKREQUEST signalling instead of always proposing the protocol MTU (500), so JS-initiated links upgrade above 500 over interfaces that can carry larger frames. `TransportCore.nextHopHwMtu(destinationHash)` reads the routing table's egress interface `hwMtu` (the JS counterpart of Python's `Transport.next_hop_interface_hw_mtu`), gated by the new `TransportCore.LINK_MTU_DISCOVERY` static (set it to `false` for the old behavior). The responder adoption / LRPROOF echo / initiator confirmation legs were already wire-compatible; a Python-initiated link to a JS responder already upgraded, while a JS initiator never did.
 - `Interface.optimiseMtu` threshold comparisons aligned to the Python reference table: every tier now uses `>=` (previously only the 1 Gbit tier did, so exactly 100 Mbit/s mapped to 16384 instead of 32768, and exactly 62500 to `null` instead of 1024).

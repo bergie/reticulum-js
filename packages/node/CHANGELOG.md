@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-24
 ### Added
 - TCP and Local shared-instance interfaces opt into hardware-MTU autoconfiguration (`autoconfigureMtu` + `optimiseMtu()` from their nominal bitrate), matching the Python reference's `AUTOCONFIGURE_MTU = True` on the TCP and Local interfaces. The resulting `hwMtu` feeds link MTU discovery (see the `@reticulum/core` entries): a JS initiator now proposes the interface MTU — 16384 at the TCP default 10 Mbit/s, 524288 at the Local loopback 1 Gbit/s — instead of always proposing the protocol MTU (500).
 ### Security
