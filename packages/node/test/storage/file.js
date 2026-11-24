@@ -282,3 +282,45 @@ describe("FileStorageAdapter — Persistor integration", () => {
     }
   });
 });
+
+describe("FileStorageAdapter — destination stamp persistence", () => {
+  test("a mined stamp survives a restart as a file on disk", async () => {
+    const { dir, cleanup } = tempDir();
+    try {
+      const { generateStamp } = await import(
+        "@reticulum/core/src/utils/stamps.js"
+      );
+      // Cost 4.0 averages 2^4 = 16 trials — effectively instant.
+      const material = fromHex("ab".repeat(16));
+      const [stamp, value] = await generateStamp(material, 4.0);
+      const hash = fromHex("ee".repeat(16));
+
+      // Instance 1: mine + persist.
+      const p1 = new Persistor({
+        adapter: new FileStorageAdapter(dir),
+        knownDestinations: new Map(),
+        knownRatchets: new Map(),
+        debounceMs: 0,
+      });
+      await p1.storeDestinationStamp(hash, stamp, value);
+      assert.ok(
+        existsSync(join(dir, "stamps", `${toHex(hash)}.bin`)),
+        "record lives at <dir>/stamps/<hash>.bin",
+      );
+
+      // Instance 2: fresh Persistor, same directory → load, no re-mine.
+      const p2 = new Persistor({
+        adapter: new FileStorageAdapter(dir),
+        knownDestinations: new Map(),
+        knownRatchets: new Map(),
+        debounceMs: 0,
+      });
+      const loaded = await p2.loadDestinationStamp(hash, material, 4.0);
+      assert.ok(loaded, "stamp hydrated after restart");
+      assert.ok(bytesEqual(loaded[0], stamp));
+      assert.strictEqual(loaded[1], value);
+    } finally {
+      cleanup();
+    }
+  });
+});

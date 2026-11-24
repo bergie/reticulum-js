@@ -277,7 +277,13 @@ test("enforcement rejects an unstamped announce with short app_data", async () =
 
 import { Destination, Direction } from "../../src/core/destination.js";
 import { DestType } from "../../src/core/packet.js";
+import { Persistor } from "../../src/storage/persistor.js";
+import {
+  MemoryStorageAdapter,
+  StorageNamespace,
+} from "../../src/storage/storage.js";
 import { TransportCore } from "../../src/transport/transport.js";
+import { bytesEqual, toHex } from "../../src/utils/encoding.js";
 import { getStamper, setStamper } from "../../src/utils/stamper.js";
 import { stampValue as referenceStampValue } from "../../src/utils/stamps.js";
 
@@ -483,4 +489,191 @@ test("committed JS-emitted fixture stays Python-identical", async () => {
   assert.strictEqual(result.stampValue, 4.69921875);
   assert.strictEqual(result.linkCost, 12.5);
   assert.strictEqual(new TextDecoder().decode(result.appData), "js-roundtrip");
+});
+
+// --- Stamp persistence (Python `storage/stamps/*.dstamp` parity) ------------
+
+/**
+ * A fake interface layer wired with a real {@link Persistor} over the given
+ * adapter — the same shape a `Reticulum` instance exposes to `Destination`
+ * (`broadcast` + `persistor`).
+ * @param {MemoryStorageAdapter} adapter
+ */
+function persistorLayer(adapter) {
+  return {
+    broadcast: () => {},
+    persistor: new Persistor({
+      adapter,
+      knownDestinations: new Map(),
+      knownRatchets: new Map(),
+    }),
+  };
+}
+
+test("ensureStamp persists the freshly mined stamp immediately", async () => {
+  const identity = await Identity.generate();
+  const adapter = new MemoryStorageAdapter();
+  const dest = await Destination.IN(
+    "persistapp",
+    DestType.SINGLE,
+    identity,
+    persistorLayer(adapter),
+  );
+
+  const originalStamp = TransportCore.STAMP_DESTINATIONS;
+  const originalValue = TransportCore.DESTINATION_VALUE;
+  try {
+    TransportCore.STAMP_DESTINATIONS = true;
+    TransportCore.DESTINATION_VALUE = 4.0;
+    dest.setStampValue(4.0);
+    assert.ok(await dest.ensureStamp(), "stamp held");
+
+    // Written eagerly (not debounced) the moment mining completed — a crash
+    // right after the first announce must not lose the proof-of-work.
+    const bytes = await adapter.get(
+      StorageNamespace.STAMPS,
+      toHex(dest.destinationHash),
+    );
+    assert.ok(bytes, "stamp record written to the storage adapter");
+  } finally {
+    TransportCore.STAMP_DESTINATIONS = originalStamp;
+    TransportCore.DESTINATION_VALUE = originalValue;
+  }
+});
+
+test("a restarted destination loads the persisted stamp instead of re-mining", async () => {
+  const identity = await Identity.generate();
+  const adapter = new MemoryStorageAdapter();
+  const target = 4.0;
+
+  const originalStamp = TransportCore.STAMP_DESTINATIONS;
+  const originalValue = TransportCore.DESTINATION_VALUE;
+  const real = getStamper();
+  /** @type {{ cost: number }[]} */
+  const dispatches = [];
+  setStamper({
+    ...real,
+    async generateStamp(messageId, stampCost, options) {
+      dispatches.push({ cost: stampCost });
+      return real.generateStamp(messageId, stampCost, options);
+    },
+  });
+  try {
+    TransportCore.STAMP_DESTINATIONS = true;
+    TransportCore.DESTINATION_VALUE = target;
+
+    // First boot: mine and persist.
+    const dest = await Destination.IN(
+      "boatapp",
+      DestType.SINGLE,
+      identity,
+      persistorLayer(adapter),
+    );
+    dest.setStampValue(target);
+    assert.ok(await dest.ensureStamp());
+    assert.strictEqual(dispatches.length, 1, "first boot mines once");
+
+    // Restart: same identity + name (same destination hash), fresh
+    // Destination instance over the same storage adapter.
+    const restarted = await Destination.IN(
+      "boatapp",
+      DestType.SINGLE,
+      identity,
+      persistorLayer(adapter),
+    );
+    restarted.setStampValue(target);
+    assert.ok(await restarted.ensureStamp());
+    assert.strictEqual(dispatches.length, 1, "restart must load, not re-mine");
+    assert.ok(bytesEqual(restarted._stamp, dest._stamp));
+    assert.strictEqual(restarted._stampValue, dest._stampValue);
+    assert.ok(restarted._stampValue >= target);
+  } finally {
+    setStamper(null);
+    TransportCore.STAMP_DESTINATIONS = originalStamp;
+    TransportCore.DESTINATION_VALUE = originalValue;
+  }
+});
+
+test("a persisted stamp below a raised target regenerates", async () => {
+  const identity = await Identity.generate();
+  const adapter = new MemoryStorageAdapter();
+
+  const originalStamp = TransportCore.STAMP_DESTINATIONS;
+  const originalValue = TransportCore.DESTINATION_VALUE;
+  try {
+    TransportCore.STAMP_DESTINATIONS = true;
+    TransportCore.DESTINATION_VALUE = 4.0;
+
+    const dest = await Destination.IN(
+      "raisetarget",
+      DestType.SINGLE,
+      identity,
+      persistorLayer(adapter),
+    );
+    dest.setStampValue(4.0);
+    assert.ok(await dest.ensureStamp());
+    const cheapStamp = dest._stamp;
+
+    // Operator raises the emission target *above the achieved value* (a
+    // low-target stamp often overshoots, so 4.0→6.0 alone wouldn't force
+    // regeneration): the stored stamp no longer meets the requirement, so
+    // the next boot regenerates (Python reload semantics).
+    const raised = dest._stampValue + 2.0;
+    TransportCore.DESTINATION_VALUE = raised;
+    const restarted = await Destination.IN(
+      "raisetarget",
+      DestType.SINGLE,
+      identity,
+      persistorLayer(adapter),
+    );
+    restarted.setStampValue(raised);
+    assert.ok(await restarted.ensureStamp());
+    assert.ok(restarted._stampValue >= raised, "regenerated at the new target");
+    assert.ok(!bytesEqual(restarted._stamp, cheapStamp));
+  } finally {
+    TransportCore.STAMP_DESTINATIONS = originalStamp;
+    TransportCore.DESTINATION_VALUE = originalValue;
+  }
+});
+
+test("concurrent ensureStamp callers share one generation", async () => {
+  const identity = await Identity.generate();
+  const dest = await Destination.IN(
+    "racingapp",
+    DestType.SINGLE,
+    identity,
+    persistorLayer(new MemoryStorageAdapter()),
+  );
+
+  const originalStamp = TransportCore.STAMP_DESTINATIONS;
+  const originalValue = TransportCore.DESTINATION_VALUE;
+  const real = getStamper();
+  /** @type {number} */
+  let dispatches = 0;
+  setStamper({
+    ...real,
+    async generateStamp(messageId, stampCost, options) {
+      dispatches++;
+      return real.generateStamp(messageId, stampCost, options);
+    },
+  });
+  try {
+    TransportCore.STAMP_DESTINATIONS = true;
+    TransportCore.DESTINATION_VALUE = 4.0;
+    dest.setStampValue(4.0);
+
+    // Periodic re-announce loop racing a direct announce: one mining search,
+    // Python `stamp_generation_lock` semantics — not three.
+    const results = await Promise.all([
+      dest.ensureStamp(),
+      dest.ensureStamp(),
+      dest.ensureStamp(),
+    ]);
+    assert.strictEqual(dispatches, 1, "exactly one mining dispatch");
+    for (const r of results) assert.strictEqual(r, true);
+  } finally {
+    setStamper(null);
+    TransportCore.STAMP_DESTINATIONS = originalStamp;
+    TransportCore.DESTINATION_VALUE = originalValue;
+  }
 });

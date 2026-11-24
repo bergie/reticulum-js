@@ -272,14 +272,18 @@ export class Destination extends EventTarget {
     // operator-configured emission target (Destination.setStampValue); the
     // effective target floors at the transport's DESTINATION_VALUE. Stamps
     // are one-shot: generated once at the target, then reused verbatim on
-    // every announce. The Python reference persists them under
-    // `storage/stamps/*.dstamp`; ours are regenerated after restart until
-    // persistence lands in the storage adapter.
+    // every announce. When the owning Reticulum has a storage adapter, the
+    // stamp is persisted through its persistor (Python keeps the same records
+    // under `storage/stamps/*.dstamp`) and loaded on restart instead of
+    // re-mined.
     /** @type {Uint8Array|null} */
     this._stamp = null;
     this._stampValue = null;
     /** @type {number|null} */
     this._stampTargetValue = null;
+    /** In-flight generation promise — Python `stamp_generation_lock`.
+     * @type {Promise<void>|null} */
+    this._stampGeneration = null;
     /** @type {number|null} */
     this._linkCost = null;
 
@@ -571,6 +575,12 @@ export class Destination extends EventTarget {
    * generated once and reused verbatim on every announce. Generation is
    * skipped entirely while `Transport.STAMP_DESTINATIONS` is off.
    *
+   * Restart tolerance mirrors the Python reference: before mining, the
+   * owning Reticulum's persistor is consulted for a persisted stamp
+   * (`Stamps.load_destination_stamp`); a freshly mined stamp is stored back
+   * (`store_destination_stamp`). Without a storage adapter — or on a bare
+   * test layer without a persistor — the stamp stays memory-only.
+   *
    * Mining dispatches through the installed stamp engine
    * (`generateStamp(material, cost, { expandRounds: 0, size })` — Python
    * passes `expand_rounds=0, size=Identity.STAMPLENGTH`), so the proof-of-work
@@ -579,6 +589,10 @@ export class Destination extends EventTarget {
    * load-bearing: omitting it would mine against a 3000-round workblock no
    * validator accepts.
    *
+   * Concurrent callers share one generation (Python `stamp_generation_lock`):
+   * the periodic re-announce loop racing a direct announce must not
+   * double-mine a multi-minute proof-of-work.
+   *
    * @returns {Promise<boolean>} Whether a usable stamp is held.
    */
   async ensureStamp() {
@@ -586,26 +600,89 @@ export class Destination extends EventTarget {
     if (!TransportCore.STAMP_DESTINATIONS) return false;
     if (!destinationHash) return false;
     if (
-      this._stamp == null ||
-      this._stampValue == null ||
-      this._stampValue < quantizeCost(this.stampTargetValue)
+      this._stamp != null &&
+      this._stampValue != null &&
+      this._stampValue >= quantizeCost(this.stampTargetValue)
     ) {
-      const material = await this.stampMaterial();
-      const generated = await generateStamp(material, this.stampTargetValue, {
-        expandRounds: 0,
-        size: STAMP_LENGTH,
+      return true;
+    }
+    if (!this._stampGeneration) {
+      this._stampGeneration = this._generateStamp().finally(() => {
+        this._stampGeneration = null;
       });
-      if (!generated) return false;
-      const [stamp] = generated;
-      this._stamp = stamp;
-      this._stampValue = await stampValue(material, stamp);
-      log(
-        "Destination",
-        `Generated announce stamp with value ${this._stampValue} for ${toHex(destinationHash)}`,
-        LogLevel.DEBUG,
+    }
+    await this._stampGeneration;
+    return this._stamp != null;
+  }
+
+  /**
+   * Loads, or mines and persists, the announce stamp — Python
+   * `Destination._await_stamp`'s locked body. Runs under the
+   * {@link Destination#ensureStamp} generation gate so only one search is
+   * ever in flight.
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _generateStamp() {
+    const destinationHash = this.destinationHash;
+    if (!destinationHash) return;
+    const material = await this.stampMaterial();
+    const target = this.stampTargetValue;
+    const persistor = this._stampPersistor();
+    if (persistor) {
+      const persisted = await persistor.loadDestinationStamp(
+        destinationHash,
+        material,
+        target,
+      );
+      if (persisted) {
+        [this._stamp, this._stampValue] = persisted;
+        log(
+          "Destination",
+          `Loaded persisted announce stamp with value ${this._stampValue} for ${toHex(destinationHash)}`,
+          LogLevel.DEBUG,
+        );
+        return;
+      }
+    }
+    const generated = await generateStamp(material, target, {
+      expandRounds: 0,
+      size: STAMP_LENGTH,
+    });
+    if (!generated) return;
+    const [stamp] = generated;
+    this._stamp = stamp;
+    this._stampValue = await stampValue(material, stamp);
+    log(
+      "Destination",
+      `Generated announce stamp with value ${this._stampValue} for ${toHex(destinationHash)}`,
+      LogLevel.DEBUG,
+    );
+    // Store before the announce goes on air (Python `store_destination_stamp`
+    // in `_await_stamp`), so a crash right after emission cannot lose the
+    // just-mined proof-of-work.
+    if (persistor) {
+      await persistor.storeDestinationStamp(
+        destinationHash,
+        stamp,
+        this._stampValue,
       );
     }
-    return this._stamp != null;
+  }
+
+  /**
+   * The owning Reticulum's persistor, when one is wired (real stacks pass
+   * the `Reticulum` instance as `interfaceLayer`). Null on bare test layers —
+   * stamps then run memory-only, as before persistence landed.
+   * @returns {import("../storage/persistor.js").Persistor|null}
+   * @private
+   */
+  _stampPersistor() {
+    const persistor =
+      /** @type {any} */ (this.interfaceLayer)?.persistor ?? null;
+    return typeof persistor?.loadDestinationStamp === "function"
+      ? persistor
+      : null;
   }
 
   /**

@@ -18,6 +18,7 @@ import {
   StorageNamespace,
 } from "../../src/storage/storage.js";
 import { bytesEqual, fromHex, toHex } from "../../src/utils/encoding.js";
+import { MicroMsgPack } from "../../src/utils/msgpack.js";
 
 /** Fresh per-test persistence surface: isolated maps + memory adapter. */
 function freshSurface() {
@@ -405,5 +406,104 @@ describe("Persistor — disabled is a clean no-op", () => {
       [],
     );
     assert.strictEqual(p.persistedDestinations.size, 0);
+  });
+});
+
+describe("Persistor — destination stamps", () => {
+  // Mining at cost 4.0 averages 2^4 = 16 trials — effectively instant.
+  const MATERIAL = fromHex("ab".repeat(16));
+  const STAMP_COST = 4.0;
+
+  /** Mines a real stamp + fractional value for the shared material. */
+  async function minedStamp() {
+    const { generateStamp } = await import("../../src/utils/stamps.js");
+    const [stamp, value] = await generateStamp(MATERIAL, STAMP_COST);
+    return { stamp, value };
+  }
+
+  test("store then load round-trips the mined stamp", async () => {
+    const { stamp, value } = await minedStamp();
+    const s = freshSurface();
+    const p = new Persistor({ ...s, debounceMs: 0 });
+    const hash = fromHex("cd".repeat(16));
+
+    await p.storeDestinationStamp(hash, stamp, value);
+    const loaded = await p.loadDestinationStamp(hash, MATERIAL, STAMP_COST);
+    assert.ok(loaded, "persisted stamp loads");
+    assert.ok(bytesEqual(loaded[0], stamp));
+    assert.strictEqual(loaded[1], value);
+  });
+
+  test("load returns null when no record exists", async () => {
+    const p = new Persistor({ ...freshSurface(), debounceMs: 0 });
+    const loaded = await p.loadDestinationStamp(
+      fromHex("cd".repeat(16)),
+      MATERIAL,
+      STAMP_COST,
+    );
+    assert.strictEqual(loaded, null);
+  });
+
+  test("load rejects a record below the required value", async () => {
+    const { stamp, value } = await minedStamp();
+    const s = freshSurface();
+    const p = new Persistor({ ...s, debounceMs: 0 });
+    const hash = fromHex("cd".repeat(16));
+    await p.storeDestinationStamp(hash, stamp, value);
+
+    // Required value above the record's achieved value: regenerate, never
+    // load (mirrors Stamps.load_destination_stamp's stamp_valid check).
+    const loaded = await p.loadDestinationStamp(hash, MATERIAL, value + 1.0);
+    assert.strictEqual(loaded, null);
+  });
+
+  test("load skips corrupt and foreign-version records", async () => {
+    const { stamp, value } = await minedStamp();
+    const s = freshSurface();
+    const p = new Persistor({ ...s, debounceMs: 0 });
+    const hash = fromHex("cd".repeat(16));
+
+    await p.storeDestinationStamp(hash, stamp, value);
+    // Corrupt bytes.
+    await s.adapter.set(StorageNamespace.STAMPS, toHex(hash), fromHex("ff"));
+    assert.strictEqual(
+      await p.loadDestinationStamp(hash, MATERIAL, STAMP_COST),
+      null,
+    );
+    // Wrong record version — regenerates rather than mis-loads.
+    await s.adapter.set(
+      StorageNamespace.STAMPS,
+      toHex(hash),
+      MicroMsgPack.encode({ v: 99, stamp, value, generated: 0 }),
+    );
+    assert.strictEqual(
+      await p.loadDestinationStamp(hash, MATERIAL, STAMP_COST),
+      null,
+    );
+  });
+
+  test("no-ops without a KV adapter", async () => {
+    const p = new Persistor({ ...freshSurface(), adapter: null });
+    const hash = fromHex("cd".repeat(16));
+    await p.storeDestinationStamp(hash, fromHex("11".repeat(14)), 4.0); // must not throw
+    assert.strictEqual(
+      await p.loadDestinationStamp(hash, MATERIAL, STAMP_COST),
+      null,
+    );
+  });
+
+  test("records live in the stamps namespace, keyed by destination hash", async () => {
+    const { stamp, value } = await minedStamp();
+    const s = freshSurface();
+    const p = new Persistor({ ...s, debounceMs: 0 });
+    const hash = fromHex("cd".repeat(16));
+    await p.storeDestinationStamp(hash, stamp, value);
+    assert.deepStrictEqual(await s.adapter.keys(StorageNamespace.STAMPS), [
+      toHex(hash),
+    ]);
+    assert.deepStrictEqual(
+      await s.adapter.keys(StorageNamespace.IDENTITIES),
+      [],
+    );
   });
 });

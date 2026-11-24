@@ -61,6 +61,8 @@
  *    `Persistence::IdentityEntry`).
  *  - `ratchets` — per-destination ratchet rings (arrays of X25519 pubs).
  *  - `paths` — transport path-table entries (next-hop routes).
+ *  - `stamps` — mined one-shot destination announce stamps (RNS 1.6.0;
+ *    Python keeps the same records as files under `storage/stamps/*.dstamp`).
  *
  * @enum {string}
  */
@@ -68,6 +70,7 @@ export const StorageNamespace = {
   IDENTITIES: "identities",
   RATCHETS: "ratchets",
   PATHS: "paths",
+  STAMPS: "stamps",
 };
 
 /**

@@ -13,6 +13,14 @@
  * stores them opaquely. Each identity record encodes as the 4-element msgpack
  * array `[timestamp, packet_hash, public_key, app_data]` — the same layout as
  * microReticulum's `Persistence::IdentityEntry` codec.
+ *
+ * Mined destination announce stamps (RNS 1.6.0) are also persisted here, but
+ * not via the debounced peer flow: they are written eagerly by
+ * {@link Persistor#storeDestinationStamp} the moment a destination mines one
+ * (Python `store_destination_stamp` keeps them under `storage/stamps/`), and
+ * loaded back with full re-validation by {@link Persistor#loadDestinationStamp}
+ * before any regeneration. They are not secret, so they ride the namespaced
+ * KV rather than the owner-only secret slots.
  */
 
 import { Destination } from "../core/destination.js";
@@ -20,6 +28,7 @@ import { Identity } from "../core/identity.js";
 import { bytesEqual, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import { STAMP_LENGTH, stampValid, stampValue } from "../utils/stamps.js";
 import { StorageNamespace } from "./storage.js";
 
 /**
@@ -93,6 +102,52 @@ function decodeRatchet(bytes) {
   return {
     ratchet: toU8(e.ratchet),
     received: typeof e.received === "number" ? e.received : 0,
+  };
+}
+
+/**
+ * On-disk record version for persisted destination stamps (Python
+ * `Stamps.STAMP_FILE_VERSION`). Records written by another version are
+ * ignored, so a future format change regenerates instead of mis-loading.
+ * @type {number}
+ */
+const STAMP_FILE_VERSION = 1;
+
+/**
+ * Encodes a destination stamp entry as the msgpack map Python's
+ * `store_destination_stamp` writes: `{v, stamp, value, generated}`.
+ * @param {{stamp: Uint8Array, value: number, generated: number}} entry
+ * @returns {Uint8Array}
+ */
+function encodeStampEntry(entry) {
+  return MicroMsgPack.encode({
+    v: STAMP_FILE_VERSION,
+    stamp: toU8(entry.stamp),
+    value: entry.value,
+    generated: entry.generated,
+  });
+}
+
+/**
+ * @param {Uint8Array} bytes
+ * @returns {{stamp: Uint8Array, value: number, generated: number}}
+ * @throws when the bytes do not decode to a versioned `{v, stamp}` map with
+ *   a {@link STAMP_LENGTH}-byte stamp (so {@link Persistor#loadDestinationStamp}
+ *   can treat the record as absent and regenerate).
+ */
+function decodeStampEntry(bytes) {
+  const e = MicroMsgPack.decode(bytes);
+  if (!e || e.v !== STAMP_FILE_VERSION || !(e.stamp instanceof Uint8Array)) {
+    throw new Error("stamp entry is not a versioned {v, stamp, value} map");
+  }
+  const stamp = toU8(e.stamp);
+  if (stamp.length !== STAMP_LENGTH) {
+    throw new Error(`stamp entry has invalid length ${stamp.length}`);
+  }
+  return {
+    stamp,
+    value: typeof e.value === "number" ? e.value : 0,
+    generated: typeof e.generated === "number" ? e.generated : 0,
   };
 }
 
@@ -352,6 +407,96 @@ export class Persistor {
       if (!existing || !bytesEqual(existing.ratchet, copy)) {
         this.knownRatchets.set(hex, { ratchet: copy, received: Date.now() });
       }
+    }
+  }
+
+  /**
+   * Loads the persisted one-shot destination announce stamp for a
+   * destination, mirroring `Stamps.load_destination_stamp`. The record is
+   * fully re-validated on load: record version, stamp length, recomputed
+   * fractional value ({@link stampValue}) and {@link stampValid} against
+   * `requiredValue` — a record mined below the current requirement (e.g. the
+   * operator raised the emission target) regenerates, never loads.
+   *
+   * @param {Uint8Array|string} destinationHash
+   * @param {Uint8Array} material The stamp's identifying material
+   *   (`Destination.stampMaterial()`); the proof hashes `material ‖ stamp`.
+   * @param {number} requiredValue Minimum acceptable fractional value — the
+   *   destination's emission target (Python passes `Destination.target_value`).
+   * @returns {Promise<[Uint8Array, number]|null>} `[stamp, value]`, or null
+   *   when disabled, absent, unreadable, foreign-versioned or below the
+   *   requirement.
+   */
+  async loadDestinationStamp(destinationHash, material, requiredValue) {
+    const adapter = this._kvAdapter();
+    if (!adapter) return null;
+    let bytes;
+    try {
+      bytes = await adapter.get(
+        StorageNamespace.STAMPS,
+        this._hex(destinationHash),
+      );
+    } catch (e) {
+      log(
+        "Persistor",
+        `Failed to read persisted destination stamp: ${e}`,
+        LogLevel.WARNING,
+      );
+      return null;
+    }
+    if (!bytes) return null;
+    let entry;
+    try {
+      entry = decodeStampEntry(bytes);
+    } catch (e) {
+      log(
+        "Persistor",
+        `Ignoring unreadable persisted destination stamp: ${e}`,
+        LogLevel.DEBUG,
+      );
+      return null;
+    }
+    const value = await stampValue(material, entry.stamp);
+    if (!(await stampValid(entry.stamp, requiredValue, material))) {
+      log(
+        "Persistor",
+        `Stored destination stamp value ${value} is below required ${requiredValue}; regenerating`,
+        LogLevel.DEBUG,
+      );
+      return null;
+    }
+    return [entry.stamp, value];
+  }
+
+  /**
+   * Persists a freshly mined destination announce stamp (Python
+   * `store_destination_stamp`). Stamps are one-shot per destination forever,
+   * so the write converts "mine on every boot" into "slow first boot, free
+   * after". Written immediately (not debounced) so an ungraceful crash
+   * cannot lose the just-mined proof-of-work. Failures are logged and
+   * swallowed — the in-memory stamp still works; only restart tolerance is
+   * lost.
+   *
+   * @param {Uint8Array|string} destinationHash
+   * @param {Uint8Array} stamp
+   * @param {number} value The stamp's fractional value (`stampValue`).
+   * @returns {Promise<void>}
+   */
+  async storeDestinationStamp(destinationHash, stamp, value) {
+    const adapter = this._kvAdapter();
+    if (!adapter) return;
+    try {
+      await adapter.set(
+        StorageNamespace.STAMPS,
+        this._hex(destinationHash),
+        encodeStampEntry({ stamp, value, generated: Date.now() / 1000 }),
+      );
+    } catch (e) {
+      log(
+        "Persistor",
+        `Failed to persist destination stamp: ${e}`,
+        LogLevel.WARNING,
+      );
     }
   }
 
