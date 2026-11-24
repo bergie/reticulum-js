@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-24
 ### Added
 - Destination announce stamp persistence (Python-parity follow-up to the RNS 1.6.0 stamp work): the one-shot 14-byte announce stamp a `Destination` mines at its emission target is now stored through the storage adapter immediately after mining (`stamps` namespace, msgpack `{v, stamp, value, generated}` — the same record `Stamps.store_destination_stamp` writes under Python's `storage/stamps/*.dstamp`), and re-loaded — with full re-validation of record version, stamp length and fractional value against the current target (`Stamps.load_destination_stamp` semantics) — before any regeneration. `Destination.ensureStamp` consults the owning `Reticulum`'s persistor via the new `Persistor.loadDestinationStamp`/`storeDestinationStamp` pair; no API change and no configuration change, so every stack already passing a `storageAdapter` gets "slow first boot, free after" on upgrade instead of re-mining every stamped destination on restart (at the RNS 1.6.1 default `DESTINATION_VALUE` 25.0 that is minutes of proof-of-work per destination per boot). Stacks without an adapter keep memory-only stamps. Records are written eagerly rather than debounced so an ungraceful crash right after the first announce cannot lose the just-mined proof-of-work, and concurrent `ensureStamp` callers now share one generation (Python `Destination.stamp_generation_lock`), so the periodic re-announce loop racing a direct announce no longer double-mines a multi-minute search.
 

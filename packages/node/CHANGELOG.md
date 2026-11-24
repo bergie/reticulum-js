@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-24
+
 ## [0.10.1] - 2026-11-24
 ### Changed
 - The fast stamp engine supports the full RNS 1.6.0 generation surface: `nodeStamper.generateStamp` and `generateStampSync` accept the options-object form (`expandRounds`, `size`, `signal`) alongside the legacy positional `expandRounds`, mine against fractional 8.8 fixed-point costs on the TAB target grid (byte-identical targets at whole-number costs, so LXMF integer-bit callers are unaffected — fractional costs like `PR_VALUE` 15.8 previously threw a `RangeError`), and support arbitrary stamp sizes (14-byte `Identity.STAMPLENGTH` detached stamps for announces and path requests, not just 32-byte trials). The worker op receives the options object, so announce stamp mining at the rollout target 25.0 runs in the worker thread instead of blocking the host event loop for minutes. `signal` is honoured before dispatch and on the synchronous-fallback path; a search already dispatched to the worker cannot be interrupted (`AbortSignal` is not structured-clonable).
