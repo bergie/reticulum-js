@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.10.1] - 2026-11-24
 ### Fixed
 - Destination announce stamp mining no longer blocks the host event loop: `Destination.ensureStamp`, `Transport.stampPathRequest` and `generateDiscoveryStamp` now mine through the installed stamp engine (`generateStamp` in `utils/stamper.js`) instead of the single-core reference miner in `utils/stamps.js`, whose per-trial hashing ran synchronously on the calling thread. With `@reticulum/node`'s fast engine installed, announce stamp mining at the RNS 1.6.1 rollout target (`DESTINATION_VALUE` 25.0 ≈ 2²⁵ ≈ 33.5M trials per destination) runs entirely in the stamp worker thread — previously one continuous multi-minute event-loop block per destination (measured at 248 s with ~49.7M hash calls in a Signal K plugin CI run, freezing any Node host that emits stamped announces; a `setInterval` heartbeat now keeps firing throughout, regression-tested in `@reticulum/node`). Announce and path request generation pass the Python parameters explicitly — `expandRounds: 0` (Python `generate_stamp(..., expand_rounds=0)` for announces and path requests: the workblock is the raw material, not the 3000-round LXMF default) and the 14-byte `Identity.STAMPLENGTH` size — and the stored stamp value remains the fractional 8.8 one from `Stamps.stamp_value` parity.
 ### Changed

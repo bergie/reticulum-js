@@ -1,6 +1,6 @@
 {
   "name": "@reticulum/wasm-stamper",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Fast WASM proof-of-work stamp engine for reticulum-js — a browser-compatible opt-in replacement for the slow WebCrypto default stamper",
   "keywords": [
     "reticulum",
@@ -27,7 +27,7 @@
     "CHANGELOG.md"
   ],
   "dependencies": {
-    "@reticulum/core": "^0.10.0",
+    "@reticulum/core": "^0.10.1",
     "hash-wasm": "^4.13.0"
   },
   "scripts": {

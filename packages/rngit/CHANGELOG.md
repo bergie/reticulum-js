@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-24
+
 ## [0.10.0] - 2026-11-24
 ### Security
 - `parsePack`/`inflateWithBounds` now bound pack-entry decompression: the hand-rolled DEFLATE decoder aborts as soon as its output exceeds the entry's declared size (passed as the new `maxLen` argument), and the declared size itself is capped at an absolute `MAX_ENTRY_SIZE` (512 MiB). Previously a malicious rngit node could hand a client a small pack whose entries inflate to gigabytes — the size check only ran after full decompression — an OOM via a single fetched bundle.
