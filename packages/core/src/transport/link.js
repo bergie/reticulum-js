@@ -574,6 +574,7 @@ export class Link extends EventTarget {
             this.destination?.destinationHash ?? this.linkId,
           )
         : 15;
+    /** @type {any} */
     const timer = setTimeout(() => {
       this._establishmentTimer = null;
       if (this.status !== LinkStatus.HANDSHAKE) return;

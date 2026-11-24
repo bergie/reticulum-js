@@ -1894,6 +1894,7 @@ export class TransportCore extends EventTarget {
    */
   _ensureSweep() {
     if (this._sweepTimer) return;
+    /** @type {any} */
     const timer = setInterval(() => {
       // _sweepTick is async: an interval callback would discard a rejection
       // from it as unhandled and crash the process.

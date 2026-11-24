@@ -159,8 +159,8 @@ export class WebSocketClientInterface extends Interface {
 
   /**
    * The underlying WebSocket connection, when one has been opened or adopted.
-   * Typed loosely because the base `Interface.socket` is declared as a Node
-   * socket; we reuse the same field so the base `send()` helper can see it.
+   * Typed loosely (beyond the base `InterfaceSocket` structural shape) so
+   * WebSocket-specific members like `readyState` stay reachable.
    * @type {any}
    */
   socket = null;

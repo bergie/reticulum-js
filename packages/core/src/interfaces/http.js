@@ -161,7 +161,7 @@ export class HttpPostClientInterface extends Interface {
     this._readable = null;
     /** @type {any} */
     this._writable = null;
-    /** @type {import("node:stream/web").ReadableStreamDefaultController | null} */
+    /** @type {ReadableStreamDefaultController | null} */
     this._inboundController = null;
     /** @type {Promise<void> | null} */
     this._loopPromise = null;

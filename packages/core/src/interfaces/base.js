@@ -292,13 +292,27 @@ export class Interface extends EventTarget {
   }
 
   /**
-   * The underlying socket, when this interface is backed by a Node.js stream.
-   * @type {import('node:net').Socket | null}
+   * Minimal structural shape of the host transport handle stored in the
+   * `socket` field below. Concrete interfaces refine it per platform — a
+   * `node:net` socket in `@reticulum/node`, a standard `WebSocket` in the
+   * WebSocket client interface — while shared send paths rely only on the
+   * members listed here. All members are optional because not every host
+   * handle provides them.
+   * @typedef {object} InterfaceSocket
+   * @property {boolean} [writable] Whether the handle currently accepts writes.
+   * @property {(data: string, cb?: (err?: Error | null) => void) => unknown} [write]
+   *     Write data out; `cb` fires once the data is handed to the host.
+   * @property {() => void} [close] Graceful close.
+   * @property {() => void} [destroy] Immediate teardown.
+   */
+
+  /**
+   * The underlying host transport handle (platform socket), when this
+   * interface is backed by a stream-oriented connection.
+   * @type {InterfaceSocket | null}
    */
   socket = null;
-  /**
-   * @type {import('node:stream/web').WritableStreamDefaultWriter | null}
-   */
+  /** @type {WritableStreamDefaultWriter | null} */
   _packetWriter = null;
 
   /**
@@ -1008,7 +1022,7 @@ export class Interface extends EventTarget {
 
   /**
    * The readable stream of incoming data.
-   * @type {import('node:stream/web').ReadableStream | null}
+   * @type {ReadableStream | null}
    */
   get readable() {
     throw new Error("Interface.readable is not implemented");
@@ -1016,7 +1030,7 @@ export class Interface extends EventTarget {
 
   /**
    * The writable stream of outgoing data.
-   * @type {import('node:stream/web').WritableStream | null}
+   * @type {WritableStream | null}
    */
   get writable() {
     throw new Error("Interface.writable is not implemented");
@@ -1180,11 +1194,11 @@ export class Interface extends EventTarget {
     await this._packetWriter.write(packet);
 
     // FORCE DRAIN:
-    // If the socket has a buffer, wait for it to empty
+    // If the host socket has buffered data, wait for it to be handed off
     const socket = this.socket;
-    if (socket && socket.writable) {
-      // This forces Node to push the buffered data out of the NIC
-      await new Promise((resolve) => socket.write("", resolve));
+    if (socket?.writable && socket.write) {
+      // This pushes any host-buffered data out towards the network
+      await new Promise((resolve) => socket.write?.("", resolve));
     }
   }
 

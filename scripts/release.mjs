@@ -235,6 +235,15 @@ export function runRelease({
     throw new Error(`Invalid date "${date}" (expected YYYY-MM-DD)`);
   }
 
+  // Environment pre-flight: every later step (checks, types, pack) needs the
+  // workspace installed. A missing install would otherwise surface much
+  // later as a confusing tsc/TS2688-style failure deep inside a package.
+  if (!existsSync(join(root, "node_modules"))) {
+    throw new Error(
+      `node_modules not found under ${root} — run \`npm install\` (or \`npm ci\`) first`,
+    );
+  }
+
   const metas = packageMetas(root);
   if (metas.length === 0)
     throw new Error(`No packages found under ${join(root, "packages")}`);

@@ -10,7 +10,24 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { applyVersionBump, gitOriginUrl, packageMetas } from "./release.mjs";
+import {
+  applyVersionBump,
+  gitOriginUrl,
+  packageMetas,
+  runRelease,
+} from "./release.mjs";
+
+test("runRelease refuses to run without node_modules installed", () => {
+  const root = mkdtempSync(join(tmpdir(), "release-nonode-"));
+  try {
+    assert.throws(
+      () => runRelease({ version: "1.2.3", root }),
+      /node_modules not found/,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("applyVersionBump bumps version and rewrites internal dep refs", () => {
   const before = {
