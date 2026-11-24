@@ -25,13 +25,8 @@ import { Identity } from "../core/identity.js";
 import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
-import { stampWorkblock } from "../utils/stamper.js";
-import {
-  generateStamp,
-  STAMP_SIZE,
-  stampValid,
-  stampValue,
-} from "../utils/stamps.js";
+import { generateStamp, stampWorkblock } from "../utils/stamper.js";
+import { STAMP_SIZE, stampValid, stampValue } from "../utils/stamps.js";
 
 // ---------------------------------------------------------------------
 // Constants
@@ -802,6 +797,12 @@ export async function discoveryInfoHash(infoMap) {
  * dict. Producer-side primitive — the full `InterfaceAnnouncer` is a follow-up;
  * exposed so tests can mint valid discovery announces.
  *
+ * Mining runs through the installed stamp engine (Python `Discovery.generate`
+ * calls `Stamps.generate_stamp(infohash, stamp_cost=…,
+ * expand_rounds=self.WORKBLOCK_EXPAND_ROUNDS)` at the default 32-byte size);
+ * the reported value is the fractional (8.8 fixed-point) one from
+ * `Stamps.stamp_value` parity, as before.
+ *
  * @param {Map<number, any>} infoMap
  * @param {number} [stampCost=DEFAULT_STAMP_VALUE]
  * @param {number} [expandRounds=WORKBLOCK_EXPAND_ROUNDS]
@@ -814,10 +815,18 @@ export async function generateDiscoveryStamp(
   expandRounds = WORKBLOCK_EXPAND_ROUNDS,
 ) {
   const infohash = await discoveryInfoHash(infoMap);
-  return generateStamp(infohash, stampCost, {
+  const generated = await generateStamp(infohash, stampCost, {
     expandRounds,
     size: STAMP_SIZE,
   });
+  if (!generated) return null;
+  const [stamp] = generated;
+  // The reported value proves work against the expanded workblock (Python
+  // `generate_stamp` reports `stamp_value(workblock, stamp)`).
+  return [
+    stamp,
+    await stampValue(await stampWorkblock(infohash, expandRounds), stamp),
+  ];
 }
 
 /**

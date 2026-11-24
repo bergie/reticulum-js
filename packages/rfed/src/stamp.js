@@ -65,15 +65,18 @@ export async function channelStampWorkblock(channelHash, innerBlob) {
  * @param {Uint8Array} innerBlob - EC-encrypted channel message.
  * @param {number} stampCost - Required leading zero bits (rfed default 16).
  * @returns {Promise<[Uint8Array, number]>} `[stamp, achievedValue]`.
+ * @throws {Error} if generation was aborted (no signal is supplied here, so
+ *   this cannot happen in practice).
  */
 export async function generateChannelStamp(channelHash, innerBlob, stampCost) {
   const { transientId } = await channelStampWorkblock(channelHash, innerBlob);
-  const [stamp, value] = await lxmfGenerateStamp(
+  const generated = await lxmfGenerateStamp(
     transientId,
     stampCost,
     STAMP_EXPAND_ROUNDS,
   );
-  return [stamp, value];
+  if (!generated) throw new Error("Channel stamp generation aborted");
+  return generated;
 }
 
 /**

@@ -13,15 +13,16 @@ import { TransportCore } from "../transport/transport.js";
 import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
 import { MicroMsgPack } from "../utils/msgpack.js";
+import { generateStamp } from "../utils/stamper.js";
 import {
   costToBytes,
   EXT_HEADER_LENGTH,
   EXT_PAYLOAD_LENGTH,
   EXT_PAYLOAD_MARKER,
-  generateStamp,
   quantizeCost,
   STAMP_COST_CAP,
   STAMP_LENGTH,
+  stampValue,
 } from "../utils/stamps.js";
 import { Identity } from "./identity.js";
 import {
@@ -569,6 +570,15 @@ export class Destination extends EventTarget {
    * target (Python `Destination._await_stamp`). One-shot: the stamp is
    * generated once and reused verbatim on every announce. Generation is
    * skipped entirely while `Transport.STAMP_DESTINATIONS` is off.
+   *
+   * Mining dispatches through the installed stamp engine
+   * (`generateStamp(material, cost, { expandRounds: 0, size })` — Python
+   * passes `expand_rounds=0, size=Identity.STAMPLENGTH`), so the proof-of-work
+   * search runs off the calling thread; only the fractional value lookup
+   * (`Stamps.stamp_value` parity) executes here. The `expandRounds: 0` is
+   * load-bearing: omitting it would mine against a 3000-round workblock no
+   * validator accepts.
+   *
    * @returns {Promise<boolean>} Whether a usable stamp is held.
    */
   async ensureStamp() {
@@ -580,17 +590,18 @@ export class Destination extends EventTarget {
       this._stampValue == null ||
       this._stampValue < quantizeCost(this.stampTargetValue)
     ) {
-      const generated = await generateStamp(
-        await this.stampMaterial(),
-        this.stampTargetValue,
-      );
+      const material = await this.stampMaterial();
+      const generated = await generateStamp(material, this.stampTargetValue, {
+        expandRounds: 0,
+        size: STAMP_LENGTH,
+      });
       if (!generated) return false;
-      const [stamp, value] = generated;
+      const [stamp] = generated;
       this._stamp = stamp;
-      this._stampValue = value;
+      this._stampValue = await stampValue(material, stamp);
       log(
         "Destination",
-        `Generated announce stamp with value ${value} for ${toHex(destinationHash)}`,
+        `Generated announce stamp with value ${this._stampValue} for ${toHex(destinationHash)}`,
         LogLevel.DEBUG,
       );
     }

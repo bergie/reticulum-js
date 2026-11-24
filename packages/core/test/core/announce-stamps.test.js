@@ -278,6 +278,8 @@ test("enforcement rejects an unstamped announce with short app_data", async () =
 import { Destination, Direction } from "../../src/core/destination.js";
 import { DestType } from "../../src/core/packet.js";
 import { TransportCore } from "../../src/transport/transport.js";
+import { getStamper, setStamper } from "../../src/utils/stamper.js";
+import { stampValue as referenceStampValue } from "../../src/utils/stamps.js";
 
 test("stamped emission appends a valid extension payload", async () => {
   const identity = await Identity.generate();
@@ -347,6 +349,70 @@ test("stamped emission appends a valid extension payload", async () => {
     TransportCore.STAMP_DESTINATIONS = originalStamp;
     TransportCore.DESTINATION_VALUE = originalValue;
     TransportCore.DESTINATION_COST = originalCost;
+  }
+});
+
+test("ensureStamp mines through the installed engine, not the main thread", async () => {
+  const identity = await Identity.generate();
+  /** @type {any[]} */
+  const captured = [];
+  const fakeLayer = { broadcast: (pkt) => captured.push(pkt) };
+  const dest = await Destination.IN(
+    "enginedapp",
+    DestType.SINGLE,
+    identity,
+    fakeLayer,
+  );
+
+  // Spy engine: records every generateStamp dispatch and delegates to the
+  // real WebCrypto engine. Regression guard for the ensureStamp → engine
+  // migration: announce stamp mining must run through the engine seam (so
+  // worker-thread engines mine off the main thread) — and must pass the
+  // announce options explicitly (expandRounds 0: the Python workblock for
+  // announces is the raw material; size 14: `Identity.STAMPLENGTH`).
+  const real = getStamper();
+  /** @type {{ cost: number, options: any }[]} */
+  const dispatches = [];
+  setStamper({
+    ...real,
+    async generateStamp(messageId, stampCost, expandRoundsOrOptions) {
+      dispatches.push({ cost: stampCost, options: expandRoundsOrOptions });
+      return real.generateStamp(messageId, stampCost, expandRoundsOrOptions);
+    },
+  });
+
+  const originalStamp = TransportCore.STAMP_DESTINATIONS;
+  const originalValue = TransportCore.DESTINATION_VALUE;
+  try {
+    TransportCore.DESTINATION_VALUE = 4.0;
+    TransportCore.STAMP_DESTINATIONS = true;
+    dest.setStampValue(4.0);
+    await dest.announce();
+
+    assert.strictEqual(
+      dispatches.length,
+      1,
+      "ensureStamp must dispatch exactly one engine generateStamp",
+    );
+    assert.strictEqual(dispatches[0].cost, 4.0);
+    // expandRounds must be 0 for announce stamps — the engine's default
+    // (3000 rounds) would build a workblock no validator accepts.
+    assert.deepStrictEqual(dispatches[0].options, {
+      expandRounds: 0,
+      size: 14,
+    });
+
+    // The stored value is the fractional 8.8 one from `Stamps.stamp_value`
+    // parity, computed over the raw material (the announce workblock).
+    const material = await dest.stampMaterial();
+    const expected = await referenceStampValue(material, dest._stamp);
+    assert.strictEqual(dest._stampValue, expected);
+    assert.ok(dest._stampValue >= 4.0, "stamp meets the emission target");
+    assert.strictEqual(captured.length, 1, "announce went on air");
+  } finally {
+    setStamper(null);
+    TransportCore.STAMP_DESTINATIONS = originalStamp;
+    TransportCore.DESTINATION_VALUE = originalValue;
   }
 });
 

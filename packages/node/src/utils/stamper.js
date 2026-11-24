@@ -32,6 +32,7 @@
 
 import { Worker } from "node:worker_threads";
 import {
+  normalizeGenerateStampOptions,
   setStamper,
   WORKBLOCK_EXPAND_ROUNDS,
 } from "@reticulum/core/src/utils/stamper.js";
@@ -267,18 +268,31 @@ export const nodeStamper = {
    * Generates a stamp in the stamp worker (never blocking the event loop),
    * falling back to the synchronous search when workers are unavailable.
    *
+   * Accepts both the legacy positional `expandRounds` number and the
+   * {@link GenerateStampOptions} object form (Python `Stamps.generate_stamp`
+   * options: `expandRounds`, `size`, `signal`). An aborted signal resolves to
+   * `null`; it is checked before dispatch and, on the synchronous fallback
+   * path, per pool refill — a search already running in the worker cannot be
+   * interrupted (an `AbortSignal` is not structured-clonable).
+   *
    * @param {Uint8Array} messageId
    * @param {number} stampCost
-   * @param {number} [expandRounds]
-   * @returns {Promise<[Uint8Array, number]>}
+   * @param {number|import("@reticulum/core/src/utils/stamper.js").GenerateStampOptions} [expandRoundsOrOptions]
+   * @returns {Promise<[Uint8Array, number]|null>}
    */
-  async generateStamp(messageId, stampCost, expandRounds) {
+  async generateStamp(messageId, stampCost, expandRoundsOrOptions) {
+    const options = normalizeGenerateStampOptions(expandRoundsOrOptions);
+    if (options.signal?.aborted) return null;
     if (!workerBroken) {
       try {
+        // AbortSignal is not structured-clonable — keep it out of the worker
+        // message; the pre-dispatch check above is the worker path's only
+        // cancellation point.
+        const { signal, ...workerOptions } = options;
         const result = await callWorker("generate", [
           messageId,
           stampCost,
-          expandRounds,
+          workerOptions,
         ]);
         return /** @type {[Uint8Array, number]} */ (result);
       } catch {
@@ -286,7 +300,7 @@ export const nodeStamper = {
         // synchronously on the calling thread instead.
       }
     }
-    return generateStampSync(messageId, stampCost, expandRounds);
+    return generateStampSync(messageId, stampCost, options);
   },
 };
 

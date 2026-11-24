@@ -1,12 +1,15 @@
 import assert from "node:assert";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   fullHash,
   generateStamp,
   getStamper,
   msgpackUint,
+  normalizeGenerateStampOptions,
   STAMP_SIZE,
   setStamper,
+  stampTargetBytesFromCost,
   stampValid,
   stampValue,
   stampWorkblock,
@@ -14,6 +17,18 @@ import {
   WORKBLOCK_EXPAND_ROUNDS_PEERING,
   WORKBLOCK_EXPAND_ROUNDS_PN,
 } from "../../src/utils/stamper.js";
+import {
+  stampValid as rnsStampValid,
+  stampValue as rnsStampValue,
+  STAMP_LENGTH,
+} from "../../src/utils/stamps.js";
+
+const fixture = JSON.parse(
+  readFileSync(
+    new URL("../fixtures/rns160-stamps.json", import.meta.url),
+    "utf8",
+  ),
+);
 
 const hexToBytes = (/** @type {string} */ hex) =>
   new Uint8Array(hex.match(/.{1,2}/g).map((b) => parseInt(b, 16)));
@@ -193,4 +208,99 @@ test("stamper engine seam", async (t) => {
     assert.ok(await stampValid(stamp, cost, wb));
     assert.strictEqual(await stampValue(wb, stamp), value);
   });
+});
+
+test("stampTargetBytesFromCost keeps the engine seam byte-compatible", () => {
+  // Whole-number costs must encode exactly the historical LXMF threshold
+  // 2^(256 - cost), so engines mining the TAB grid are drop-in compatible
+  // with integer-bit callers and validators.
+  for (let cost = 1; cost <= 64; cost++) {
+    const bytes = stampTargetBytesFromCost(cost);
+    assert.strictEqual(bytes.length, 32);
+    // 2^(256 - cost): the set bit sits at MSB-first byte floor((cost-1)/8),
+    // offset (cost-1)%8 from the byte's most significant bit.
+    const expected = new Uint8Array(32);
+    expected[Math.floor((cost - 1) / 8)] = 1 << (7 - ((cost - 1) % 8));
+    assert.deepStrictEqual(bytes, expected, `cost ${cost}`);
+  }
+  // Fractional costs encode the Python TAB target verbatim (fixture vectors
+  // from `RNS/Stamps.py` `target_from_cost`).
+  for (const [cost, hex] of Object.entries(fixture.targetFromCost)) {
+    const hexBody = hex.startsWith("0x") ? hex.slice(2) : hex;
+    assert.deepStrictEqual(
+      stampTargetBytesFromCost(Number(cost)),
+      hexToBytes(hexBody.padStart(64, "0")),
+      `targetFromCost(${cost})`,
+    );
+  }
+  // Cost 0 clamps to the all-ones encoding (equivalent for 32-byte digests).
+  assert.deepStrictEqual(
+    stampTargetBytesFromCost(0),
+    new Uint8Array(32).fill(0xff),
+  );
+  assert.throws(() => stampTargetBytesFromCost(-1), RangeError);
+  assert.throws(() => stampTargetBytesFromCost(101), RangeError);
+});
+
+test("normalizeGenerateStampOptions tolerates the legacy positional form", () => {
+  assert.deepStrictEqual(normalizeGenerateStampOptions(25), {
+    expandRounds: 25,
+  });
+  assert.deepStrictEqual(normalizeGenerateStampOptions(undefined), {});
+  assert.deepStrictEqual(normalizeGenerateStampOptions(null), {});
+  assert.deepStrictEqual(
+    normalizeGenerateStampOptions({ expandRounds: 0, size: STAMP_LENGTH }),
+    { expandRounds: 0, size: STAMP_LENGTH },
+  );
+});
+
+test("generateStamp dispatches options objects to the engine verbatim", async () => {
+  const real = getStamper();
+  /** @type {any[]} */
+  const seen = [];
+  setStamper({
+    ...real,
+    async generateStamp(messageId, stampCost, expandRoundsOrOptions) {
+      seen.push(expandRoundsOrOptions);
+      return real.generateStamp(messageId, stampCost, expandRoundsOrOptions);
+    },
+  });
+  try {
+    const material = crypto.getRandomValues(new Uint8Array(32));
+    // The RNS call form: options object must reach the engine unmodified —
+    // expandRounds 0 (raw material workblock) and the 14-byte stamp size.
+    const [stamp] = /** @type {[Uint8Array, number]} */ (
+      await generateStamp(material, 6, {
+        expandRounds: 0,
+        size: STAMP_LENGTH,
+      })
+    );
+    assert.deepStrictEqual(seen[0], {
+      expandRounds: 0,
+      size: STAMP_LENGTH,
+    });
+    assert.strictEqual(stamp.length, STAMP_LENGTH);
+    // Engine-mined stamp must satisfy the stamps.js reference validators —
+    // the wire-parity contract with `RNS/Stamps.py`.
+    assert.ok(await rnsStampValid(stamp, 6, material));
+    assert.ok((await rnsStampValue(material, stamp)) >= 6);
+    // Legacy positional form keeps reaching the engine as a number.
+    await generateStamp(material, 6, WORKBLOCK_EXPAND_ROUNDS_PEERING);
+    assert.strictEqual(seen[1], WORKBLOCK_EXPAND_ROUNDS_PEERING);
+  } finally {
+    setStamper(null);
+  }
+});
+
+test("generateStamp honours an aborted signal", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const material = crypto.getRandomValues(new Uint8Array(32));
+  assert.strictEqual(
+    await generateStamp(material, 6, {
+      expandRounds: 0,
+      signal: controller.signal,
+    }),
+    null,
+  );
 });

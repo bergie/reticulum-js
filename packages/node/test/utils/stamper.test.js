@@ -10,6 +10,11 @@ import {
   WORKBLOCK_EXPAND_ROUNDS_PEERING,
 } from "@reticulum/core/src/utils/stamper.js";
 import {
+  stampValid as referenceStampValid,
+  stampValue as referenceStampValue,
+  STAMP_LENGTH,
+} from "@reticulum/core/src/utils/stamps.js";
+import {
   fullHashSync,
   generateStampSync,
   stampTargetBytes,
@@ -234,4 +239,55 @@ test("core generateStamp via the installed node engine stays compatible", async 
     setStamper(null);
     await stopNodeStamper();
   }
+});
+
+test("RNS 1.6.0 announce stamps mine in the worker and validate against the reference", async () => {
+  // The announce call form: expandRounds 0 (Python passes expand_rounds=0 —
+  // the workblock is the raw material) and 14-byte stamps
+  // (Identity.STAMPLENGTH), at a fractional 8.8 fixed-point cost.
+  useNodeStamper();
+  try {
+    const material = crypto.getRandomValues(new Uint8Array(32));
+    const [stamp, value] = await nodeStamper.generateStamp(material, 8.0, {
+      expandRounds: 0,
+      size: STAMP_LENGTH,
+    });
+    assert.ok(stampWorkerRunning(), "mining must run in the stamp worker");
+    assert.strictEqual(stamp.length, STAMP_LENGTH);
+    // Wire parity with the stamps.js reference miner (`RNS/Stamps.py`):
+    // the engine-mined stamp must validate at the requested fractional cost,
+    // and the reference's fractional 8.8 value must meet it — refining,
+    // never under-reporting, the engine's integer leading-zero-bit value.
+    assert.ok(await referenceStampValid(stamp, 8.0, material));
+    const referenceValue = await referenceStampValue(material, stamp);
+    assert.ok(referenceValue >= value);
+    assert.ok(referenceValue >= 8.0);
+    // Whole-number costs keep the historical integer-bit boundary: the same
+    // stamp must pass the untouched integer-bit validator at cost 8.
+    const wb = await defaultStampWorkblock(material, 0);
+    assert.ok(await defaultStampValid(stamp, 8, wb));
+  } finally {
+    setStamper(null);
+    await stopNodeStamper();
+  }
+});
+
+test("generateStampSync honours the options object and an aborted signal", () => {
+  const material = crypto.getRandomValues(new Uint8Array(32));
+  const [stamp, value] = generateStampSync(material, 8.0, {
+    expandRounds: 0,
+    size: STAMP_LENGTH,
+  });
+  assert.strictEqual(stamp.length, STAMP_LENGTH);
+  assert.ok(value >= 8);
+  const controller = new AbortController();
+  controller.abort();
+  assert.strictEqual(
+    generateStampSync(material, 8.0, {
+      expandRounds: 0,
+      size: STAMP_LENGTH,
+      signal: controller.signal,
+    }),
+    null,
+  );
 });

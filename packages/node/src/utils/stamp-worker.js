@@ -6,8 +6,11 @@
  *   worker-process design (`LXStamper.job_linux`), so workblock builds and
  *   stamp searches never block the host application's event loop.
  *
- *   Protocol: each request is `{ id, op, args }` where `op` is `"workblock"`
- *   or `"generate"`; the response is `{ id, result }` or `{ id, error }`.
+ *   Protocol: each request is `{ id, op, args }` where `op` is "workblock"
+ *   or "generate"; the response is `{ id, result }` or `{ id, error }`. For
+ *   "generate", args are `(material, stampCost, options)` where options is
+ *   the {@link GenerateStampOptions} object (`expandRounds`, `size`) — the
+ *   engine strips any `signal` before posting, since it cannot be cloned.
  */
 
 /* @ts-self-types="../../types/src/utils/stamp-worker.d.ts" */

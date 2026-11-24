@@ -16,10 +16,13 @@
  *     engine), yielding to the event loop whenever a synchronous stretch
  *     exceeds ~8 ms so the UI stays responsive;
  *   - `generateStamp` absorbs the workblock once, saves the SHA-256
- *     midstate, and per trial only hashes the 32-byte stamp (~300× faster
- *     per trial), with bytewise comparison against the
- *     `2^(256 - targetCost)` threshold — the same boundary semantics as the
- *     Node engine. The search yields on the same ~8 ms wall-clock budget.
+ *     midstate, and per trial only hashes the stamp bytes (~300× faster
+ *     per trial), with bytewise comparison against the cost target from
+ *     `stampTargetBytesFromCost` — the fractional 8.8 fixed-point TAB grid
+ *     of `RNS/Stamps.py` `target_from_cost` (at whole-number costs exactly
+ *     the `2^(256 - cost)` LXMF threshold) — the same boundary semantics
+ *     as the Node engine. The search yields on the same ~8 ms wall-clock
+ *     budget.
  *   - `fullHash`, `stampValid` and `stampValue` stay on native
  *     `crypto.subtle`, which absorbs large workblocks faster than WASM —
  *     this keeps one-shot validation fast for receivers.
@@ -32,12 +35,15 @@
 
 import {
   msgpackUint,
+  normalizeGenerateStampOptions,
   setStamper,
+  stampTargetBytesFromCost,
   WORKBLOCK_EXPAND_ROUNDS,
 } from "@reticulum/core/src/utils/stamper.js";
 import { createSHA256 } from "hash-wasm";
 
 /** @typedef {import("@reticulum/core/src/utils/stamper.js").StamperEngine} StamperEngine */
+/** @typedef {import("@reticulum/core/src/utils/stamper.js").GenerateStampOptions} GenerateStampOptions */
 
 /**
  * A hash-wasm SHA-256 hasher (wasm-backed, with `save()`/`load()` state
@@ -392,28 +398,36 @@ function cachedGeneration(messageId, expandRounds) {
 }
 
 /**
- * Searches for a valid 32-byte stamp by random trial, using a WASM SHA-256
+ * Searches for a valid stamp by random trial, using a WASM SHA-256
  * midstate: the workblock is absorbed and `save()`d once, then each trial
- * only `load()`s the state and hashes the 32-byte stamp — mathematically
- * identical to hashing `workblock || stamp` per trial, ~300× faster than
- * the WebCrypto default's full-buffer re-hash.
+ * only `load()`s the state and hashes the stamp — mathematically identical
+ * to hashing `workblock ‖ stamp` per trial, ~300× faster than the WebCrypto
+ * default's full-buffer re-hash.
  *
  * Yields to the event loop whenever a synchronous stretch exceeds ~8 ms
  * (wall-clock budget), so long searches never block the main thread for
  * more than a frame or so (the Node engine achieves the same by running
  * in a worker).
  *
+ * Accepts the legacy positional `expandRounds` number or the
+ * {@link GenerateStampOptions} object form (Python `Stamps.generate_stamp`
+ * options); an aborted `signal` resolves to `null`, checked at the yield
+ * points.
+ *
  * @param {Uint8Array} messageId - The 32-byte message_id (or peering_id).
- * @param {number} stampCost - Required leading zero bits.
- * @param {number} [expandRounds] - HKDF expansion rounds for the workblock.
- * @returns {Promise<[Uint8Array, number]>} `[stamp, value]`.
+ * @param {number} stampCost - Required fractional 8.8 fixed-point cost (at
+ *   whole-number costs identical to the `2^(256 - cost)` boundary).
+ * @param {number|GenerateStampOptions} [expandRoundsOrOptions]
+ * @returns {Promise<[Uint8Array, number]|null>} `[stamp, value]` (value =
+ *   leading-zero-bit count), or `null` when aborted via the signal.
  */
-async function wasmGenerateStamp(
-  messageId,
-  stampCost,
-  expandRounds = WORKBLOCK_EXPAND_ROUNDS,
-) {
-  const target = stampTargetBytes(stampCost);
+async function wasmGenerateStamp(messageId, stampCost, expandRoundsOrOptions) {
+  const {
+    expandRounds = WORKBLOCK_EXPAND_ROUNDS,
+    size = STAMP_SIZE,
+    signal,
+  } = normalizeGenerateStampOptions(expandRoundsOrOptions);
+  const target = stampTargetBytesFromCost(stampCost);
   const cached = cachedGeneration(messageId, expandRounds);
   let workblock;
   let midstate;
@@ -434,17 +448,17 @@ async function wasmGenerateStamp(
     midstate = cached.midstate;
   }
   const searcher = await createSHA256();
-  const pool = new Uint8Array(RANDOM_POOL_TRIALS * STAMP_SIZE);
+  const pool = new Uint8Array(RANDOM_POOL_TRIALS * size);
   let poolOffset = pool.length;
   let trials = 0;
   let stretch = stretchStart();
   while (true) {
-    if (poolOffset + STAMP_SIZE > pool.length) {
+    if (poolOffset + size > pool.length) {
       crypto.getRandomValues(pool);
       poolOffset = 0;
     }
-    const trial = pool.subarray(poolOffset, poolOffset + STAMP_SIZE);
-    poolOffset += STAMP_SIZE;
+    const trial = pool.subarray(poolOffset, poolOffset + size);
+    poolOffset += size;
     searcher.load(midstate);
     searcher.update(trial);
     const hash = searcher.digest("binary");
@@ -455,6 +469,7 @@ async function wasmGenerateStamp(
     }
     trials += 1;
     if (trials % TRIALS_YIELD_CHECK_TRIALS === 0) {
+      if (signal?.aborted) return null;
       stretch = await yieldIfOverBudget(stretch);
     }
   }

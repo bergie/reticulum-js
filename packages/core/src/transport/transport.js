@@ -25,6 +25,7 @@ import {
 import { PacketReceipt, ReceiptStatus } from "../core/packet_receipt.js";
 import { bytesEqual, concatBytes, toHex } from "../utils/encoding.js";
 import { LogLevel, log } from "../utils/log.js";
+import { generateStamp } from "../utils/stamper.js";
 import {
   DEFAULT_DESTINATION_COST,
   DEFAULT_DESTINATION_VALUE,
@@ -32,7 +33,6 @@ import {
   DEFAULT_PR_COST,
   DEFAULT_PR_VALUE,
   EXT_PAYLOAD_MARKER,
-  generateStamp,
   PR_EXT_HEADER_LENGTH,
   STAMP_LENGTH,
   stampValid,
@@ -1040,8 +1040,11 @@ export class TransportCore extends EventTarget {
 
   /**
    * Returns the cached path request stamp for a material, or generates one at
-   * `PR_VALUE` (Python `Transport.stamp_path_request`). Stamps are one-shot
-   * per path request tag, so the cache only helps retries of the same tag.
+   * `PR_VALUE` (Python `Transport.stamp_path_request`: `generate_stamp(
+   * material, stamp_cost=PR_VALUE, expand_rounds=0,
+   * size=Identity.STAMPLENGTH)`). Mining runs through the installed stamp
+   * engine, off the calling thread. Stamps are one-shot per path request tag,
+   * so the cache only helps retries of the same tag.
    * @param {Uint8Array} destinationHash
    * @param {Uint8Array} tag
    * @returns {Promise<Uint8Array|null>} 14-byte stamp, or null on failure.
@@ -1051,7 +1054,10 @@ export class TransportCore extends EventTarget {
     const key = toHex(material);
     let stamp = this.prStampCache.get(key) ?? null;
     if (!stamp) {
-      const generated = await generateStamp(material, TransportCore.PR_VALUE);
+      const generated = await generateStamp(material, TransportCore.PR_VALUE, {
+        expandRounds: 0,
+        size: STAMP_LENGTH,
+      });
       if (!generated) return null;
       [stamp] = generated;
       this.prStampCache.set(key, stamp);

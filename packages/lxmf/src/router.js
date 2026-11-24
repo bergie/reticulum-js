@@ -977,12 +977,14 @@ export class LXMRouter extends EventTarget {
     // validates it against transient_id). Cost 0 accepts any stamp.
     let stamp;
     if (stampCost > 0) {
-      const [generated] = await generateStamp(
+      const generated = await generateStamp(
         transientId,
         stampCost,
         WORKBLOCK_EXPAND_ROUNDS_PN,
       );
-      stamp = generated;
+      // Null only on abort via a signal, which this path never passes.
+      if (!generated) throw new Error("Propagation stamp generation aborted");
+      [stamp] = generated;
     } else {
       stamp = new Uint8Array(STAMP_SIZE);
     }

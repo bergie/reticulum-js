@@ -164,11 +164,15 @@ export class LXMPeer {
     );
     material.set(peerIdentity.identityHash, 0); // receiving (peer) first
     material.set(localHash, peerIdentity.identityHash.length); // offering (us)
-    const [peeringKey, value] = await generateStamp(
+    const generated = await generateStamp(
       material,
       /** @type {number} */ (this.peeringCost),
       WORKBLOCK_EXPAND_ROUNDS_PEERING,
     );
+    // Generation only returns null when aborted via a signal, which this
+    // call never passes — treat a null result as peering failure.
+    if (!generated) return false;
+    const [peeringKey, value] = generated;
     if (value >= /** @type {number} */ (this.peeringCost)) {
       this.peeringKey = [peeringKey, value];
       return true;

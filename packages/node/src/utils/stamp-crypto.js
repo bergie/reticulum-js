@@ -24,6 +24,9 @@
 import { createHash, hkdfSync, randomBytes, randomFillSync } from "node:crypto";
 import {
   msgpackUint,
+  normalizeGenerateStampOptions,
+  STAMP_SIZE,
+  stampTargetBytesFromCost,
   WORKBLOCK_EXPAND_ROUNDS,
 } from "@reticulum/core/src/utils/stamper.js";
 
@@ -155,36 +158,48 @@ export function stampValueSync(workblock, stamp) {
   return leadingZeroBits(hash);
 }
 
-/** Random-byte pool size for stamp trials (64 trials per refill). */
-const STAMP_POOL_SIZE = 64 * 32;
+/** Number of `size`-byte trials drawn per random-pool refill. */
+const STAMP_POOL_TRIALS = 64;
 
 /**
- * Searches for a valid 32-byte stamp by random trial, using `hash.copy()` so
- * each trial only hashes the 32-byte stamp instead of the entire workblock.
- * Mathematically identical to hashing `workblock || stamp` per trial.
+ * Searches for a valid stamp by random trial, using `hash.copy()` so each
+ * trial only hashes the stamp instead of the entire workblock.
+ * Mathematically identical to hashing `workblock ‖ stamp` per trial.
  *
- * @param {Uint8Array} messageId - The 32-byte message_id (or peering_id).
- * @param {number} stampCost - Required leading zero bits.
- * @param {number} [expandRounds] - HKDF expansion rounds for the workblock.
- * @returns {[Uint8Array, number]} `[stamp, value]`.
+ * The cost is a fractional 8.8 fixed-point cost quantized onto the RNS TAB
+ * target grid (Python `Stamps.generate_stamp`); at whole-number costs the
+ * trial boundary is byte-identical to the historical `2^(256 - cost)` LXMF
+ * threshold.
+ *
+ * @param {Uint8Array} messageId - The stamp material (message_id, announce
+ *   material, …).
+ * @param {number} stampCost - Required fractional cost.
+ * @param {number|import("@reticulum/core/src/utils/stamper.js").GenerateStampOptions} [options] -
+ *   Legacy positional `expandRounds`, or options (`expandRounds`, `size`,
+ *   `signal`). The signal is checked per pool refill; the worker thread
+ *   cannot observe it mid-search.
+ * @returns {[Uint8Array, number]|null} `[stamp, value]` (value =
+ *   leading-zero-bit count), or `null` when aborted via the signal.
  */
-export function generateStampSync(
-  messageId,
-  stampCost,
-  expandRounds = WORKBLOCK_EXPAND_ROUNDS,
-) {
+export function generateStampSync(messageId, stampCost, options = {}) {
+  const {
+    expandRounds = WORKBLOCK_EXPAND_ROUNDS,
+    size = STAMP_SIZE,
+    signal,
+  } = normalizeGenerateStampOptions(options);
   const workblock = stampWorkblockSync(messageId, expandRounds);
   const base = createHash("sha256").update(workblock);
-  const target = stampTargetBytes(stampCost);
-  const pool = randomBytes(STAMP_POOL_SIZE);
+  const target = stampTargetBytesFromCost(stampCost);
+  const pool = randomBytes(STAMP_POOL_TRIALS * size);
   let poolOffset = pool.length;
   while (true) {
-    if (poolOffset + 32 > pool.length) {
+    if (signal?.aborted) return null;
+    if (poolOffset + size > pool.length) {
       randomFillSync(pool);
       poolOffset = 0;
     }
-    const trial = pool.subarray(poolOffset, poolOffset + 32);
-    poolOffset += 32;
+    const trial = pool.subarray(poolOffset, poolOffset + size);
+    poolOffset += size;
     const hash = base.copy().update(trial).digest();
     if (digestLessOrEqual(hash, target)) {
       // Copy out of the pool: the pool is reused (and overwritten) by later

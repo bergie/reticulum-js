@@ -285,7 +285,14 @@ test("generateStamp retries reuse the midstate cache", async () => {
   );
 });
 
-test("generateStamp rejects invalid costs", async () => {
+test("generateStamp rejects invalid costs, accepts cost 0 like Python", async () => {
   const messageId = crypto.getRandomValues(new Uint8Array(32));
-  await assert.rejects(wasmStamper.generateStamp(messageId, 0), RangeError);
+  // Negative costs and costs above the cap are rejected (Python
+  // `generate_stamp` raises for the same range).
+  await assert.rejects(wasmStamper.generateStamp(messageId, -1), RangeError);
+  await assert.rejects(wasmStamper.generateStamp(messageId, 101), RangeError);
+  // Cost 0 is valid (Python `target_from_cost(0)` = 2^256: every digest
+  // passes), so it mines instantly.
+  const [stamp] = await wasmStamper.generateStamp(messageId, 0);
+  assert.strictEqual(stamp.length, 32);
 });
